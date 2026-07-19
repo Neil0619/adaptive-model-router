@@ -19,12 +19,12 @@ Use the router at a meaningful stage boundary, not before every message. It does
 2. Follow the returned `action`:
    - `continue`: keep working in the current root task. Do not create a subagent.
    - `ask_user`: explain the reason code and obtain the missing decision.
-   - `delegate`: create one bounded subagent using exactly `target.model` and `target.effort` if the host supports those subagent parameters.
+   - `delegate`: create one bounded subagent by passing `target.model` to the host's `model` parameter and `target.effort` to the host's `reasoning_effort` parameter, if the host supports them.
 3. When delegation is unavailable in the current host, fail open by continuing with the current model. Do not claim that the root task model changed.
 4. Keep the delegated scope concrete and bounded. The root owns orchestration, integration, user communication, and verification. Never create overlapping writers.
 5. Run the returned `verificationGate` at the root. Then call `record_outcome` once with the route ID and the exact final outcome schema.
 
-The supported host parameters are the model and reasoning-effort fields exposed by the subagent tool. Do not invent `agentType`, `agent_type`, or other unsupported parameters.
+Map the router's `target.effort` value to the current Codex subagent `reasoning_effort` parameter. Do not submit an `effort` parameter to a host that does not define one, and do not invent `agentType`, `agent_type`, or other unsupported parameters.
 
 ## Failures and escalation
 

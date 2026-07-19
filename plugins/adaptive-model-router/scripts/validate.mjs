@@ -39,6 +39,7 @@ const mcpConfig = await json(join(pluginRoot, ".mcp.json"));
 const packageJson = await json(join(pluginRoot, "package.json"));
 const marketplace = await json(join(repoRoot, ".agents", "plugins", "marketplace.json"));
 const hooks = await json(join(pluginRoot, "hooks", "hooks.json"));
+const skill = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8");
 assert(manifest.version === packageJson.version, "manifest and package versions differ");
 assert(manifest.version === "0.2.0", "release version must be 0.2.0");
 assert(packageJson.private === true, "package must remain private");
@@ -51,6 +52,8 @@ assert(routerMcp.cwd === ".", "MCP cwd must resolve from the plugin root");
 assert(routerMcp.args?.[0] === "./scripts/node-launcher.mjs", "MCP must use the relative runtime launcher");
 assert(routerMcp.args?.[1] === "./scripts/mcp-server.mjs", "MCP must use the relative server path");
 assert(!JSON.stringify(routerMcp).includes("PLUGIN_ROOT"), "MCP config must not rely on hook-only PLUGIN_ROOT interpolation");
+assert(skill.includes("`target.effort` value to the current Codex subagent `reasoning_effort` parameter"), "skill must map router effort to the Codex subagent parameter");
+assert(!skill.includes("using exactly `target.model` and `target.effort`"), "skill must not present router output fields as host parameter names");
 for (const event of ["UserPromptSubmit", "Stop"]) {
   const command = hooks.hooks?.[event]?.[0]?.hooks?.[0];
   assert(typeof command?.commandWindows === "string", `${event} must define commandWindows`);
