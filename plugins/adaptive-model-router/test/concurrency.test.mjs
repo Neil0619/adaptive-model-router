@@ -25,7 +25,7 @@ function runWorker(project, operation, contextId, value = "") {
     child.stdout.on("data", (chunk) => { stdout += chunk; });
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     child.once("error", reject);
-    child.once("exit", (code) => {
+    child.once("close", (code) => {
       if (code !== 0) reject(new Error(`worker ${operation} exited ${code}: ${stderr}`));
       else {
         try {
