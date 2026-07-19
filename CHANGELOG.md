@@ -13,12 +13,14 @@ All notable changes to this project are documented here.
 - Redacted eight-second auxiliary classifier with a persistent circuit breaker.
 - Strict MCP tools for routing, outcomes, configuration, diagnostics, project deletion, and policy management.
 - Exact-prefix control and two-pass Stop hooks with native Windows commands.
+- Cross-platform runtime discovery for Codex hosts whose `node` differs from the interactive shell.
 - Idempotent POSIX and PowerShell installation wrappers with opt-in AGENTS patching.
 - Ubuntu, macOS, Windows, CodeQL, release artifact, and bilingual routing-evaluation workflows.
 
 ### Changed
 
 - Minimum runtime is Node.js 24.15.0.
+- Plugin state uses Codex's writable `PLUGIN_DATA`, and upgrades validate the configured ref from Codex marketplace metadata.
 - The product is explicitly a bounded-subagent router and does not claim root-model hot switching.
 - Legacy JSON learning history is not imported into v0.2 evidence windows.
 

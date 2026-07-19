@@ -10,6 +10,8 @@ It does **not** hot-switch the root task model. The root remains the orchestrato
 
 Requirements: Codex Desktop or CLI, Git, and Node.js 24.15.0 or newer. Windows 11 native PowerShell, macOS, and Linux are supported.
 
+Codex Desktop can resolve a different `node` than an interactive shell. The plugin launcher keeps the 24.15+ requirement and discovers a qualifying runtime from `ADAPTIVE_ROUTER_NODE`, `PATH`, common Node managers, and standard Windows/macOS/Linux install locations. It never falls back to running the router on an older Node release.
+
 The native Codex commands are the primary installation path; no remote script execution is required:
 
 ```bash

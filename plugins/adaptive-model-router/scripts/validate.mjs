@@ -44,10 +44,12 @@ assert(packageJson.private === true, "package must remain private");
 assert(!packageJson.dependencies && !packageJson.devDependencies, "runtime must have no third-party dependencies");
 assert(!Object.hasOwn(manifest, "hooks"), "default hooks/hooks.json discovery should not be duplicated in the manifest");
 assert(manifest.mcpServers?.["adaptive-model-router"]?.command === "node", "manifest must inline the stdio MCP server map");
+assert(manifest.mcpServers["adaptive-model-router"].args?.[0]?.endsWith("/scripts/node-launcher.mjs"), "MCP must use the runtime launcher");
 for (const event of ["UserPromptSubmit", "Stop"]) {
   const command = hooks.hooks?.[event]?.[0]?.hooks?.[0];
   assert(typeof command?.commandWindows === "string", `${event} must define commandWindows`);
   assert(command.commandWindows.includes("%PLUGIN_ROOT%") && !command.commandWindows.includes("$PLUGIN_ROOT"), `${event} Windows command must use the Windows plugin root expansion`);
+  assert(command.command.includes("node-launcher.mjs") && command.commandWindows.includes("node-launcher.mjs"), `${event} must use the runtime launcher`);
 }
 const entry = marketplace.plugins?.find((plugin) => plugin.name === manifest.name);
 assert(entry?.source?.path === "./plugins/adaptive-model-router", "marketplace source path is invalid");

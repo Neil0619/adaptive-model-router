@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/scripts/hook.mjs\" prompt",
-            "commandWindows": "node \"%PLUGIN_ROOT%\\scripts\\hook.mjs\" prompt",
+            "command": "node \"$PLUGIN_ROOT/scripts/node-launcher.mjs\" \"$PLUGIN_ROOT/scripts/hook.mjs\" prompt",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\scripts\\node-launcher.mjs\" \"%PLUGIN_ROOT%\\scripts\\hook.mjs\" prompt",
             "timeout": 15,
             "statusMessage": "Checking Adaptive Model Router controls"
           }
@@ -19,8 +19,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$PLUGIN_ROOT/scripts/hook.mjs\" stop",
-            "commandWindows": "node \"%PLUGIN_ROOT%\\scripts\\hook.mjs\" stop",
+            "command": "node \"$PLUGIN_ROOT/scripts/node-launcher.mjs\" \"$PLUGIN_ROOT/scripts/hook.mjs\" stop",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\scripts\\node-launcher.mjs\" \"%PLUGIN_ROOT%\\scripts\\hook.mjs\" stop",
             "timeout": 15,
             "statusMessage": "Checking routed-stage verification"
           }
