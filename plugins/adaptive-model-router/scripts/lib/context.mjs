@@ -4,9 +4,11 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
-export function stateRoot() {
-  if (process.env.ADAPTIVE_ROUTER_HOME) return resolve(process.env.ADAPTIVE_ROUTER_HOME);
-  const codexHome = process.env.CODEX_HOME ? resolve(process.env.CODEX_HOME) : join(homedir(), ".codex");
+export function stateRoot(env = process.env) {
+  if (env.ADAPTIVE_ROUTER_HOME) return resolve(env.ADAPTIVE_ROUTER_HOME);
+  const pluginData = env.PLUGIN_DATA || env.CLAUDE_PLUGIN_DATA;
+  if (pluginData) return resolve(pluginData);
+  const codexHome = env.CODEX_HOME ? resolve(env.CODEX_HOME) : join(homedir(), ".codex");
   return join(codexHome, "adaptive-model-router-v2");
 }
 

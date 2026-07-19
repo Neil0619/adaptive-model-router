@@ -1,6 +1,6 @@
 # Privacy
 
-Adaptive Model Router is local-first. Its routing database is stored under the user's Codex home in `adaptive-model-router-v2/router.sqlite3`, unless `ADAPTIVE_ROUTER_HOME` is explicitly set.
+Adaptive Model Router is local-first. When Codex launches the plugin, its routing database is stored in the plugin-specific writable `PLUGIN_DATA` directory. Direct CLI use falls back to `adaptive-model-router-v2/router.sqlite3` under the user's Codex home. `ADAPTIVE_ROUTER_HOME` remains an explicit test and operations override.
 
 ## Stored locally
 
