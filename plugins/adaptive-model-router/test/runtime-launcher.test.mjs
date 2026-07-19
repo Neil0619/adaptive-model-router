@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverNodeRuntime, supportsNodeRuntime } from "../scripts/lib/node-discovery.mjs";
@@ -16,28 +16,24 @@ test("runtime discovery accepts the boundary and a leading v", () => {
   assert.equal(supportsNodeRuntime("v25.0.0"), true);
 });
 
-test("runtime discovery finds a newer NVM runtime when Codex starts with Node 22", async () => {
-  const project = await temporaryProject("adaptive runtime NVM Unicode 空格 ");
-  try {
-    const nvmRoot = join(project.root, "NVM root 中文");
-    const oldNode = join(project.root, "old", "bin", "node");
-    const expected = join(nvmRoot, "versions", "node", "v24.15.0", "bin", "node");
-    await mkdir(dirname(expected), { recursive: true });
-    await mkdir(join(nvmRoot, "versions", "node", "v14.4.0", "bin"), { recursive: true });
-    const versions = new Map([[oldNode, "v22.22.1"], [expected, "v24.15.0"]]);
+test("runtime discovery finds a newer NVM runtime when Codex starts with Node 22", () => {
+  const nvmRoot = "/Users/example/NVM root 中文";
+  const versionsRoot = `${nvmRoot}/versions/node`;
+  const oldNode = "/old/bin/node";
+  const expected = `${versionsRoot}/v24.15.0/bin/node`;
+  const versions = new Map([[oldNode, "v22.22.1"], [expected, "v24.15.0"]]);
+  const entries = ["v14.4.0", "v24.15.0"].map((name) => ({ name, isDirectory: () => true }));
 
-    const runtime = discoverNodeRuntime({
-      currentExecutable: oldNode,
-      currentVersion: "22.22.1",
-      env: { PATH: dirname(oldNode), NVM_DIR: nvmRoot },
-      platform: "darwin",
-      userHome: project.root,
-      probe: (candidate) => versions.get(candidate) || null,
-    });
-    assert.deepEqual(runtime, { executable: expected, version: "v24.15.0" });
-  } finally {
-    await project.cleanup();
-  }
+  const runtime = discoverNodeRuntime({
+    currentExecutable: oldNode,
+    currentVersion: "22.22.1",
+    env: { PATH: "/old/bin", NVM_DIR: nvmRoot },
+    platform: "darwin",
+    userHome: "/Users/example",
+    readDirectory: (root) => root === versionsRoot ? entries : [],
+    probe: (candidate) => versions.get(candidate) || null,
+  });
+  assert.deepEqual(runtime, { executable: expected, version: "v24.15.0" });
 });
 
 test("runtime discovery handles a Windows NVM path with spaces", () => {
