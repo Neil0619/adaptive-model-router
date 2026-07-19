@@ -55,6 +55,7 @@ function run(command, args, { json = false, quiet = false } = {}) {
   const result = spawnSync(spec.command, spec.args, {
     encoding: "utf8",
     windowsHide: true,
+    windowsVerbatimArguments: spec.windowsVerbatimArguments,
     env: process.env,
   });
   if (result.error || result.status !== 0) {

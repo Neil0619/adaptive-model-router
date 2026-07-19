@@ -52,11 +52,12 @@ function quoteCmd(value) {
 }
 
 export function spawnSpec(resolved, args, env = process.env) {
-  if (resolved.kind !== "cmd") return { command: resolved.path, args };
+  if (resolved.kind !== "cmd") return { command: resolved.path, args, windowsVerbatimArguments: false };
   const commandLine = [quoteCmd(resolved.path), ...args.map(quoteCmd)].join(" ");
   return {
     command: env.ComSpec || env.COMSPEC || "cmd.exe",
     args: ["/d", "/v:off", "/s", "/c", `"${commandLine}"`],
+    windowsVerbatimArguments: true,
   };
 }
 
@@ -93,6 +94,7 @@ export class AppServerClient {
       this.process = this.spawnImpl(spec.command, spec.args, {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
+        windowsVerbatimArguments: spec.windowsVerbatimArguments,
         env: {
           ...process.env,
           ADAPTIVE_ROUTER_INTERNAL: "1",

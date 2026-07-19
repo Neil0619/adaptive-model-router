@@ -129,6 +129,7 @@ test("Windows discovery supports explicit exe and safely wraps cmd paths with sp
   const spec = spawnSpec(cmd, ["app-server", "--listen", "stdio://"], { ComSpec: "C:\\Windows\\System32\\cmd.exe" });
   assert.equal(spec.command, "C:\\Windows\\System32\\cmd.exe");
   assert.deepEqual(spec.args.slice(0, 4), ["/d", "/v:off", "/s", "/c"]);
+  assert.equal(spec.windowsVerbatimArguments, true);
   assert.match(spec.args[4], /Codex 中文/);
   assert.match(spec.args[4], /stdio:\/\//);
 });

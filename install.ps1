@@ -14,8 +14,14 @@ if ($null -eq $node) {
     exit 2
 }
 
-& $node.Source -e 'const v=process.versions.node.split(".").map(Number); process.exit(v[0]>24 || (v[0]===24 && v[1]>=15) ? 0 : 1)'
-if ($LASTEXITCODE -ne 0) {
+$nodeVersionText = & $node.Source -p "process.versions.node"
+try {
+    $nodeVersion = [System.Version]$nodeVersionText.Trim()
+} catch {
+    Write-Error "Unable to determine the installed Node.js version."
+    exit 2
+}
+if ($LASTEXITCODE -ne 0 -or $nodeVersion -lt [System.Version]"24.15.0") {
     Write-Error "Adaptive Model Router requires Node.js 24.15.0 or newer."
     exit 2
 }
