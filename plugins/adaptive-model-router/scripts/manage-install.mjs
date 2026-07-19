@@ -96,12 +96,47 @@ function pluginId(entry) {
   return entry.pluginId || `${entry.name}@${entry.marketplaceName}`;
 }
 
+function canonicalRepository(source) {
+  if (typeof source !== "string") return null;
+  let normalized = source.trim().toLowerCase().replaceAll("\\", "/");
+  normalized = normalized.replace(/^git\+/, "");
+  normalized = normalized.replace(/^https?:\/\/(?:www\.)?github\.com\//, "");
+  normalized = normalized.replace(/^ssh:\/\/git@github\.com\//, "");
+  normalized = normalized.replace(/^git@github\.com:/, "");
+  normalized = normalized.replace(/^github\.com\//, "");
+  normalized = normalized.replace(/\.git\/?$/, "").replace(/\/+$/, "");
+  return normalized;
+}
+
+function marketplaceSource(entry) {
+  return entry?.marketplaceSource?.source || entry?.source;
+}
+
+function marketplaceRef(entry) {
+  const explicit = [
+    entry?.ref,
+    entry?.refName,
+    entry?.ref_name,
+    entry?.marketplaceSource?.ref,
+    entry?.marketplaceSource?.refName,
+    entry?.marketplaceSource?.ref_name,
+  ].find((value) => typeof value === "string" && value.length > 0);
+  if (explicit) return explicit;
+
+  if (typeof entry?.root !== "string" || entry.root.length === 0) return null;
+  try {
+    const metadata = JSON.parse(readFileSync(join(entry.root, ".codex-marketplace-install.json"), "utf8"));
+    if (canonicalRepository(metadata.source) !== REPOSITORY.toLowerCase()) return null;
+    return [metadata.ref, metadata.refName, metadata.ref_name]
+      .find((value) => typeof value === "string" && value.length > 0) || null;
+  } catch {
+    return null;
+  }
+}
+
 function desiredMarketplace(entry) {
-  const serialized = JSON.stringify(entry).toLowerCase();
-  const repositoryMatch = serialized.includes(REPOSITORY.toLowerCase()) ||
-    serialized.includes(`github.com/${REPOSITORY.toLowerCase()}`);
-  const refMatch = serialized.includes(`"${REF}"`) || serialized.includes(`ref=${REF}`) || serialized.includes(`/${REF}`);
-  return repositoryMatch && refMatch;
+  return canonicalRepository(marketplaceSource(entry)) === REPOSITORY.toLowerCase() &&
+    marketplaceRef(entry) === REF;
 }
 
 function codexHome() {
