@@ -161,6 +161,69 @@ test("upgrade accepts the current Codex marketplace shape using install metadata
   }
 });
 
+test("upgrade accepts a stable marketplace checkout when Codex omits install metadata", async () => {
+  const project = await temporaryProject("adaptive marketplace checkout Unicode 空格 ");
+  try {
+    const marketplaceRoot = join(project.root, "marketplace checkout 中文");
+    await mkdir(join(marketplaceRoot, ".git"), { recursive: true });
+    await writeFile(join(marketplaceRoot, ".git", "HEAD"), "ref: refs/heads/stable\n");
+    const fake = await fakeCodex(project, {
+      marketplaces: [{
+        name: "adaptive-model-router",
+        root: marketplaceRoot,
+        marketplaceSource: {
+          sourceType: "git",
+          source: "https://github.com/Neil0619/adaptive-model-router.git",
+        },
+      }],
+      installed: [{
+        pluginId: "adaptive-model-router@adaptive-model-router",
+        name: "adaptive-model-router",
+        marketplaceName: "adaptive-model-router",
+      }],
+      available: [],
+      mutations: [],
+    });
+
+    const result = runManager(project, fake, ["upgrade", "--non-interactive"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual((await state(fake)).mutations.map((args) => args.join(" ")), [
+      "plugin marketplace upgrade adaptive-model-router",
+      "plugin add adaptive-model-router@adaptive-model-router",
+    ]);
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("upgrade rejects a non-stable marketplace checkout when Codex omits install metadata", async () => {
+  const project = await temporaryProject();
+  try {
+    const marketplaceRoot = join(project.root, "marketplace-checkout");
+    await mkdir(join(marketplaceRoot, ".git"), { recursive: true });
+    await writeFile(join(marketplaceRoot, ".git", "HEAD"), "ref: refs/heads/main\n");
+    const fake = await fakeCodex(project, {
+      marketplaces: [{
+        name: "adaptive-model-router",
+        root: marketplaceRoot,
+        marketplaceSource: {
+          sourceType: "git",
+          source: "https://github.com/Neil0619/adaptive-model-router.git",
+        },
+      }],
+      installed: [],
+      available: [],
+      mutations: [],
+    });
+
+    const result = runManager(project, fake, ["upgrade", "--non-interactive"]);
+    assert.equal(result.status, 4);
+    assert.deepEqual((await state(fake)).mutations, []);
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("upgrade rejects current Codex marketplace metadata for a different ref", async () => {
   const project = await temporaryProject();
   try {
