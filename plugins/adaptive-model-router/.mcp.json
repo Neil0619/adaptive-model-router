@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "adaptive-model-router": {
+      "command": "node",
+      "args": [
+        "./scripts/node-launcher.mjs",
+        "./scripts/mcp-server.mjs"
+      ],
+      "cwd": "."
+    }
+  }
+}
