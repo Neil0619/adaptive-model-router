@@ -2,6 +2,10 @@
 
 Adaptive Model Router is a Codex plugin, not a model proxy. The root task invokes a local MCP tool at a stage boundary and remains responsible for orchestration.
 
+The public tool contracts are documented in [Tool reference](TOOLS.md). The MCP
+server is the installed interface; `scripts/codex-route.mjs` is a source-tree
+operations and diagnostics CLI, not a global command.
+
 ```mermaid
 flowchart LR
     Root["Root Codex task"] --> Route["route_stage"]
@@ -26,6 +30,9 @@ flowchart LR
 - `scripts/lib/app-server.mjs` owns one short-lived classifier app-server process with a single total deadline and early-notification buffering.
 - `scripts/lib/database.mjs` owns SQLite migrations, short `BEGIN IMMEDIATE` transactions, exactly-once claims, and project/context isolation.
 - `scripts/hook.mjs` handles exact control prefixes and the two-pass Stop outcome reminder.
+- `hooks/hooks.json` supplies separate POSIX and `commandWindows` launch commands.
+  Both resolve through the installed plugin root and the runtime launcher, so
+  hook execution does not depend on a POSIX shell on Windows.
 
 ## Route lifecycle
 
@@ -36,7 +43,12 @@ flowchart LR
 5. Score locally. Only substantive borderline stages may call the auxiliary classifier.
 6. Apply risk floors and any monotonic failure escalation.
 7. Insert the route. A once override is claimed and deleted in the same transaction as a real `delegate` insert.
-8. The root performs the verification gate and records exactly one outcome.
+8. For a `delegate` route, the root performs the verification gate and records
+   exactly one outcome. `continue` and `ask_user` routes do not have outcomes.
+
+The route stores the model target and decision metadata, not the prompt or
+evidence payload. On retry, callers provide only `previousRouteId` and factual
+failure evidence; they cannot submit a forged previous route object.
 
 ## Concurrency
 
@@ -52,3 +64,6 @@ Uniqueness constraints protect route outcomes and pending proposals. Identical d
 - Storage failure during routing or hooks: sanitized fail-open behavior; outcome writes report an error because silently losing a final outcome would be misleading.
 - Two completed automatic reasoning escalations: ask the user on the following failure.
 - Node below 24.15: the launcher probes bounded standard runtime locations and either re-executes with a qualifying Node or exits with one generic error; router code never runs on the older runtime.
+
+For operational symptoms and recovery steps, see
+[Troubleshooting](TROUBLESHOOTING.md).

@@ -16,6 +16,8 @@ All notable changes to this project are documented here.
 - Cross-platform runtime discovery for Codex hosts whose `node` differs from the interactive shell.
 - Idempotent POSIX and PowerShell installation wrappers with opt-in AGENTS patching.
 - Ubuntu, macOS, Windows, CodeQL, release artifact, and bilingual routing-evaluation workflows.
+- Maintainer-ready native Windows 11 smoke, public tool-reference,
+  troubleshooting, and documentation-index runbooks.
 
 ### Changed
 

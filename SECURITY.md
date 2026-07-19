@@ -12,4 +12,17 @@ Include the affected version, operating system, Codex surface, minimal reproduct
 
 ## Trust boundary
 
-Plugin hooks are local commands and Codex requires the user to review and trust them. This project does not ask users to pipe a remote script into a shell. The documented primary installation path uses native Codex marketplace commands.
+Plugin hooks are local commands and Codex requires the user to review and trust
+their exact definitions. Use `/hooks` to inspect the plugin-bundled
+`UserPromptSubmit` and `Stop` handlers. Changed definitions require review
+again because trust is tied to the current hook hash.
+
+Do not use `--dangerously-bypass-hook-trust` for normal use or release smoke
+testing. This project does not ask users to pipe a remote script into a shell;
+the primary installation path uses native Codex marketplace commands. The
+optional repository wrappers execute only after download and review.
+
+Router diagnostics and public reports must not include prompts, source,
+credentials, environment-variable values, SQLite files, or absolute project
+paths. See [docs/PRIVACY.md](docs/PRIVACY.md) and
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).

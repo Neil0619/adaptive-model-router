@@ -4,7 +4,7 @@ Adaptive Model Router is a local-first Codex plugin that decides, at meaningful 
 
 It does **not** hot-switch the root task model. The root remains the orchestrator and verifies any delegated work.
 
-[中文说明](README.zh-CN.md)
+[中文说明](README.zh-CN.md) · [Documentation](docs/README.md) · [Tool reference](docs/TOOLS.md)
 
 ## Install
 
@@ -19,7 +19,10 @@ codex plugin marketplace add Neil0619/adaptive-model-router --ref stable
 codex plugin add adaptive-model-router@adaptive-model-router
 ```
 
-When Codex asks, review and trust the plugin hooks, then start a new task.
+After installation, start a new task. Open `/hooks`, review the plugin-bundled
+`UserPromptSubmit` and `Stop` command handlers, and trust their current
+definitions. If the ChatGPT desktop app still shows stale plugin state, restart
+the app and start another new task.
 
 Optional local wrappers provide preflight checks and legacy-install detection:
 
@@ -51,6 +54,11 @@ codex plugin marketplace remove adaptive-model-router
 
 Wrapper equivalents are `./install.sh upgrade`, `./install.sh uninstall`, `.\install.ps1 -Action Upgrade`, and `.\install.ps1 -Action Uninstall`.
 
+For Windows-specific setup and failure recovery, see
+[troubleshooting](docs/TROUBLESHOOTING.md). Release maintainers should use the
+[native Windows 11 smoke runbook](docs/WINDOWS_SMOKE.md), not improvise a release
+test from the README.
+
 ## How routing works
 
 `route_stage` returns one contract:
@@ -62,6 +70,10 @@ Wrapper equivalents are `./install.sh upgrade`, `./install.sh uninstall`, `.\ins
 Priority is: request override, once override, session override, project override, optional global override, approved project policy, then the balanced default. Unknown or hidden models are never chosen automatically. Explicit unavailable targets are never silently substituted.
 
 Every delegated route has a verification gate and one strict final outcome. Missing outcomes are reminded once by the Stop hook; on the continued stop they become `unknown`, which is excluded from learning.
+
+`continue` and `ask_user` routes do not accept outcomes. See the
+[tool reference](docs/TOOLS.md) for the strict route and outcome contracts, all
+management tools, and the source-tree developer CLI.
 
 ## Local learning
 
@@ -97,7 +109,11 @@ npm run validate
 npm run eval
 ```
 
-The runtime has no third-party dependencies. See [architecture](docs/ARCHITECTURE.md), [privacy](docs/PRIVACY.md), [contributing](CONTRIBUTING.md), and [security](SECURITY.md).
+The runtime has no third-party dependencies. Start with the
+[documentation index](docs/README.md), or go directly to
+[architecture](docs/ARCHITECTURE.md), [privacy](docs/PRIVACY.md),
+[troubleshooting](docs/TROUBLESHOOTING.md), [contributing](CONTRIBUTING.md), and
+[security](SECURITY.md).
 
 ## License
 

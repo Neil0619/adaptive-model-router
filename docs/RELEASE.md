@@ -1,46 +1,127 @@
 # v0.2.0 release checklist
 
-## Automated gate
+This file is the maintainer release gate. The detailed native Windows procedure
+lives in [WINDOWS_SMOKE.md](WINDOWS_SMOKE.md). Do not create the release tag
+until every blocking item below has fresh evidence for the exact candidate
+commit.
+
+## 1. Freeze the candidate
+
+For the first release, `stable` must point to the exact reviewed `main` commit
+before logged-in smoke testing. This makes the documented installation command
+usable without publishing a tag early.
+
+Record the candidate:
+
+```bash
+git status --short --branch
+git rev-parse HEAD
+git rev-parse origin/main
+git rev-parse origin/stable
+```
+
+The worktree must be clean and all three commits must match. Any installed
+plugin, marketplace, wrapper, hook, skill, contract, test, or release-workflow
+change after this point creates a new runtime candidate and invalidates earlier
+manual smoke evidence.
+
+A documentation-only follow-up still creates a new release commit. Earlier
+runtime smoke evidence may be reused only when the maintainer records that the
+plugin tree, marketplace file, `install.sh`, `install.ps1`, and release workflow
+are byte-identical between the smoked and final commits. Otherwise rerun the
+smoke gate.
+
+## 2. Automated gate
 
 - Ubuntu, macOS, and Windows pass on Node 24.15.0 and the latest Node 24 LTS.
-- Unit, 50-process concurrency, privacy, hook, MCP, installer, and bilingual evaluation suites pass.
+- Unit, 50-process concurrency, privacy, hook, MCP, installer, and bilingual
+  evaluation suites pass.
 - Syntax, manifest, marketplace, plugin, and skill validation pass.
 - CodeQL passes.
+- `private: true` remains present; no npm package is published.
 
-## Logged-in smoke gate
+Local preflight:
 
-Run this once on macOS and once on native Windows 11 using a temporary test project:
+```bash
+cd plugins/adaptive-model-router
+npm test
+npm run validate
+npm run eval
+```
 
-For the first release only, bootstrap `stable` from the exact reviewed `main`
-commit before this gate. This makes the documented installation command usable
-without publishing a tag early. Do not add release-only changes to either branch
-after the bootstrap; the release workflow will advance (or confirm) `stable` at
-the tagged commit only after the artifacts exist.
+## 3. Logged-in smoke gate
 
-1. Install from the candidate `stable` ref with the two documented native commands.
-2. Review and trust both plugin hooks.
-3. Start a new task and call `route_stage` for a substantive bounded stage.
-4. Create the bounded subagent using exactly the returned model and effort.
-5. Integrate the result, run the verification gate, and record a `passed` or `failed` outcome.
-6. Confirm status/diagnostics expose no prompt or absolute path.
-7. Exercise upgrade, uninstall, reinstall, and optional AGENTS patch removal.
+Run the complete route lifecycle once on macOS and once on native Windows 11:
 
-Run the same sequence manually or through the non-blocking nightly workflow in WSL2. WSL2 is tracked independently and does not block an ordinary pull request.
+1. Install from candidate `stable` with the two native Codex commands.
+2. Review and trust the plugin's `UserPromptSubmit` and `Stop` handlers.
+3. Start a new task and obtain a substantive `delegate` route.
+4. Create exactly one bounded subagent using the returned model and effort.
+5. Integrate the result, run the returned verification gate, and record one
+   strict `passed` or `failed` outcome.
+6. Confirm status and diagnostics expose no prompt, source, secret, or absolute
+   project path.
+7. Exercise upgrade, uninstall, reinstall, idempotence, and optional AGENTS
+   marker removal.
 
-## Publish
+Use [WINDOWS_SMOKE.md](WINDOWS_SMOKE.md) for the Windows evidence and report
+template. Keep the macOS evidence equivalent. WSL2 remains a separate manual or
+nightly smoke and does not block an ordinary pull request.
 
-The current `Neil0619` GitHub credential must be refreshed before any remote operation:
+## 4. Authentication, signing, and branch protection
+
+Verify the intended GitHub identity before remote operations:
+
+```bash
+gh auth status -h github.com
+gh repo view Neil0619/adaptive-model-router
+```
+
+If authentication is invalid or the active account is wrong, authenticate or
+switch accounts before continuing:
 
 ```bash
 gh auth login
-gh auth status
 ```
 
-Then confirm `main` and `stable` protections, create the signed `v0.2.0` tag, and push it. The release workflow reruns the full gate, creates the source archive, SPDX SBOM, SHA-256 checksums, and build provenance, publishes the GitHub release, and advances `stable` only after artifacts exist.
+Verify repository-local tag signing configuration and create a signed annotated
+tag at the frozen candidate:
 
-The `stable` protection must reject force pushes and deletion while allowing the
-release workflow to make a normal fast-forward update. Verify that permission
-before pushing the tag so the final workflow step cannot be blocked after the
-GitHub Release has already been created.
+```bash
+git config --local --get gpg.format
+git config --local --get user.signingkey
+git config --local --get tag.gpgSign
+git tag --sign --message "Adaptive Model Router v0.2.0" v0.2.0
+git cat-file tag v0.2.0
+```
 
-Do not publish the npm package; `private: true` is a release invariant.
+The tag object must contain an SSH signature and point to the recorded candidate
+commit. Do not push an unsigned or lightweight tag.
+
+Before pushing, confirm that `main` and `stable` reject force pushes and
+deletion. The `stable` protection must still allow the release workflow to make
+a normal fast-forward update after artifacts exist.
+
+## 5. Publish and verify
+
+Push only the signed tag:
+
+```bash
+git push origin v0.2.0
+```
+
+The release workflow must:
+
+1. rerun tests, validation, and evaluation;
+2. create the source archive and SPDX SBOM;
+3. create SHA-256 checksums and build provenance;
+4. publish the GitHub Release from the existing remote tag;
+5. advance protected `stable` only after artifacts exist.
+
+Verify the workflow, release assets, attestations, checksums, GitHub's signed-tag
+verification result, and final `stable` commit. If the workflow fails before release creation, fix
+the cause and create a new candidate/tag as appropriate. If it fails after
+release creation but before `stable` advances, do not hide the partial state;
+repair the protected-branch permission or workflow and document the recovery.
+
+Do not publish the npm package. `private: true` is a release invariant.
