@@ -127,8 +127,21 @@ function marketplaceRef(entry) {
   try {
     const metadata = JSON.parse(readFileSync(join(entry.root, ".codex-marketplace-install.json"), "utf8"));
     if (canonicalRepository(metadata.source) !== REPOSITORY.toLowerCase()) return null;
-    return [metadata.ref, metadata.refName, metadata.ref_name]
+    const metadataRef = [metadata.ref, metadata.refName, metadata.ref_name]
       .find((value) => typeof value === "string" && value.length > 0) || null;
+    if (metadataRef) return metadataRef;
+  } catch {}
+
+  let gitDirectory = join(entry.root, ".git");
+  try {
+    const gitFile = readFileSync(gitDirectory, "utf8");
+    const match = /^gitdir:\s*(.+)\s*$/i.exec(gitFile);
+    if (!match) return null;
+    gitDirectory = resolve(entry.root, match[1]);
+  } catch {}
+  try {
+    const head = readFileSync(join(gitDirectory, "HEAD"), "utf8").trim();
+    return /^ref:\s+refs\/heads\/(.+)$/.exec(head)?.[1] || null;
   } catch {
     return null;
   }

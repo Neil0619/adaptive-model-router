@@ -22,7 +22,7 @@ All notable changes to this project are documented here.
 ### Changed
 
 - Minimum runtime is Node.js 24.15.0.
-- Plugin state uses Codex's writable `PLUGIN_DATA`, and upgrades validate the configured ref from Codex marketplace metadata.
+- Plugin state uses Codex's writable `PLUGIN_DATA`, and upgrades validate the configured ref from Codex marketplace metadata or its checked-out Git branch.
 - The product is explicitly a bounded-subagent router and does not claim root-model hot switching.
 - Legacy JSON learning history is not imported into v0.2 evidence windows.
 

@@ -32,9 +32,8 @@ if ($null -eq $git) {
     exit 2
 }
 
-$codex = Get-Command codex.exe -ErrorAction SilentlyContinue
-if ($null -eq $codex) { $codex = Get-Command codex.cmd -ErrorAction SilentlyContinue }
-if ($null -eq $codex) { $codex = Get-Command codex -ErrorAction SilentlyContinue }
+$codex = Get-Command codex -CommandType Application -ErrorAction SilentlyContinue |
+    Select-Object -First 1
 if ($null -eq $codex) {
     Write-Error "Adaptive Model Router requires the Codex CLI."
     exit 2
