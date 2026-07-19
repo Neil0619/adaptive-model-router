@@ -1,0 +1,31 @@
+{
+  "description": "Apply explicit router controls and enforce outcome recording for delegated stages.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/hook.mjs\" prompt",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\scripts\\hook.mjs\" prompt",
+            "timeout": 15,
+            "statusMessage": "Checking Adaptive Model Router controls"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/hook.mjs\" stop",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\scripts\\hook.mjs\" stop",
+            "timeout": 15,
+            "statusMessage": "Checking routed-stage verification"
+          }
+        ]
+      }
+    ]
+  }
+}

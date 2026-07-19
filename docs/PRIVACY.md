@@ -1,0 +1,43 @@
+# Privacy
+
+Adaptive Model Router is local-first. Its routing database is stored under the user's Codex home in `adaptive-model-router-v2/router.sqlite3`, unless `ADAPTIVE_ROUTER_HOME` is explicitly set.
+
+## Stored locally
+
+The SQLite database stores:
+
+- random route, proposal, and immutable policy revision IDs;
+- HMAC project and context identifiers;
+- selected model family/model/effort, category, reason codes, verification gate, and escalation count;
+- strict outcome status and aggregate retry/correction fields;
+- scoped settings, overrides, evidence cursors, and classifier circuit-breaker counters.
+
+The database does **not** store prompts, source code, assistant messages, transcripts, environment variables, secrets, or original project paths. The project HMAC uses a random salt generated locally. Git worktrees share their Git common directory identity; submodules remain separate.
+
+WAL sidecar files are part of the same SQLite database and follow the same data minimization rules.
+
+## Auxiliary classifier
+
+The classifier is used only for substantive borderline tasks. At most 2,000 characters are sent in total, consisting of:
+
+- a redacted task summary;
+- a short redacted phase;
+- fixed boolean signals.
+
+Code blocks, inline code, POSIX and Windows absolute paths, environment assignments, and common secret formats are removed. Raw evidence objects, source attachments, and arbitrary files are never sent. The classifier must return a closed structured schema with enumerated reason codes; free text cannot become a routing instruction.
+
+Each classifier app-server uses an ephemeral thread and a unique temporary SQLite home. The temporary home is removed when the classifier process exits.
+
+Set `classifierMode` to `local-only` or `disabled`, or set `ADAPTIVE_ROUTER_LOCAL_ONLY=1`, for zero classifier app-server calls.
+
+## MCP and hook output
+
+Status and diagnostic tools are scoped to the current project/context and return truncated opaque identifiers. They cannot enumerate other projects or sessions. Hook errors are generic and do not include the prompt, last assistant message, transcript path, working directory, or secrets.
+
+## Legacy data
+
+Data under the v0.1 legacy directory is never used for v0.2 learning automatically. Diagnostics report only whether legacy state is present. An explicit confirmed import can copy supported settings and an already-approved policy; historical records remain archived in place and are counted only, never added to the new learning window.
+
+## Deletion
+
+`clear_project_data` requires the exact confirmation `CLEAR_PROJECT_DATA` and removes only the current project's rows. Other projects and the local HMAC salt remain intact. Uninstalling the plugin does not silently delete learning data.

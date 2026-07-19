@@ -1,0 +1,4 @@
+interface:
+  display_name: "Adaptive Model Router"
+  short_description: "Route bounded stages to an available model and effort"
+  default_prompt: "Route the next substantive task stage and explain the reason codes."

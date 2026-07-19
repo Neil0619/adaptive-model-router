@@ -1,0 +1,50 @@
+{
+  "name": "adaptive-model-router",
+  "version": "0.2.0",
+  "description": "Routes bounded Codex task stages to an available model and reasoning effort, with local approval-gated learning.",
+  "author": {
+    "name": "niuzhenya",
+    "url": "https://github.com/Neil0619"
+  },
+  "homepage": "https://github.com/Neil0619/adaptive-model-router#readme",
+  "repository": "https://github.com/Neil0619/adaptive-model-router",
+  "license": "Apache-2.0",
+  "keywords": [
+    "codex",
+    "model-routing",
+    "subagents",
+    "local-first",
+    "windows"
+  ],
+  "skills": "./skills/",
+  "mcpServers": {
+    "adaptive-model-router": {
+      "command": "node",
+      "args": [
+        "${PLUGIN_ROOT}/scripts/mcp-server.mjs"
+      ]
+    }
+  },
+  "interface": {
+    "displayName": "Adaptive Model Router",
+    "shortDescription": "Delegate bounded stages to the right Codex model",
+    "longDescription": "Choose an available model and reasoning effort for bounded subagent stages, verify outcomes, and learn local project policy only after explicit approval.",
+    "developerName": "niuzhenya",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Model routing",
+      "Bounded delegation",
+      "Local learning",
+      "Cross-platform hooks"
+    ],
+    "websiteURL": "https://github.com/Neil0619/adaptive-model-router",
+    "privacyPolicyURL": "https://github.com/Neil0619/adaptive-model-router/blob/stable/docs/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/Neil0619/adaptive-model-router/blob/stable/LICENSE",
+    "defaultPrompt": [
+      "Route the next implementation stage.",
+      "Explain the current routing policy.",
+      "Diagnose Adaptive Model Router."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "adaptive-model-router",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first bounded subagent routing for Codex.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
+    "test:concurrency": "node --test test/concurrency.test.mjs",
+    "eval": "node eval/run.mjs",
+    "validate": "node scripts/validate.mjs"
+  }
+}

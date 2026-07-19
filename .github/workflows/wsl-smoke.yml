@@ -1,0 +1,22 @@
+name: WSL2 nightly smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "43 4 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  wsl2:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report WSL availability
+        shell: powershell
+        run: wsl.exe --status
+      - name: Run syntax smoke inside the runner WSL distribution when available
+        shell: powershell
+        run: wsl.exe bash -lc "cd '$env:GITHUB_WORKSPACE' && sh -n install.sh"

@@ -1,0 +1,29 @@
+# Changelog
+
+All notable changes to this project are documented here.
+
+## [0.2.0] - 2026-07-19
+
+### Added
+
+- Standard Codex plugin and repo marketplace manifests.
+- Bounded `delegate`, `continue`, and `ask_user` route actions.
+- Project/context-isolated SQLite state with transactional once overrides and outcomes.
+- Approval-gated immutable learning policies, rejection, and monotonic rollback.
+- Redacted eight-second auxiliary classifier with a persistent circuit breaker.
+- Strict MCP tools for routing, outcomes, configuration, diagnostics, project deletion, and policy management.
+- Exact-prefix control and two-pass Stop hooks with native Windows commands.
+- Idempotent POSIX and PowerShell installation wrappers with opt-in AGENTS patching.
+- Ubuntu, macOS, Windows, CodeQL, release artifact, and bilingual routing-evaluation workflows.
+
+### Changed
+
+- Minimum runtime is Node.js 24.15.0.
+- The product is explicitly a bounded-subagent router and does not claim root-model hot switching.
+- Legacy JSON learning history is not imported into v0.2 evidence windows.
+
+### Removed
+
+- Unsupported `agentType`/`agent_type` routing output.
+- JSON read-modify-write state and automatic once-override consumption before delegation.
+- Free-text classifier reasons and permissive outcome parsing.

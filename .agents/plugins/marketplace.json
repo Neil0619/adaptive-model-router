@@ -1,0 +1,20 @@
+{
+  "name": "adaptive-model-router",
+  "interface": {
+    "displayName": "Adaptive Model Router"
+  },
+  "plugins": [
+    {
+      "name": "adaptive-model-router",
+      "source": {
+        "source": "local",
+        "path": "./plugins/adaptive-model-router"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

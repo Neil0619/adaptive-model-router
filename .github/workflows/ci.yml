@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - stable
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [24.15.0, 24.x]
+    defaults:
+      run:
+        working-directory: plugins/adaptive-model-router
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          check-latest: true
+      - name: Test
+        run: npm test
+      - name: Validate syntax, contracts, manifest, and marketplace
+        run: npm run validate
+      - name: Run bilingual routing benchmark
+        run: npm run eval
+
+  shell-installers:
+    name: Installer syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check POSIX shell syntax
+        run: sh -n install.sh
+      - name: Parse PowerShell script
+        shell: pwsh
+        run: |-
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/install.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+
+  plugin-validation:
+    name: Plugin and skill validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+      - name: Validate plugin files
+        working-directory: plugins/adaptive-model-router
+        run: npm run validate
+      - name: Reject placeholders and private packages accidentally made publishable
+        run: |-
+          ! grep -R '\[TODO:' plugins/adaptive-model-router README.md README.zh-CN.md docs
+          node -e "const p=require('./plugins/adaptive-model-router/package.json'); if(p.private!==true) process.exit(1)"
