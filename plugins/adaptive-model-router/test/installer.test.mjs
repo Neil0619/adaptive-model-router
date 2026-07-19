@@ -48,7 +48,7 @@ async function fakeCodex(project, initial = {}) {
   let executable;
   if (process.platform === "win32") {
     executable = join(bin, "codex.cmd");
-    await writeFile(executable, `@echo off\r\n"${process.execPath}" "${source}" %*\r\n`, "ascii");
+    await writeFile(executable, `@echo off\r\n"${process.execPath}" "%~dp0fake-codex.mjs" %*\r\n`, "ascii");
   } else {
     executable = join(bin, "codex");
     await writeFile(executable, `#!${process.execPath}\n${FAKE_SOURCE}`);
