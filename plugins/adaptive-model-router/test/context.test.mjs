@@ -2,14 +2,27 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { normalizeIdentityPath, projectIdentityMaterial } from "../scripts/lib/context.mjs";
+import { join, resolve } from "node:path";
+import { normalizeIdentityPath, projectIdentityMaterial, stateRoot } from "../scripts/lib/context.mjs";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 function git(cwd, ...args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 }
+
+test("state uses the plugin writable data directory with explicit override precedence", () => {
+  assert.equal(
+    stateRoot({ ADAPTIVE_ROUTER_HOME: "explicit state", PLUGIN_DATA: "plugin state" }),
+    resolve("explicit state"),
+  );
+  assert.equal(stateRoot({ PLUGIN_DATA: "plugin state" }), resolve("plugin state"));
+  assert.equal(stateRoot({ CLAUDE_PLUGIN_DATA: "compat state" }), resolve("compat state"));
+  assert.equal(
+    stateRoot({ CODEX_HOME: "codex home" }),
+    join(resolve("codex home"), "adaptive-model-router-v2"),
+  );
+});
 
 test("Git worktrees share a project ID while nested repositories remain independent", async () => {
   const project = await temporaryProject();
