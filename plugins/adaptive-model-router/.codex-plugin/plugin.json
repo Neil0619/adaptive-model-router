@@ -17,15 +17,7 @@
     "windows"
   ],
   "skills": "./skills/",
-  "mcpServers": {
-    "adaptive-model-router": {
-      "command": "node",
-      "args": [
-        "${PLUGIN_ROOT}/scripts/node-launcher.mjs",
-        "${PLUGIN_ROOT}/scripts/mcp-server.mjs"
-      ]
-    }
-  },
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Adaptive Model Router",
     "shortDescription": "Delegate bounded stages to the right Codex model",
