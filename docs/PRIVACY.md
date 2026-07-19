@@ -38,8 +38,24 @@ The runtime launcher checks only Node executable versions from the current proce
 
 ## Legacy data
 
-Data under the v0.1 legacy directory is never used for v0.2 learning automatically. Diagnostics report only whether legacy state is present. An explicit confirmed import can copy supported settings and an already-approved policy; historical records remain archived in place and are counted only, never added to the new learning window.
+Data under the v0.1 legacy directory is never used for v0.2 learning
+automatically. Diagnostics report only whether legacy state is present. An
+explicit confirmed source-tree CLI import can copy supported settings and an
+already-approved policy:
+
+```bash
+node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs import-legacy --confirm IMPORT_LEGACY_SETTINGS_POLICY --context PROJECT_CONTEXT
+```
+
+Historical records remain archived in place and are counted only; they are
+never added to the new learning window. The import is idempotent for a project.
+Run the command with the intended project as the current working directory,
+because project identity is derived from that directory.
 
 ## Deletion
 
 `clear_project_data` requires the exact confirmation `CLEAR_PROJECT_DATA` and removes only the current project's rows. Other projects and the local HMAC salt remain intact. Uninstalling the plugin does not silently delete learning data.
+
+See [Tool reference](TOOLS.md) for the deletion contract and
+[Troubleshooting](TROUBLESHOOTING.md) before collecting diagnostic information
+for a report.
