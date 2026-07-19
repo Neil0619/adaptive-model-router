@@ -20,6 +20,7 @@ flowchart LR
 ## Components
 
 - `skills/adaptive-model-router/` describes the stage-boundary orchestration contract.
+- `scripts/node-launcher.mjs` starts under the Node executable resolved by Codex, discovers a qualifying Node 24.15+ runtime when necessary, and preserves stdio, arguments, environment, and exit status across the handoff.
 - `scripts/mcp-server.mjs` exposes strict, closed JSON schemas and emits only JSON-RPC on stdout.
 - `scripts/lib/router.mjs` applies deterministic scoring, override priority, catalog capability checks, and monotonic escalation.
 - `scripts/lib/app-server.mjs` owns one short-lived classifier app-server process with a single total deadline and early-notification buffering.
@@ -50,3 +51,4 @@ Uniqueness constraints protect route outcomes and pending proposals. Identical d
 - Classifier failure: deterministic local route, followed by a three-failure/ten-minute circuit breaker.
 - Storage failure during routing or hooks: sanitized fail-open behavior; outcome writes report an error because silently losing a final outcome would be misleading.
 - Two completed automatic reasoning escalations: ask the user on the following failure.
+- Node below 24.15: the launcher probes bounded standard runtime locations and either re-executes with a qualifying Node or exits with one generic error; router code never runs on the older runtime.

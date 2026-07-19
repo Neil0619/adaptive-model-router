@@ -21,6 +21,7 @@
     "adaptive-model-router": {
       "command": "node",
       "args": [
+        "${PLUGIN_ROOT}/scripts/node-launcher.mjs",
         "${PLUGIN_ROOT}/scripts/mcp-server.mjs"
       ]
     }
