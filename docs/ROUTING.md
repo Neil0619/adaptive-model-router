@@ -7,36 +7,50 @@ reasoning effort.
 
 ## What triggers routing
 
-There are two independent paths:
+There are two cooperating paths:
 
-1. The `UserPromptSubmit` hook runs for every submitted prompt, but only handles
-   a control beginning at the first character with `router:` or `路由器：`.
-   It does not route ordinary task prompts.
+1. The `UserPromptSubmit` hook handles exact-prefix controls. After the user
+   explicitly enables global automatic activation, it also injects a compact
+   router workflow instruction into ordinary prompts; it never sends the task
+   text to the router database.
 2. Task routing occurs when Codex uses the Adaptive Model Router skill for a
    substantive stage and calls `route_stage`. The skill calls at meaningful
    stage boundaries, not before every message.
 
-Installing the plugin therefore does not mean that every prompt automatically
-changes models. A route calculation exists only when `route_stage` is called.
+Installation alone does not activate ordinary prompts. Send `router: global on`
+or `路由器：全局开启` once after trusting the hook. Automatic activation means
+that substantive stages call `route_stage`; it does not mean that every prompt
+creates a subagent or changes the root model.
 After each call, the skill must show a visible notice that separates the
 host-managed root task from the bounded-stage target.
+
+The hook retains only a validated active root-model slug when one is available;
+missing or invalid values display as host-managed. It treats slug changes as
+manual-intent signals only while automatic activation is effective. The first
+valid observation in a task is a baseline. A later slug change
+places the task in `pending_confirmation`: the current request continues in the
+root, and no subagent may start until the user explicitly chooses manual-root or
+keep-automatic. Silence keeps later turns root-only. Reverting to the baseline
+cancels the pending change; another model change supersedes the old event.
 
 ## Decision order
 
 `route_stage`:
 
 1. validates the closed input and derives local HMAC project/context IDs;
-2. resolves request → once → session → project → optional global overrides;
-3. returns `continue` when routing is disabled;
-4. returns `continue` when the host cannot express model/effort delegation;
-5. without an override, continues for greetings, simple short questions, and
+2. returns `continue` with a dedicated reason when root-model intent is pending
+   or the current task is manual-root;
+3. resolves request → once → session → project → optional global overrides;
+4. returns `continue` when routing is disabled;
+5. returns `continue` when the host cannot express model/effort delegation;
+6. without an override, continues for greetings, simple short questions, and
    explicit no-work-product tasks;
-6. loads the visible known-model catalog and fails open to `continue` when none
+7. loads the visible known-model catalog and fails open to `continue` when none
    is available;
-7. scores deterministically and uses the redacted auxiliary classifier only
+8. scores deterministically and uses the redacted auxiliary classifier only
    for substantive borderline stages;
-8. applies risk floors, approved project policy, and monotonic escalation;
-9. verifies model/effort capabilities and atomically records the route. A once
+9. applies risk floors, approved project policy, and monotonic escalation;
+10. verifies model/effort capabilities and atomically records the route. A once
    override is consumed only with a committed `delegate`.
 
 An unavailable explicit model or effort returns `ask_user`; it is never
@@ -87,8 +101,9 @@ deterministic risk floor.
 
 Keep these concepts separate:
 
-- **Root-task model:** managed by the Codex host. The router cannot read its
-  exact name and never changes it.
+- **Root-task model:** managed by the Codex host. A trusted hook can observe its
+  slug, but not its reasoning effort; the router never changes either. The
+  bottom-right picker continues to represent this root task.
 - **Bounded-stage target:** `target.model` and `target.effort` on a `delegate`
   route.
 
@@ -99,9 +114,9 @@ router: status
 路由器：状态
 ```
 
-The report shows the root boundary, latest action, pending delegated stage,
-target model/effort, route timestamp, reasons, transition, outcome, and pending
-outcome/proposal counts.
+The report shows global automatic activation, task mode, observed root slug or
+host-managed fallback, pending model-intent confirmation, latest action,
+bounded target, route timestamp, reasons, outcome, and pending counts.
 
 ## Viewing delegation transitions
 
@@ -112,8 +127,8 @@ router: history 10
 路由器：历史 10
 ```
 
-The count is `1..20`. Records include the route timestamp, action,
-model/effort, `initial_delegate`, `target_unchanged`, or `target_changed`
+The count is `1..20`. Records include the root-model snapshot, route timestamp,
+action, bounded model/effort, `initial_delegate`, `target_unchanged`, or `target_changed`
 transition, reason codes, route ID, and outcome.
 
 The timestamp is the SQLite route-commit time. A record proves a stage routing

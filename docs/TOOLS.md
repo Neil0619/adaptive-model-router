@@ -50,11 +50,18 @@ Important evidence fields include `workProduct`, `requirementsSettled`,
 
 Output always contains:
 
-- `schemaVersion` and `routeId`;
+- `schemaVersion: "3.0"` and `routeId`;
 - `action`: `continue`, `delegate`, or `ask_user`;
 - optional `target { model, effort }` only for `delegate`;
 - `category`, enumerated `reasonCodes`, and `verificationGate`;
 - classifier and escalation status.
+- `taskMode`: `automatic`, `pending_confirmation`, or `manual_root`;
+- `rootTask`, containing an optional hook-observed model slug, host-only effort
+  visibility, and `changedByRouter: false`.
+
+When `taskMode` is `pending_confirmation` or `manual_root`, `route_stage`
+returns `continue` with `HOST_MODEL_INTENT_PENDING` or
+`MANUAL_ROOT_SELECTED`; it never delegates in those modes.
 
 If the action is `delegate`, create exactly one bounded subagent using
 `target.model` and map `target.effort` to the host's `reasoning_effort`
@@ -62,8 +69,9 @@ parameter. The root integrates the result and runs the returned verification
 gate. If the host cannot express those parameters, continue in the root and do
 not claim the root model changed.
 
-After every route, the skill emits a compact visible notice. It always labels
-the root-task model as host-managed and unchanged; a delegated target is shown
+After every route, the skill emits a compact visible notice. It shows the
+hook-observed root slug when available, always marks it unchanged, and notes
+that root effort is available only in the composer; a delegated target is shown
 as a bounded-stage model/effort, never as the current root model.
 
 `continue` and `ask_user` routes do not accept outcomes.
@@ -97,11 +105,12 @@ continues and stops again without one, the hook records `unknown`.
 
 | Tool | Purpose | State change |
 | --- | --- | --- |
-| `get_route_status` | Return the host-managed root boundary, current-stage state, and latest redacted route/target/transition/outcome for the current project/context. | No |
+| `get_route_status` | Return global auto activation, task mode, root boundary, pending host-model intent, and latest route/target/outcome. | No |
 | `get_route_history` | Return a timestamped current-project/context route timeline, optionally filtered by action. | No |
 | `diagnose_router` | Check database health, classifier circuit state, current redacted status, and legacy-state presence. | No |
 | `set_route_override` | Lock, clear, enable, or disable routing at `once`, `session`, `project`, optional `global`, or `all` scope where supported. | Yes |
-| `configure_router` | Configure project/global enablement, classifier mode, and whether global overrides are allowed. | Yes |
+| `configure_router` | Configure project/global enablement, global-only `autoActivate`, classifier mode, and whether global overrides are allowed. | Yes |
+| `resolve_host_model_intent` | Resolve one current-context pending change as `manual_root` or `keep_automatic`; identical repeats are idempotent and conflicts fail. | Yes; explicit user answer required |
 | `list_policy_proposals` | List pending proposals for the current project. | No |
 | `approve_policy_proposal` | Create an immutable policy revision from a proposal. | Yes; explicit user approval required |
 | `reject_policy_proposal` | Reject a proposal and advance its evidence window. | Yes; explicit user instruction required |
@@ -115,16 +124,17 @@ also deliberate user actions; an agent must not infer them from routine work.
 `action` (`all`, `delegate`, `continue`, or `ask_user`). Each newest-first item
 contains:
 
-- route ID, commit timestamp, action, category, reasons, verification gate,
+- route ID, commit timestamp, root-model snapshot, action, category, reasons, verification gate,
   classifier state, escalation count, and prior route ID;
 - an optional bounded-stage `target {model, effort}`;
 - `transition.state`: `initial_delegate`, `target_unchanged`,
   `target_changed`, or `not_delegated`, with `from`/`to` targets where useful;
 - the strict final outcome and recorded timestamp, or `null` while pending.
 
-The top-level `rootTask` is always
-`{modelVisibility: "host_managed", changedByRouter: false}`. This is a product
-boundary: the plugin cannot introspect the exact root model. A history
+The top-level and per-route `rootTask` use
+`modelVisibility: "hook_observed"` plus `model` when the hook supplied a valid
+slug, otherwise `modelVisibility: "host_managed"`. Both include
+`reasoningEffortVisibility: "host_only"` and `changedByRouter: false`. A history
 timestamp proves that a route decision was committed; it does not by itself
 prove that the host successfully started the subagent.
 
@@ -143,6 +153,24 @@ The fixed priority is:
 Only prompts beginning at the first character with `router:` or `路由器：` are
 hook control commands. Quotes, code blocks, negations, later-line prefixes, and
 ordinary discussion do not change state.
+
+Automatic activation and task-mode controls are:
+
+```text
+router: global on
+router: global off
+router: manual
+router: auto session
+路由器：全局开启
+路由器：全局关闭
+路由器：本任务手动
+路由器：本任务自动
+```
+
+The first valid root-model slug in a task is only a baseline. Later changes
+create a current-project/context `changeId`. `resolve_host_model_intent`
+accepts that ID and no other task's ID. Root reasoning effort is not part of
+the Hook input and cannot trigger this flow.
 
 The read-only visible reports are:
 

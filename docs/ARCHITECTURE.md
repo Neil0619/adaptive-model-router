@@ -8,7 +8,12 @@ operations and diagnostics CLI, not a global command.
 
 ```mermaid
 flowchart LR
-    Root["Root Codex task"] --> Route["route_stage"]
+    Prompt["UserPromptSubmit hook"] --> OptIn["global automatic opt-in"]
+    Prompt --> Observe["observe root-model slug"]
+    Observe --> Intent["automatic / pending / manual_root"]
+    OptIn --> Root["Root Codex task"]
+    Intent --> Root
+    Root --> Route["route_stage"]
     Route --> Deterministic["Deterministic scoring"]
     Deterministic -. "borderline only" .-> Classifier["Redacted auxiliary classifier"]
     Route --> SQLite["Project-local policy and outcomes"]
@@ -20,6 +25,8 @@ flowchart LR
     Outcome --> SQLite
     SQLite --> History["status + route history projection"]
     SQLite --> Proposal["manual policy proposal"]
+    Intent -. "explicit confirmation" .-> Resolve["resolve_host_model_intent"]
+    Resolve --> SQLite
 ```
 
 ## Components
@@ -30,8 +37,9 @@ flowchart LR
 - `scripts/lib/router.mjs` applies deterministic scoring, override priority, catalog capability checks, and monotonic escalation.
 - `scripts/lib/app-server.mjs` owns one short-lived classifier app-server process with a single total deadline and early-notification buffering.
 - `scripts/lib/database.mjs` owns SQLite migrations, short `BEGIN IMMEDIATE` transactions, exactly-once claims, and project/context isolation.
-- `scripts/hook.mjs` handles exact control prefixes, visible status/history
-  reports, and the two-pass Stop outcome reminder.
+- `scripts/hook.mjs` handles exact control prefixes, the global automatic
+  opt-in, root-model observation, fixed model-visible context, visible
+  status/history reports, and the two-pass Stop outcome reminder.
 - `scripts/lib/presentation.mjs` formats user-visible reports while preserving
   the root-model versus bounded-target boundary.
 - `hooks/hooks.json` supplies separate POSIX and `commandWindows` launch commands.
@@ -41,13 +49,20 @@ flowchart LR
 ## Route lifecycle
 
 1. Derive a project HMAC from the Git common directory, submodule common directory, or canonical non-Git working directory. Derive a second context HMAC from the task identifier.
-2. Resolve overrides in this order: request, once, session, project, optional global.
-3. Continue immediately for trivial/no-output work unless an override explicitly requests delegation.
-4. Load visible known models, sorted by numeric priority, and check reasoning-effort capabilities.
-5. Score locally. Only substantive borderline stages may call the auxiliary classifier.
-6. Apply risk floors and any monotonic failure escalation.
-7. Insert the route. A once override is claimed and deleted in the same transaction as a real `delegate` insert.
-8. For a `delegate` route, the root performs the verification gate and records
+2. When the global opt-in is enabled, the prompt hook observes the host-provided
+   active model slug. The first valid value establishes a baseline. A later
+   change creates one pending intent event for the task; no value or an invalid
+   value remains host-managed and does not imply manual intent.
+3. If the task is pending confirmation or `manual_root`, return `continue` with
+   no bounded target. Resolving `keep_automatic` affects the next stage;
+   resolving `manual_root` lasts only for the current task/context.
+4. Resolve overrides in this order: request, once, session, project, optional global.
+5. Continue immediately for trivial/no-output work unless an override explicitly requests delegation.
+6. Load visible known models, sorted by numeric priority, and check reasoning-effort capabilities.
+7. Score locally. Only substantive borderline stages may call the auxiliary classifier.
+8. Apply risk floors and any monotonic failure escalation.
+9. Insert the route. A once override is claimed and deleted in the same transaction as a real `delegate` insert. The row snapshots the currently observed root-model slug separately from the bounded target.
+10. For a `delegate` route, the root performs the verification gate and records
    exactly one outcome. `continue` and `ask_user` routes do not have outcomes.
 
 The route stores the model target and decision metadata, not the prompt or
@@ -58,18 +73,31 @@ failure evidence; they cannot submit a forged previous route object.
 same route/outcome rows. Consecutive delegated targets are compared at read
 time to classify an initial, unchanged, or changed target. No second log is
 maintained, so visible history cannot drift from learning/outcome state. The
-projection explicitly reports that the root model is host-managed and was not
-changed by the router.
+projection explicitly reports the hook-observed root model when available,
+that reasoning effort remains host-only, and that the router did not change the
+root model. The Codex model selector therefore continues to describe the root
+task, never the bounded-stage target.
+
+SQLite `user_version` 2 adds task root-model state, model-change events, and the
+root snapshot on each route while preserving version 1 routes, outcomes,
+policy revisions, proposals, and learning cursors.
 
 ## Concurrency
 
 The database uses WAL, `synchronous=NORMAL`, foreign keys, `trusted_schema=OFF`, a busy timeout, and bounded retry around short `BEGIN IMMEDIATE` transactions. No classifier, model discovery, file traversal, or other external work occurs inside a write transaction.
 
-Uniqueness constraints protect route outcomes and pending proposals. Identical duplicate outcomes are idempotent; conflicting duplicates fail. Approval checks the proposal's base revision in the same transaction that creates its immutable child revision.
+Uniqueness constraints protect route outcomes, pending proposals, and the one
+effective pending host-model event per project/context. Concurrent hook
+processes observing the same change converge on that event. Identical duplicate
+outcomes and identical intent resolutions are idempotent; conflicting
+duplicates fail. Approval checks the proposal's base revision in the same
+transaction that creates its immutable child revision.
 
 ## Failure behavior
 
 - Missing catalog or unavailable host delegation: continue with the current root model.
+- Pending host-model intent or current-task manual mode: continue with the root
+  model and never create a bounded subagent.
 - Explicit unavailable target: ask the user; never silently substitute.
 - Classifier failure: deterministic local route, followed by a three-failure/ten-minute circuit breaker.
 - Storage failure during routing or hooks: sanitized fail-open behavior; outcome writes report an error because silently losing a final outcome would be misleading.

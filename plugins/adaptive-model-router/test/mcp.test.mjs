@@ -57,6 +57,7 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
       "reject_policy_proposal",
       "rollback_policy",
       "configure_router",
+      "resolve_host_model_intent",
       "diagnose_router",
       "clear_project_data",
     ]);
@@ -69,6 +70,7 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
     assert.equal(responses[6].result.isError, false);
     assert.deepEqual(responses[6].result.structuredContent.rootTask, {
       modelVisibility: "host_managed",
+      reasoningEffortVisibility: "host_only",
       changedByRouter: false,
     });
     assert.deepEqual(responses[6].result.structuredContent.routes, []);

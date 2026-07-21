@@ -17,6 +17,14 @@ test("SQLite files and redacted status contain no prompt, source, absolute path,
   try {
     await withRouterEnvironment(project, async () => {
       const store = new RouterStore();
+      const observedContext = store.context({ cwd: project.root, contextId });
+      store.observeHostModel(observedContext, secret, { detectChanges: false });
+      assert.equal(store.rootTask(observedContext).modelVisibility, "host_managed");
+      assert.throws(
+        () => store.setOverride(observedContext, { scope: "session", model: project.root }),
+        /invalid format/,
+      );
+      store.observeHostModel(observedContext, "gpt-5.6-sol", { detectChanges: false });
       const route = await routeStage(routeInput({ goal, contextId }), { catalog: CATALOG, cwd: project.root, store });
       recordOutcome({
         routeId: route.routeId,
@@ -35,6 +43,7 @@ test("SQLite files and redacted status contain no prompt, source, absolute path,
         diagnose: store.diagnose(context),
       });
       for (const forbidden of [goal, source, project.root, contextId, secret]) assert.equal(publicState.includes(forbidden), false, forbidden);
+      assert.match(publicState, /gpt-5\.6-sol/);
       store.close();
 
       const stateFiles = await readdir(project.home);
@@ -61,6 +70,8 @@ test("status is current-context only and clear_project_data requires confirmatio
       const routeA = await routeStage(routeInput({ contextId: "context-a", override: { model: "gpt-5.6-sol" } }), { catalog: CATALOG, cwd: project.root, store });
       const routeB = await routeStage(routeInput({ contextId: "context-b", override: { model: "gpt-5.6-luna" } }), { catalog: CATALOG, cwd: project.root, store });
       await routeStage(routeInput({ contextId: "other", override: { model: "gpt-5.6-terra" } }), { catalog: CATALOG, cwd: other, store });
+      store.observeHostModel(store.context({ cwd: project.root, contextId: "context-a" }), "gpt-5.6-sol", { detectChanges: false });
+      store.observeHostModel(store.context({ cwd: other, contextId: "other" }), "gpt-5.6-terra", { detectChanges: false });
       const statusA = await callRouterTool("get_route_status", { contextId: "context-a" }, { store, cwd: project.root });
       assert.equal(statusA.latestRoute.routeId, routeA.routeId);
       assert.notEqual(statusA.latestRoute.routeId, routeB.routeId);
@@ -75,6 +86,7 @@ test("status is current-context only and clear_project_data requires confirmatio
       assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM routes").get().count), 3);
       await callRouterTool("clear_project_data", { contextId: "context-a", confirm: "CLEAR_PROJECT_DATA" }, { store, cwd: project.root });
       assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM routes").get().count), 1);
+      assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM host_model_state").get().count), 1);
       assert.equal(store.db.prepare("SELECT value FROM meta WHERE key = 'local_salt'").get().value, salt);
       store.close();
     });

@@ -9,11 +9,15 @@ import {
 
 test("catalog filters hidden and unknown models from automatic selection", () => {
   const catalog = normalizeCatalog([
+    { slug: "C:/Users/person/private", visibility: "list", priority: -2 },
+    { slug: "sk-private-model-secret-123456", visibility: "list", priority: -1 },
     { slug: "gpt-5.6-sol", visibility: "hide", priority: 1, supported_reasoning_levels: ["high"] },
-    { slug: "future-mystery", visibility: "list", priority: 0, supported_reasoning_levels: ["high"] },
+    { slug: "future-mystery", id: "sk-private-alias-secret-123456", visibility: "list", priority: 0, supported_reasoning_levels: ["high"] },
     { slug: "gpt-5.6-terra", visibility: "list", priority: 2, supported_reasoning_levels: ["medium"] },
   ]);
   assert.equal(modelFamily(catalog[0]), null);
+  assert.equal(catalog[0].id, "future-mystery");
+  assert.equal(catalog.some((entry) => entry.model.includes("private")), false);
   assert.deepEqual(selectAutomaticRoute(catalog, "sol", "medium"), {
     model: "gpt-5.6-terra",
     effort: "medium",

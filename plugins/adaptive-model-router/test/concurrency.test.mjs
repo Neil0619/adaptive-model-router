@@ -43,9 +43,9 @@ test("50 processes concurrently migrate an empty SQLite database", async () => {
   try {
     const results = await Promise.all(Array.from({ length: 50 }, (_, index) => runWorker(project, "migrate", `migration-${index}`)));
     assert.equal(results.length, 50);
-    assert.ok(results.every((result) => result.version === 1 && result.health === "ok"));
+    assert.ok(results.every((result) => result.version === 2 && result.health === "ok"));
     const store = new RouterStore({ path: join(project.home, "router.sqlite3") });
-    assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 1);
+    assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 2);
     store.close();
   } finally {
     await project.cleanup();

@@ -1,6 +1,6 @@
 export const ROUTER_VERSION = "0.3.0";
-export const SCHEMA_VERSION = "2.0";
-export const DATABASE_VERSION = 1;
+export const SCHEMA_VERSION = "3.0";
+export const DATABASE_VERSION = 2;
 export const MIN_NODE = [24, 15, 0];
 export const MAX_ESCALATIONS = 2;
 export const CLASSIFIER_TIMEOUT_MS = 8_000;
@@ -74,13 +74,19 @@ export const REASON_CODES = [
   "NON_REASONING_FAILURE",
   "ESCALATION_LIMIT_REACHED",
   "MONOTONIC_ESCALATION_UNAVAILABLE",
+  "HOST_MODEL_INTENT_PENDING",
+  "MANUAL_ROOT_SELECTED",
 ];
 
 export const DEFAULT_SETTINGS = Object.freeze({
   enabled: true,
+  autoActivate: false,
   classifierMode: "auxiliary",
   allowGlobalOverride: false,
 });
+
+export const TASK_MODES = ["automatic", "pending_confirmation", "manual_root"];
+export const HOST_MODEL_INTENT_DECISIONS = ["manual_root", "keep_automatic"];
 
 export const DEFAULT_OFFSETS = Object.freeze(
   Object.fromEntries(CATEGORIES.map((category) => [category, 0])),

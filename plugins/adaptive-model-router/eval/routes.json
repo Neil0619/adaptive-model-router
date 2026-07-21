@@ -30,6 +30,10 @@
     { "prompt": "路由器：启用", "changesState": true },
     { "prompt": "router: lock gpt-5.6-sol high once", "changesState": true },
     { "prompt": "路由器：自动 会话", "changesState": true },
+    { "prompt": "router: global on", "changesState": true },
+    { "prompt": "路由器：全局关闭", "changesState": true },
+    { "prompt": "router: manual", "changesState": true },
+    { "prompt": "路由器：本任务自动", "changesState": true },
     { "prompt": "Please discuss router: off", "changesState": false },
     { "prompt": "不要执行 router: off", "changesState": false },
     { "prompt": "> router: off", "changesState": false },
@@ -41,6 +45,9 @@
     { "prompt": "router: this is ordinary discussion", "changesState": false },
     { "prompt": "路由器：这是普通讨论", "changesState": false },
     { "prompt": "not router: off", "changesState": false },
-    { "prompt": "`router: off`", "changesState": false }
+    { "prompt": "`router: off`", "changesState": false },
+    { "prompt": "请讨论路由器：全局开启", "changesState": false },
+    { "prompt": "不要执行 router: global off", "changesState": false },
+    { "prompt": "`路由器：本任务手动`", "changesState": false }
   ]
 }

@@ -52,6 +52,21 @@ Do not use `--dangerously-bypass-hook-trust` for normal installation or smoke
 testing. Also check that hooks have not been disabled by local or managed Codex
 configuration.
 
+## Ordinary tasks do not trigger automatic routing
+
+Installation deliberately leaves global automatic routing off. In a trusted
+new task, opt in once for the shared local Codex Home:
+
+```text
+router: global on
+```
+
+The setting persists across projects and restarts. If the command succeeds but
+ordinary substantive tasks still receive no router context, re-open `/hooks`,
+trust the current `UserPromptSubmit` definition, and start another new task.
+Hook trust is hash-specific after an upgrade. Simple questions and stages with
+no work product may still continue in the root task by design.
+
 ## Node.js is missing or too old
 
 The router requires Node.js 24.15.0 or newer. Check both the interactive shell
@@ -107,6 +122,11 @@ Inspect `reasonCodes`:
 - `CATALOG_UNAVAILABLE`: no usable visible known-model catalog was available;
   the router failed open to the root task.
 - `ROUTER_DISABLED`: routing is disabled at an active scope.
+- `HOST_MODEL_INTENT_PENDING`: the host model slug changed and the task is
+  waiting for an explicit manual-versus-automatic decision. The current request
+  continues on the root model.
+- `MANUAL_ROOT_SELECTED`: this task was explicitly placed in root-only manual
+  mode.
 - `STORAGE_UNAVAILABLE`: local state failed and routing failed open.
 
 Do not invent a model target after a fail-open result. Diagnose the catalog,
@@ -120,10 +140,35 @@ called in this task or the caller used a different `contextId`. The Stop hook,
 status, history, route, and outcome lifecycle must use the same host task/session
 identifier.
 
-It is expected that status cannot name the root-task model: Codex owns that
-model and the router never changes it. A model appears only as a bounded-stage
-target on a `delegate` route. See [Routing triggers and history](ROUTING.md) for
-the exact distinction and score thresholds.
+When the trusted hook supplies a valid model slug, status can display that
+observed root-task model. Otherwise it displays `host-managed`. The router
+cannot read root reasoning effort; inspect the Codex model selector for that.
+The selector always describes the root task and never changes to show a bounded
+subagent. History rows separately label their root-model snapshot and bounded
+stage target. See [Routing triggers and history](ROUTING.md) for the exact
+distinction and score thresholds.
+
+## A model change reminder keeps appearing
+
+A changed host model creates a pending intent event. The current and later
+unconfirmed requests continue on the new root model without delegation. Reply
+with one of these standalone control commands:
+
+```text
+router: manual
+router: auto session
+```
+
+The first keeps this task root-only. The second keeps automatic routing and
+restores delegation from the next substantive stage. Restoring the original
+model slug cancels the pending event; another model change supersedes the old
+event. `resolve_host_model_intent` is the strict MCP equivalent when a caller
+already has the displayed change ID.
+
+The first model observed in a task only establishes a baseline and never asks a
+question. The hook sees a model slug but not reasoning effort, so changing only
+Sol Max to Sol High is not detectable. Send `router: manual` explicitly when an
+effort-only change is intended to make the current task root-only.
 
 ## Routing returns `ask_user`
 

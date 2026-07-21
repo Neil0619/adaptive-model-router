@@ -253,6 +253,7 @@ async function installOrUpgrade(args, state) {
   if (args.patchAgents) patchAgents();
   process.stdout.write(`Adaptive Model Router ${ROUTER_VERSION} is installed.\n`);
   process.stdout.write("Trust the plugin hooks when Codex prompts, then start a new task.\n");
+  process.stdout.write('To opt into automatic routing for all local projects, send "router: global on" once in the new task.\n');
 }
 
 function uninstall(args, state) {

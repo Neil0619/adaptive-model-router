@@ -20,14 +20,20 @@ outcome、隐私断言、升级/卸载/重装和 AGENTS marker。遇到 Stop con
 
 The smoke passes only when all of the following succeed:
 
-- installation from the reviewed `stable` ref with the two native Codex
-  commands;
+- installation from the frozen reviewed candidate ref with the two native
+  Codex commands while published `stable` remains on v0.2.0;
 - review and trust of both plugin-bundled command hooks;
+- one persisted global automatic-routing opt-in and an ordinary substantive
+  task that does not name the skill or repeat a trigger phrase;
 - one substantive `delegate` route and exactly one bounded subagent using the
   returned model and effort;
 - root verification followed by one strict final outcome;
 - visible status/history that preserve the root-model versus bounded-target
   boundary and include the delegated route;
+- one host-model slug change that stays root-only while pending, followed by
+  both keep-automatic and current-task manual-root behavior;
+- confirmation that the Codex model selector continues to show the root task,
+  not the bounded subagent target;
 - redacted status and diagnostics with no prompt, source, secret, or absolute
   project path;
 - native upgrade and uninstall;
@@ -56,7 +62,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/v030-smoke-handoff"
+$CandidateRef = "codex/v030-auto-routing-smoke"
 $SmokeRoot = Join-Path $env:TEMP ("Adaptive Router Windows 冒烟 " + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $SmokeRoot "source checkout"
 $Project = Join-Path $SmokeRoot "测试 project with spaces"
@@ -114,19 +120,24 @@ In the new task:
 If the plugin or hooks are not visible, restart the ChatGPT desktop app and
 start another new task. If they remain unavailable, stop and report the failure.
 
-Send this exact-prefix control once to exercise the submit hook:
+Send this exact-prefix control once to opt in for all local projects sharing
+this Codex Home:
 
 ```text
-router: auto session
+router: global on
 ```
+
+Then send `router: status`. Confirm that global automatic routing is on, this
+task is automatic, and the first valid host model is only the baseline. There
+must be no model-intent question on this first observation.
 
 ## 5. Run the route → subagent → verification → outcome smoke
 
-Paste the following prompt into the fresh task:
+Paste the following ordinary task prompt into the fresh task. It intentionally
+does not name the skill, use `$adaptive-model-router`, or contain a router
+control prefix:
 
 ```text
-Use the installed Adaptive Model Router skill for this smoke test.
-
 Use the current Codex task/thread/session identifier exposed by the host as
 contextId. It must be the same stable identifier received by the plugin hooks.
 Reuse that exact contextId for every router tool call in this task. Do not
@@ -134,7 +145,9 @@ invent an unrelated timestamp identifier. If the host does not expose a stable
 current-task identifier, stop and report that Stop-hook correlation cannot be
 verified.
 
-At the implementation stage, call route_stage with this factual input:
+Follow the fixed model-visible automatic-routing context injected by the
+trusted prompt hook. At the implementation stage, call route_stage with this
+factual input:
 - goal: Implement and test a dependency-free Node.js 24 line-normalization utility in this temporary project.
 - phase: implementation
 - evidence:
@@ -174,7 +187,7 @@ actual retry count, userCorrection=false unless I corrected the result, and:
 
 Finally call get_route_status, get_route_history with limit=10 and action=all,
 and diagnose_router with the same contextId. Check that status preserves the
-host-managed root-model boundary, history contains this route and its outcome,
+hook-observed-or-host-managed root-model boundary, history contains this route and its outcome,
 and their serialized output contains no task prompt, source code,
 environment-variable values, secret values, or absolute project path. Return a
 short smoke summary containing the route action, target model/effort, target
@@ -184,8 +197,58 @@ privacy assertion. Do not return the absolute project path.
 ```
 
 The Stop hook must not report a missing outcome after the successful result.
+While the bounded subagent runs, confirm visually that the Codex model selector
+continues to show the root task model. Inspect the Codex Subagents view for the
+bounded target instead.
 
-## 6. Verify an ordinary prompt does not act as a control
+## 6. Exercise host-model intent protection
+
+Record the root-model slug shown by `router: status`. In the Codex model
+selector, choose a different model slug, not merely a different effort such as
+Sol Max versus Sol High. Send this ordinary substantive review request:
+
+```text
+Review the line-normalization utility and its tests for missing edge cases.
+Follow the automatic router context, make no file changes, and return a concise
+finding plus the redacted route action and reason codes.
+```
+
+The current request must use the newly selected root model, create no bounded
+subagent, and return `continue` with `HOST_MODEL_INTENT_PENDING`. A reminder
+must offer current-task manual mode or keeping automatic routing. Send another
+ordinary prompt without answering; it must reuse the same pending change rather
+than create a second effective event.
+
+Choose keep-automatic with the standalone command:
+
+```text
+router: auto session
+```
+
+`router: status` must now show automatic mode and no pending change. Automatic
+routing resumes from the next stage, not retroactively for the request that
+created the event.
+
+Use the model selector to choose a different slug once more and send the same
+review request. After the pending reminder, choose current-task manual mode:
+
+```text
+router: manual
+```
+
+Call `route_stage` for a substantive implementation stage with
+`hostCanDelegate=true`. It must return `continue` with
+`MANUAL_ROOT_SELECTED`, with no target or subagent. Restore automatic mode for
+the remainder of the smoke:
+
+```text
+router: auto session
+```
+
+The hook cannot observe reasoning effort. If only effort is changed, no pending
+event is expected; `router: manual` is the required explicit intent signal.
+
+## 7. Verify an ordinary prompt does not act as a control
 
 Disable the router for the current session with an exact control:
 
@@ -208,7 +271,7 @@ The route must return `continue` with `ROUTER_DISABLED`. Restore normal behavior
 router: auto session
 ```
 
-## 7. Exercise upgrade, uninstall, and wrappers
+## 8. Exercise upgrade, uninstall, and wrappers
 
 Exit the smoke task, then run the native lifecycle:
 
@@ -259,7 +322,23 @@ codex plugin marketplace list
 codex plugin list
 ```
 
-## 8. Report template
+Start Codex again from a second temporary project without sending
+`router: global on` again:
+
+```powershell
+$Project2 = Join-Path $SmokeRoot "第二个 project"
+New-Item -ItemType Directory -Force -Path $Project2 | Out-Null
+Set-Location $Project2
+git init
+codex
+```
+
+Trust the current hook hash if Codex asks after reinstall, then send
+`router: status`. Global automatic routing must still be on while this new task
+has its own automatic mode and root-model baseline. This confirms persistence
+across reinstall/restart and isolation of task-specific manual state.
+
+## 9. Report template
 
 Return this completed template to the release maintainer:
 
@@ -275,9 +354,13 @@ Candidate commit SHA:
 Native install: PASS | FAIL
 UserPromptSubmit hook trusted/exercised: PASS | FAIL
 Stop hook trusted/exercised: PASS | FAIL
+Global automatic opt-in persisted across project/restart: PASS | FAIL
+First model observation created no pending event: PASS | FAIL
 Route action:
+Observed root model:
 Target model:
 Target effort:
+Codex selector stayed on root model: PASS | FAIL
 Reason codes:
 Verification gate:
 node --test: PASS | FAIL
@@ -285,6 +368,11 @@ record_outcome: PASS | FAIL
 Pending outcomes after record:
 Diagnostics/database health:
 Privacy assertion: PASS | FAIL
+Changed model stayed root-only while pending: PASS | FAIL
+Repeated reminder reused one change event: PASS | FAIL
+Keep-automatic restored next-stage routing: PASS | FAIL
+Manual-root blocked delegation: PASS | FAIL
+Effort-only visibility limitation acknowledged: PASS | FAIL
 Negative control prompt changed state: YES | NO
 Negative control route reason code:
 Native upgrade/uninstall: PASS | FAIL
@@ -304,9 +392,9 @@ $CandidateCommit
 
 Mark the smoke `FAIL` and do not create the release tag if any required step
 fails, the route does not return `delegate`, the host cannot use the returned
-model/effort, a hook cannot be trusted, an outcome remains pending, diagnostics
-leak sensitive content or an absolute project path, or installation is not
-idempotent.
+model/effort, a hook cannot be trusted, a model-change request delegates while
+pending/manual, an outcome remains pending, diagnostics leak sensitive content
+or an absolute project path, or installation is not idempotent.
 
 Do not call `clear_project_data` as part of this smoke. Uninstall deliberately
 leaves learning data intact.

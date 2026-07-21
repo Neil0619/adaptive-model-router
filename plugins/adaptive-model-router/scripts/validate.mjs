@@ -56,9 +56,12 @@ assert(!JSON.stringify(routerMcp).includes("PLUGIN_ROOT"), "MCP config must not 
 assert(skill.includes("`target.effort` value to the current Codex subagent `reasoning_effort` parameter"), "skill must map router effort to the Codex subagent parameter");
 assert(!skill.includes("using exactly `target.model` and `target.effort`"), "skill must not present router output fields as host parameter names");
 assert(skill.includes("root-task model is unchanged and host-managed"), "skill must require a visible root/stage model boundary");
+assert(skill.includes("global automatic activation"), "skill must document opt-in automatic activation");
+assert(skill.includes("`resolve_host_model_intent`"), "skill must document host-model intent resolution");
 assert(skill.includes("`get_route_history`"), "skill must expose the route history workflow");
 assert(skillUi.includes("$adaptive-model-router"), "skill default prompt must explicitly invoke $adaptive-model-router");
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "get_route_history"), "MCP must expose get_route_history");
+assert(TOOL_DEFINITIONS.some((tool) => tool.name === "resolve_host_model_intent"), "MCP must expose host-model intent resolution");
 for (const event of ["UserPromptSubmit", "Stop"]) {
   const command = hooks.hooks?.[event]?.[0]?.hooks?.[0];
   assert(typeof command?.commandWindows === "string", `${event} must define commandWindows`);

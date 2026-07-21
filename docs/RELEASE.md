@@ -10,7 +10,9 @@ commit.
 Keep `stable` on the last published release until the release workflow has
 created the new artifacts. For logged-in smoke testing, freeze a dedicated
 candidate ref at the reviewed commit. For v0.3.0 the handoff ref is
-`codex/v030-smoke-handoff`; do not move it after smoke evidence is collected.
+`codex/v030-auto-routing-smoke`; do not move it after smoke evidence is collected.
+The older `codex/v030-smoke-handoff` ref belongs to the pre-auto-routing
+candidate and must not be repointed or reused.
 
 Record the candidate:
 
@@ -18,7 +20,7 @@ Record the candidate:
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/main
-git rev-parse origin/codex/v030-smoke-handoff
+git rev-parse origin/codex/v030-auto-routing-smoke
 git rev-parse origin/stable
 ```
 
@@ -27,7 +29,7 @@ The worktree must be clean. The candidate ref must contain the reviewed tree;
 verify that the release-relevant trees are byte-identical:
 
 ```bash
-git diff --exit-code origin/main origin/codex/v030-smoke-handoff -- \
+git diff --exit-code origin/main origin/codex/v030-auto-routing-smoke -- \
   .agents plugins install.sh install.ps1 .github/workflows/release.yml
 ```
 
@@ -64,21 +66,31 @@ npm run eval
 
 Run the complete route lifecycle once on macOS and once on native Windows 11:
 
-1. Install from candidate `stable` with the two native Codex commands.
+1. Install from the frozen candidate ref with the two native Codex commands;
+   published `stable` remains on v0.2.0 until all smoke evidence passes.
 2. Review and trust the plugin's `UserPromptSubmit` and `Stop` handlers.
-3. Start a new task and obtain a substantive `delegate` route.
-4. Create exactly one bounded subagent using the returned model and effort.
-5. Integrate the result, run the returned verification gate, and record one
+3. Send `router: global on` once, restart into a new project/task, and confirm
+   the setting persists without repeating the command.
+4. Submit an ordinary substantive task that does not name the skill or include
+   a trigger phrase, and obtain a `delegate` route.
+5. Create exactly one bounded subagent using the returned model and effort;
+   confirm the Codex selector continues to display the root task.
+6. Integrate the result, run the returned verification gate, and record one
    strict `passed` or `failed` outcome.
-6. Confirm status and route history preserve the root-model versus
+7. Confirm status and route history preserve the root-model versus
    bounded-target boundary, include the delegated route/outcome, and expose no
    prompt, source, secret, or absolute project path.
-7. Exercise upgrade, uninstall, reinstall, idempotence, and optional AGENTS
+8. Change the active model slug after its baseline. Confirm the pending request
+   and unconfirmed reminders stay root-only, then test both keep-automatic and
+   current-task manual-root decisions. Record that effort-only changes are not
+   observable by the hook.
+9. Exercise upgrade, uninstall, reinstall, idempotence, and optional AGENTS
    marker removal.
 
-Use [WINDOWS_SMOKE.md](WINDOWS_SMOKE.md) for the Windows evidence and report
-template. Keep the macOS evidence equivalent. WSL2 remains a separate manual or
-nightly smoke and does not block an ordinary pull request.
+Use [WINDOWS_SMOKE.md](WINDOWS_SMOKE.md) and
+[MACOS_SMOKE.md](MACOS_SMOKE.md) for the platform-specific evidence and report
+templates. WSL2 remains a separate manual or nightly smoke and does not block
+an ordinary pull request.
 
 ## 4. Authentication, signing, and branch protection
 

@@ -6,6 +6,17 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- One-time global automatic-routing opt-in for substantive tasks, with no
+  required `$adaptive-model-router` trigger phrase.
+- Hook-observed root-model baselines and task-scoped model-intent protection:
+  pending changes stay root-only until the user chooses manual-root or keeps
+  automatic routing.
+- Strict `resolve_host_model_intent` MCP confirmation with context binding,
+  idempotent repeats, and rejection of conflicts or stale change IDs.
+- SQLite `user_version` 2 migration for task modes, host-model change events,
+  and per-route root-model snapshots while preserving v0.2 learning state.
+- Route schema 3.0 fields for root-task visibility and automatic, pending, or
+  manual task mode.
 - Visible post-route notices that distinguish the unchanged host-managed root
   model from a bounded-stage model/effort target.
 - Read-only `get_route_history`, `router: history`, `路由器：历史`, and developer
@@ -15,6 +26,16 @@ All notable changes to this project are documented here.
   transition, and outcome.
 - English and Chinese documentation for the exact trigger path and
   deterministic scoring thresholds.
+
+### Changed
+
+- `UserPromptSubmit` injects minimized model-visible routing context for
+  ordinary tasks only after explicit global opt-in; it never copies prompt,
+  path, or source content.
+- Status and history separately display an observed root model and the bounded
+  stage target. The Codex model selector remains owned by the root task.
+- Missing or invalid hook model values remain host-managed and never imply
+  manual intent. Root reasoning effort remains host-only and cannot be inferred.
 
 ## [0.2.0] - 2026-07-19
 

@@ -24,6 +24,15 @@ After installation, start a new task. Open `/hooks`, review the plugin-bundled
 definitions. If the ChatGPT desktop app still shows stale plugin state, restart
 the app and start another new task.
 
+Automatic routing is opt-in. In that new task, send this standalone control
+once to enable it for all local Codex projects sharing the same plugin data:
+
+```text
+router: global on
+```
+
+Installing or upgrading the plugin never enables this setting silently.
+
 Optional local wrappers provide preflight checks and legacy-install detection:
 
 ```bash
@@ -56,10 +65,17 @@ Wrapper equivalents are `./install.sh upgrade`, `./install.sh uninstall`, `.\ins
 
 For Windows-specific setup and failure recovery, see
 [troubleshooting](docs/TROUBLESHOOTING.md). Release maintainers should use the
-[native Windows 11 smoke runbook](docs/WINDOWS_SMOKE.md), not improvise a release
-test from the README.
+[native Windows 11](docs/WINDOWS_SMOKE.md) and
+[native macOS](docs/MACOS_SMOKE.md) smoke runbooks, not improvise a release test
+from the README.
 
 ## How routing works
+
+When global automatic activation is on, the trusted `UserPromptSubmit` hook
+adds a small workflow instruction to ordinary prompts. Codex then uses the
+router at substantive stage boundaries without requiring a
+`$adaptive-model-router` mention. Greetings and simple no-work-product prompts
+still stay in the root task without creating a subagent.
 
 `route_stage` returns one contract:
 
@@ -77,11 +93,17 @@ management tools, and the source-tree developer CLI.
 
 ## Current target and delegation history
 
-The router cannot inspect or switch the root-task model; the model shown by the
-Codex host remains host-managed. A `delegate` route's
+The Codex model picker remains the root-task model and never changes to show a
+bounded subagent target. The hook can observe the active root-model slug, but
+not its reasoning effort; the router never switches either. A `delegate` route's
 `target.model`/`target.effort` is only the bounded-stage subagent target. The
 skill visibly reports that boundary and the selected action after every
 `route_stage` call.
+
+The first observed model in a task is a baseline. If the slug changes later,
+the current and subsequent unresolved turns continue root-only. Codex asks
+whether to keep the task manual or resume automatic routing. A reasoning-only
+change such as Sol High to Sol Max cannot be detected by the hook.
 
 Use either language to view current state or recent records:
 
@@ -91,9 +113,9 @@ router: history 10
 ```
 
 Chinese equivalents are `路由器：状态` and `路由器：历史 10`. History includes the
-route commit time, action, model/effort, transition from the previous
-delegation, reasons, route ID, and outcome, scoped to the current project and
-task. See [routing triggers and history](docs/ROUTING.md) for the exact score
+route-time root-model snapshot, commit time, action, bounded model/effort,
+transition from the previous delegation, reasons, route ID, and outcome,
+scoped to the current project and task. See [routing triggers and history](docs/ROUTING.md) for the exact score
 thresholds and the distinction between a route decision and a root-model
 switch.
 
@@ -114,8 +136,11 @@ Approval and rejection both advance the evidence window. Revisions are immutable
 Only a prompt beginning exactly with `router:` or `路由器：` can change state. Examples:
 
 ```text
-router: lock gpt-5.6-sol high session
+router: global on
+router: global off
+router: manual
 router: auto session
+router: lock gpt-5.6-sol high session
 router: off
 路由器：启用
 ```

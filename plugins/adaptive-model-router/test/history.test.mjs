@@ -18,6 +18,8 @@ test("history shows timestamped model transitions, outcomes, filters, and the ro
     await withRouterEnvironment(project, async () => {
       const store = new RouterStore();
       const contextId = "timeline";
+      const context = store.context({ cwd: project.root, contextId });
+      store.observeHostModel(context, "gpt-5.6-sol", { detectChanges: false });
       const first = await routeStage(routeInput({
         contextId,
         override: { model: "gpt-5.6-terra", effort: "medium" },
@@ -64,7 +66,12 @@ test("history shows timestamped model transitions, outcomes, filters, and the ro
         limit: 10,
         action: "all",
       }, { store, cwd: project.root });
-      assert.deepEqual(history.rootTask, { modelVisibility: "host_managed", changedByRouter: false });
+      assert.deepEqual(history.rootTask, {
+        modelVisibility: "hook_observed",
+        model: "gpt-5.6-sol",
+        reasoningEffortVisibility: "host_only",
+        changedByRouter: false,
+      });
       assert.equal(history.scope, "current_project_context");
       assert.deepEqual(history.routes.map((route) => route.routeId), [
         continued.routeId,
@@ -83,6 +90,7 @@ test("history shows timestamped model transitions, outcomes, filters, and the ro
       assert.equal(history.routes[3].transition.state, "initial_delegate");
       assert.equal(history.routes[3].outcome.status, "passed");
       for (const route of history.routes) assert.equal(Number.isNaN(Date.parse(route.createdAt)), false);
+      for (const route of history.routes) assert.equal(route.rootTask.model, "gpt-5.6-sol");
 
       const delegates = await callRouterTool("get_route_history", {
         contextId,
@@ -96,7 +104,7 @@ test("history shows timestamped model transitions, outcomes, filters, and the ro
       assert.equal(status.latestRoute.createdAt, history.routes[0].createdAt);
       assert.equal(typeof status.latestRoute.classifier, "string");
       assert.equal(typeof status.latestRoute.escalations, "number");
-      assert.deepEqual(status.rootTask, { modelVisibility: "host_managed", changedByRouter: false });
+      assert.deepEqual(status.rootTask, history.rootTask);
       assert.deepEqual(status.currentStage, {
         state: "root",
         target: null,
