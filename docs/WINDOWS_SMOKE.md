@@ -56,12 +56,14 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
+$CandidateRef = "codex/v030-smoke-handoff"
 $SmokeRoot = Join-Path $env:TEMP ("Adaptive Router Windows 冒烟 " + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $SmokeRoot "source checkout"
 $Project = Join-Path $SmokeRoot "测试 project with spaces"
 
 New-Item -ItemType Directory -Force -Path $SmokeRoot | Out-Null
-git clone --branch stable --single-branch https://github.com/Neil0619/adaptive-model-router.git $Source
+git clone --branch $CandidateRef --single-branch https://github.com/Neil0619/adaptive-model-router.git $Source
+$CandidateCommit = (git -C $Source rev-parse HEAD).Trim()
 New-Item -ItemType Directory -Force -Path $Project | Out-Null
 Set-Location $Project
 git init
@@ -73,14 +75,25 @@ characters. Keep `$Source` and `$Project` for the complete smoke run.
 ## 3. Install through native Codex commands
 
 ```powershell
-codex plugin marketplace add Neil0619/adaptive-model-router --ref stable
+codex plugin marketplace list
+codex plugin list
+```
+
+If a same-name marketplace remains from this repository's earlier `stable`
+smoke, remove only that known plugin and marketplace before adding the
+candidate ref. If no same-name marketplace exists, skip the first two commands:
+
+```powershell
+codex plugin remove adaptive-model-router@adaptive-model-router
+codex plugin marketplace remove adaptive-model-router
+codex plugin marketplace add Neil0619/adaptive-model-router --ref $CandidateRef
 codex plugin add adaptive-model-router@adaptive-model-router
 codex plugin marketplace list
 codex plugin list
 ```
 
-If a same-name marketplace already points to a different source or ref, stop
-and report it. Do not silently replace an unrelated marketplace.
+If the same-name marketplace points to any other repository, stop and report
+it. Do not silently replace an unrelated marketplace.
 
 ## 4. Start a fresh task and trust hooks
 
@@ -210,8 +223,8 @@ Now test the repository wrapper from the Unicode checkout:
 
 ```powershell
 Set-Location $Source
-.\install.ps1 -PatchAgents
-.\install.ps1 -Action Upgrade -PatchAgents
+.\install.ps1 -PatchAgents -Ref $CandidateRef
+.\install.ps1 -Action Upgrade -PatchAgents -Ref $CandidateRef
 ```
 
 Verify the owned marker occurs exactly once:
@@ -230,18 +243,18 @@ if ([regex]::Matches($AgentsText, [regex]::Escape($EndMarker)).Count -ne 1) { th
 Uninstall and verify that only the owned block is removed:
 
 ```powershell
-.\install.ps1 -Action Uninstall
+.\install.ps1 -Action Uninstall -Ref $CandidateRef
 $AgentsText = if (Test-Path $AgentsPath) { Get-Content -Raw $AgentsPath } else { "" }
 
 if ($AgentsText.Contains($StartMarker) -or $AgentsText.Contains($EndMarker)) { throw "owned AGENTS marker remains after uninstall" }
 ```
 
-Finish with two default installs to prove idempotence and leave the plugin
-installed without patching AGENTS:
+Finish with two candidate-ref installs to prove idempotence and leave the
+candidate installed without patching AGENTS:
 
 ```powershell
-.\install.ps1
-.\install.ps1
+.\install.ps1 -Ref $CandidateRef
+.\install.ps1 -Ref $CandidateRef
 codex plugin marketplace list
 codex plugin list
 ```
@@ -257,7 +270,8 @@ Codex surface: Desktop | CLI
 Codex version:
 Node version:
 Git version:
-Stable commit SHA:
+Candidate ref:
+Candidate commit SHA:
 Native install: PASS | FAIL
 UserPromptSubmit hook trusted/exercised: PASS | FAIL
 Stop hook trusted/exercised: PASS | FAIL
@@ -282,8 +296,8 @@ Unexpected warnings or sanitized error text:
 Also provide the candidate commit without including local paths:
 
 ```powershell
-Set-Location $Source
-git rev-parse HEAD
+$CandidateRef
+$CandidateCommit
 ```
 
 ## Stop conditions

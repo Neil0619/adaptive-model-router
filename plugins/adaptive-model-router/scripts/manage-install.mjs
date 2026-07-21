@@ -16,7 +16,7 @@ import { assertRuntime } from "./lib/runtime.mjs";
 const MARKETPLACE = "adaptive-model-router";
 const PLUGIN_ID = "adaptive-model-router@adaptive-model-router";
 const REPOSITORY = "Neil0619/adaptive-model-router";
-const REF = "stable";
+const DEFAULT_REF = "stable";
 const LEGACY_MARKETPLACE = "adaptive-local";
 const LEGACY_PLUGIN_ID = "adaptive-model-router@adaptive-local";
 
@@ -28,13 +28,30 @@ class InstallError extends Error {
 }
 
 function parseArgs(values) {
-  const parsed = { action: "install", patchAgents: false, nonInteractive: false, yes: false };
+  const parsed = {
+    action: "install",
+    patchAgents: false,
+    nonInteractive: false,
+    yes: false,
+    ref: DEFAULT_REF,
+  };
   for (const value of values) {
     if (["install", "upgrade", "uninstall"].includes(value)) parsed.action = value;
     else if (value === "--patch-agents") parsed.patchAgents = true;
     else if (value === "--non-interactive") parsed.nonInteractive = true;
     else if (value === "--yes") parsed.yes = true;
+    else if (value.startsWith("--ref=")) parsed.ref = value.slice("--ref=".length);
     else throw new InstallError(`unknown installer argument: ${value}`, 2);
+  }
+  if (
+    parsed.ref.length === 0 ||
+    parsed.ref.length > 255 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(parsed.ref) ||
+    parsed.ref.includes("..") ||
+    parsed.ref.includes("//") ||
+    parsed.ref.endsWith("/")
+  ) {
+    throw new InstallError("marketplace ref contains unsupported characters", 2);
   }
   return parsed;
 }
@@ -147,9 +164,9 @@ function marketplaceRef(entry) {
   }
 }
 
-function desiredMarketplace(entry) {
+function desiredMarketplace(entry, ref = DEFAULT_REF) {
   return canonicalRepository(marketplaceSource(entry)) === REPOSITORY.toLowerCase() &&
-    marketplaceRef(entry) === REF;
+    marketplaceRef(entry) === ref;
 }
 
 function codexHome() {
@@ -216,7 +233,7 @@ function printLegacyCleanup() {
 
 async function installOrUpgrade(args, state) {
   const currentMarketplace = state.marketplaces.find((entry) => entryName(entry) === MARKETPLACE);
-  if (currentMarketplace && !desiredMarketplace(currentMarketplace)) {
+  if (currentMarketplace && !desiredMarketplace(currentMarketplace, args.ref)) {
     throw new InstallError("marketplace name adaptive-model-router is already configured from a different source or ref", 4);
   }
   const legacyInstalled = state.installed.some((entry) => pluginId(entry) === LEGACY_PLUGIN_ID);
@@ -231,7 +248,7 @@ async function installOrUpgrade(args, state) {
     }
   }
   if (currentMarketplace) codex(["plugin", "marketplace", "upgrade", MARKETPLACE]);
-  else codex(["plugin", "marketplace", "add", REPOSITORY, "--ref", REF]);
+  else codex(["plugin", "marketplace", "add", REPOSITORY, "--ref", args.ref]);
   codex(["plugin", "add", PLUGIN_ID]);
   if (args.patchAgents) patchAgents();
   process.stdout.write(`Adaptive Model Router ${ROUTER_VERSION} is installed.\n`);
@@ -240,7 +257,7 @@ async function installOrUpgrade(args, state) {
 
 function uninstall(args, state) {
   const currentMarketplace = state.marketplaces.find((entry) => entryName(entry) === MARKETPLACE);
-  if (currentMarketplace && !desiredMarketplace(currentMarketplace)) {
+  if (currentMarketplace && !desiredMarketplace(currentMarketplace, args.ref)) {
     throw new InstallError("refusing to remove a same-name marketplace from a different source", 4);
   }
   if (state.installed.some((entry) => pluginId(entry) === PLUGIN_ID)) codex(["plugin", "remove", PLUGIN_ID]);
