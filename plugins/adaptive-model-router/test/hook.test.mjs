@@ -83,6 +83,9 @@ test("global automatic activation is opt-in, crosses projects, and detects later
     const firstContext = JSON.parse(first.stdout).hookSpecificOutput.additionalContext;
     assert.match(firstContext, /global automatic activation is enabled/);
     assert.match(firstContext, /gpt-5\.6-sol/);
+    assert.match(firstContext, /Use "auto-session" as the contextId argument for every Adaptive Model Router MCP call in the current task and never substitute cwd\/project paths\./);
+    assert.doesNotMatch(firstContext, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(firstContext, /Implement a parser|Use (?:the )?(?:cwd|project path) as the contextId/i);
     assert.doesNotMatch(firstContext, /unresolved active root-model change/);
 
     const otherRoot = join(project.root, "另一个 项目");
@@ -105,7 +108,10 @@ test("global automatic activation is opt-in, crosses projects, and detects later
     const changedContext = JSON.parse(changed.stdout).hookSpecificOutput.additionalContext;
     assert.match(changedContext, /unresolved active root-model change/);
     assert.match(changedContext, /HOST_MODEL_INTENT_PENDING/);
+    assert.match(changedContext, /Use "auto-session" as the contextId argument for every Adaptive Model Router MCP call in the current task and never substitute cwd\/project paths\./);
+    assert.doesNotMatch(changedContext, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.doesNotMatch(changedContext, /Implement a parser|Continue implementing/);
+    assert.doesNotMatch(changedContext, /Use (?:the )?(?:cwd|project path) as the contextId/i);
 
     const pendingHistory = runHook("prompt", {
       ...base,
@@ -147,6 +153,10 @@ test("global automatic activation is opt-in, crosses projects, and detects later
     }, project.home);
     assert.match(manualTurn.stdout, /manual_root mode/);
     assert.doesNotMatch(manualTurn.stdout, /meaningful substantive stage boundary/);
+    const manualContext = JSON.parse(manualTurn.stdout).hookSpecificOutput.additionalContext;
+    assert.match(manualContext, /Use "auto-session" as the contextId argument for every Adaptive Model Router MCP call in the current task and never substitute cwd\/project paths\./);
+    assert.doesNotMatch(manualContext, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(manualContext, /Continue in the selected root model|Use (?:the )?(?:cwd|project path) as the contextId/i);
 
     const resumed = runHook("prompt", {
       ...base,

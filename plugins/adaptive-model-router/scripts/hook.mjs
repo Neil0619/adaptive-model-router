@@ -36,34 +36,41 @@ function rootLabel(rootTask) {
   return rootTask.modelVisibility === "hook_observed" ? rootTask.model : "host-managed";
 }
 
-function automaticRoutingContext(rootTask) {
+function contextIdInstruction(contextId) {
+  return `Use ${JSON.stringify(contextId)} as the contextId argument for every Adaptive Model Router MCP call in the current task and never substitute cwd/project paths.`;
+}
+
+function automaticRoutingContext(rootTask, contextId) {
   return [
     "Adaptive Model Router global automatic activation is enabled for this local Codex task.",
     "For every meaningful substantive stage boundary, use the adaptive-model-router skill and call route_stage without requiring the user to mention the skill.",
     "Do not route greetings, simple questions, or messages with no work product merely to create a subagent.",
     `The active root-task model observed by the hook is ${rootLabel(rootTask)}; its reasoning effort remains visible only in the Codex composer.`,
     "The router must never change the root-task model or label a bounded subagent target as the root model.",
+    contextIdInstruction(contextId),
     "After each route, show the unchanged root model, action or bounded target, effort, and routeId. For delegate only, verify the work and record exactly one outcome; continue and ask_user routes have no outcome.",
   ].join("\n");
 }
 
-function pendingIntentContext(state) {
+function pendingIntentContext(state, contextId) {
   const change = state.pendingChange;
   return [
     "Adaptive Model Router detected an unresolved active root-model change.",
     `changeId=${change.changeId}; from=${change.fromModel}; to=${change.toModel}.`,
     "Continue handling the current request in the root task with the active Codex model and never create a subagent while this change is unresolved.",
     "At a meaningful substantive stage boundary, route_stage may be called only to record its required HOST_MODEL_INTENT_PENDING continue decision; respect that result.",
+    contextIdInstruction(contextId),
     "Briefly remind the user that the current and subsequent turns remain root-only, then ask them to choose either '本任务手动' / manual_root or '保持自动' / keep_automatic.",
     "Only after an explicit user answer, call resolve_host_model_intent with this changeId and the matching enum. Do not infer a decision from silence or unrelated text.",
   ].join("\n");
 }
 
-function manualRootContext(rootTask) {
+function manualRootContext(rootTask, contextId) {
   return [
     "Adaptive Model Router is in manual_root mode for this task.",
     `Continue only in the root task using ${rootLabel(rootTask)} and never create a routed subagent.`,
     "If route_stage is explicitly requested, respect its MANUAL_ROOT_SELECTED continue decision.",
+    contextIdInstruction(contextId),
     "This mode lasts only for the current task. The user can send '路由器：本任务自动' to resume automatic routing.",
   ].join("\n");
 }
@@ -99,14 +106,14 @@ async function promptHook(input) {
       const state = store.hostModelState(context);
       const rootTask = store.rootTask(context);
       if (state.taskMode === "pending_confirmation") {
-        additionalContext(pendingIntentContext(state));
+        additionalContext(pendingIntentContext(state, contextId));
         return;
       }
       if (state.taskMode === "manual_root" || disabled) {
-        additionalContext(manualRootContext(rootTask));
+        additionalContext(manualRootContext(rootTask, contextId));
         return;
       }
-      additionalContext(automaticRoutingContext(rootTask));
+      additionalContext(automaticRoutingContext(rootTask, contextId));
       return;
     }
     if (control.command === "status") {
