@@ -65,7 +65,8 @@ assert(TOOL_DEFINITIONS.some((tool) => tool.name === "resolve_host_model_intent"
 for (const event of ["UserPromptSubmit", "Stop"]) {
   const command = hooks.hooks?.[event]?.[0]?.hooks?.[0];
   assert(typeof command?.commandWindows === "string", `${event} must define commandWindows`);
-  assert(command.commandWindows.includes("%PLUGIN_ROOT%") && !command.commandWindows.includes("$PLUGIN_ROOT"), `${event} Windows command must use the Windows plugin root expansion`);
+  assert(command.commandWindows.includes("process.env.PLUGIN_ROOT"), `${event} Windows command must read PLUGIN_ROOT inside Node`);
+  assert(!["%PLUGIN_ROOT%", "$env:PLUGIN_ROOT", "$PLUGIN_ROOT"].some((value) => command.commandWindows.includes(value)), `${event} Windows command must not use shell-specific plugin root expansion`);
   assert(command.command.includes("node-launcher.mjs") && command.commandWindows.includes("node-launcher.mjs"), `${event} must use the runtime launcher`);
 }
 const entry = marketplace.plugins?.find((plugin) => plugin.name === manifest.name);

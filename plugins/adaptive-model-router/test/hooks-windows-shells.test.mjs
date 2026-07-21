@@ -15,8 +15,10 @@ test("exact Windows hook commands run through cmd.exe and Windows PowerShell", {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "adaptive hooks 空格 "));
   const projectCwd = join(temporaryRoot, "project cwd 项目");
   const pluginData = join(temporaryRoot, "plugin data 数据");
+  const codexHome = join(temporaryRoot, "codex home 隔离");
   await mkdir(projectCwd, { recursive: true });
   await mkdir(pluginData, { recursive: true });
+  await mkdir(codexHome, { recursive: true });
 
   try {
     const config = JSON.parse(await readFile(join(pluginRoot, "hooks", "hooks.json"), "utf8"));
@@ -49,6 +51,7 @@ test("exact Windows hook commands run through cmd.exe and Windows PowerShell", {
             ...process.env,
             PLUGIN_ROOT: pluginRoot,
             PLUGIN_DATA: pluginData,
+            CODEX_HOME: codexHome,
             ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
           },
           input: JSON.stringify(input),
@@ -63,6 +66,13 @@ test("exact Windows hook commands run through cmd.exe and Windows PowerShell", {
       assert.match(command, /path\.join/);
       assert.match(command, /pathToFileURL/);
     }
+
+    const validation = spawnSync(process.execPath, [join(pluginRoot, "scripts", "validate.mjs")], {
+      cwd: pluginRoot,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    assert.equal(validation.status, 0, validation.stderr);
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
