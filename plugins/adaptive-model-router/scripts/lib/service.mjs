@@ -27,9 +27,23 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: "get_route_status",
-    description: "Return redacted routing state for only the current project and context.",
+    description: "Show the host-managed root-task boundary plus the latest redacted route, target model, effort, transition, and outcome for the current project and context.",
     inputSchema: {
       type: "object", additionalProperties: false, required: ["contextId"], properties: { contextId: CONTEXT },
+    },
+  },
+  {
+    name: "get_route_history",
+    description: "List a redacted current-project/context timeline of route decisions, delegated model/effort transitions, reasons, timestamps, and outcomes.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["contextId"],
+      properties: {
+        contextId: CONTEXT,
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+        action: { type: "string", enum: ["all", "delegate", "continue", "ask_user"] },
+      },
     },
   },
   {
@@ -158,6 +172,12 @@ export async function callRouterTool(name, args, { store, cwd = process.cwd(), r
   if (name === "route_stage") return routeStage(args, { ...routeOptions, store, cwd });
   if (name === "record_outcome") return recordOutcome(args, { store, cwd });
   if (name === "get_route_status") return store.status(contextFor(store, args, cwd));
+  if (name === "get_route_history") {
+    return store.routeHistory(contextFor(store, args, cwd), {
+      limit: args.limit ?? 20,
+      action: args.action || "all",
+    });
+  }
   if (name === "set_route_override") return setOverride(store, args, cwd);
   if (name === "list_policy_proposals") return listPolicyProposals(args, { store, cwd });
   if (name === "approve_policy_proposal") return approvePolicyProposal(args, { store, cwd });

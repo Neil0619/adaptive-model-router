@@ -1,4 +1,4 @@
 interface:
   display_name: "Adaptive Model Router"
-  short_description: "Route bounded stages to an available model and effort"
-  default_prompt: "Route the next substantive task stage and explain the reason codes."
+  short_description: "Route bounded stages and show model targets"
+  default_prompt: "Use $adaptive-model-router to route the next substantive stage and visibly report the bounded model target."

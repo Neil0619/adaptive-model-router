@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Visible post-route notices that distinguish the unchanged host-managed root
+  model from a bounded-stage model/effort target.
+- Read-only `get_route_history`, `router: history`, `路由器：历史`, and developer
+  CLI history views with timestamps, target transitions, reason codes, and
+  outcomes.
+- Expanded status reports with current-stage state, route time, reasons,
+  transition, and outcome.
+- English and Chinese documentation for the exact trigger path and
+  deterministic scoring thresholds.
+
 ## [0.2.0] - 2026-07-19
 
 ### Added

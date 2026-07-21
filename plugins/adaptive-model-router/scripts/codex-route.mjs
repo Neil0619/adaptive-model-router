@@ -29,6 +29,7 @@ function help() {
 Usage:
   node scripts/codex-route.mjs doctor [--context ID]
   node scripts/codex-route.mjs status [--context ID]
+  node scripts/codex-route.mjs history [--context ID] [--limit 20] [--action all|delegate|continue|ask_user]
   node scripts/codex-route.mjs catalog
   node scripts/codex-route.mjs proposals [--context ID]
   node scripts/codex-route.mjs approve PROPOSAL_ID [--context ID]
@@ -53,6 +54,15 @@ async function main() {
   try {
     if (command === "doctor") return print(await callRouterTool("diagnose_router", { contextId }, { store }));
     if (command === "status") return print(await callRouterTool("get_route_status", { contextId }, { store }));
+    if (command === "history") {
+      const limit = args.limit == null ? 20 : Number(args.limit);
+      if (!Number.isInteger(limit)) throw new Error("history --limit must be an integer");
+      return print(await callRouterTool("get_route_history", {
+        contextId,
+        limit,
+        action: String(args.action || "all"),
+      }, { store }));
+    }
     if (command === "catalog") return print(await getModelCatalog({ store }));
     if (command === "proposals") return print(await callRouterTool("list_policy_proposals", { contextId }, { store }));
     if (command === "approve" || command === "reject") {

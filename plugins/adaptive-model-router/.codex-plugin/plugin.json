@@ -1,6 +1,6 @@
 {
   "name": "adaptive-model-router",
-  "version": "0.2.0",
+  "version": "0.2.0+codex.20260721023410",
   "description": "Routes bounded Codex task stages to an available model and reasoning effort, with local approval-gated learning.",
   "author": {
     "name": "niuzhenya",
@@ -27,6 +27,7 @@
     "capabilities": [
       "Model routing",
       "Bounded delegation",
+      "Route visibility and history",
       "Local learning",
       "Cross-platform hooks"
     ],
@@ -35,7 +36,8 @@
     "termsOfServiceURL": "https://github.com/Neil0619/adaptive-model-router/blob/stable/LICENSE",
     "defaultPrompt": [
       "Route the next implementation stage.",
-      "Explain the current routing policy.",
+      "Show the current route and delegated model target.",
+      "Show recent model delegation history.",
       "Diagnose Adaptive Model Router."
     ],
     "brandColor": "#2563EB"

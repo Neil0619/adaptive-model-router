@@ -107,6 +107,19 @@ Inspect `reasonCodes`:
 Do not invent a model target after a fail-open result. Diagnose the catalog,
 host capability, settings, or local storage first.
 
+## No model target or history is visible
+
+Send `router: status` or `路由器：状态`, then `router: history 10` or
+`路由器：历史 10`. If status reports no route, either `route_stage` has not been
+called in this task or the caller used a different `contextId`. The Stop hook,
+status, history, route, and outcome lifecycle must use the same host task/session
+identifier.
+
+It is expected that status cannot name the root-task model: Codex owns that
+model and the router never changes it. A model appears only as a bounded-stage
+target on a `delegate` route. See [Routing triggers and history](ROUTING.md) for
+the exact distinction and score thresholds.
+
 ## Routing returns `ask_user`
 
 Common reasons are `EXPLICIT_TARGET_UNAVAILABLE`,

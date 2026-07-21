@@ -14,6 +14,8 @@ import { canonicalJson, isSqliteBusy, parseJson, payloadHash, sleepSync } from "
 
 const GLOBAL_PROJECT = "__global__";
 const GLOBAL_CONTEXT = "__global__";
+const DEFAULT_HISTORY_LIMIT = 20;
+const MAX_HISTORY_LIMIT = 100;
 
 function nowIso() {
   return new Date().toISOString();
@@ -369,12 +371,101 @@ export class RouterStore {
     `).get(routeId, context.projectId, context.contextKey) || null;
   }
 
-  latestRoute(context) {
-    return this.db.prepare(`
-      SELECT route_id, action, category, model, effort, verification_gate, classifier_state,
-             escalation_count, created_at
-      FROM routes WHERE project_id = ? AND context_key = ? ORDER BY rowid DESC LIMIT 1
-    `).get(context.projectId, context.contextKey) || null;
+  routeHistory(context, { limit = DEFAULT_HISTORY_LIMIT, action = "all" } = {}) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_HISTORY_LIMIT) {
+      throw new Error(`history limit must be an integer from 1 to ${MAX_HISTORY_LIMIT}`);
+    }
+    if (!["all", "delegate", "continue", "ask_user"].includes(action)) {
+      throw new Error("history action must be all, delegate, continue, or ask_user");
+    }
+    const actionClause = action === "all" ? "" : "AND r.action = ?";
+    const parameters = action === "all"
+      ? [context.projectId, context.contextKey, limit]
+      : [context.projectId, context.contextKey, action, limit];
+    const rows = this.db.prepare(`
+      SELECT
+        r.rowid AS route_sequence,
+        r.route_id,
+        r.action,
+        r.category,
+        r.model,
+        r.effort,
+        r.verification_gate,
+        r.reason_codes_json,
+        r.classifier_state,
+        r.escalation_count,
+        r.previous_route_id,
+        r.created_at,
+        o.status AS outcome_status,
+        o.gate AS outcome_gate,
+        o.failure_type AS outcome_failure_type,
+        o.retries AS outcome_retries,
+        o.escalations AS outcome_escalations,
+        o.user_correction AS outcome_user_correction,
+        o.recorded_at AS outcome_recorded_at
+      FROM routes r
+      LEFT JOIN outcomes o ON o.route_id = r.route_id
+      WHERE r.project_id = ? AND r.context_key = ? ${actionClause}
+      ORDER BY r.rowid DESC
+      LIMIT ?
+    `).all(...parameters);
+    const previousDelegate = this.db.prepare(`
+      SELECT model, effort
+      FROM routes
+      WHERE project_id = ? AND context_key = ? AND action = 'delegate' AND rowid < ?
+      ORDER BY rowid DESC
+      LIMIT 1
+    `);
+    const routes = rows.map((row) => {
+      const target = row.model ? { model: row.model, effort: row.effort } : null;
+      let transition = { state: "not_delegated" };
+      if (target) {
+        const prior = previousDelegate.get(context.projectId, context.contextKey, row.route_sequence);
+        if (!prior) {
+          transition = { state: "initial_delegate", to: target };
+        } else {
+          const from = { model: prior.model, effort: prior.effort };
+          transition = {
+            state: from.model === target.model && from.effort === target.effort
+              ? "target_unchanged"
+              : "target_changed",
+            from,
+            to: target,
+          };
+        }
+      }
+      return {
+        routeId: row.route_id,
+        action: row.action,
+        category: row.category,
+        ...(target ? { target } : {}),
+        transition,
+        reasonCodes: parseJson(row.reason_codes_json, []),
+        verificationGate: row.verification_gate,
+        classifier: { state: row.classifier_state },
+        escalation: { count: Number(row.escalation_count || 0) },
+        previousRouteId: row.previous_route_id || null,
+        createdAt: row.created_at,
+        outcome: row.outcome_status ? {
+          status: row.outcome_status,
+          gate: row.outcome_gate,
+          failureType: row.outcome_failure_type || null,
+          retries: Number(row.outcome_retries || 0),
+          escalations: Number(row.outcome_escalations || 0),
+          userCorrection: row.outcome_user_correction === 1,
+          recordedAt: row.outcome_recorded_at,
+        } : null,
+      };
+    });
+    return {
+      routerVersion: ROUTER_VERSION,
+      projectKey: context.projectId.slice(0, 12),
+      contextKey: context.contextKey.slice(0, 12),
+      scope: "current_project_context",
+      rootTask: { modelVisibility: "host_managed", changedByRouter: false },
+      filter: { action, limit },
+      routes,
+    };
   }
 
   insertOutcome(context, route, outcome) {
@@ -551,7 +642,21 @@ export class RouterStore {
   status(context) {
     const settings = this.getSettings(context);
     const policy = this.ensurePolicy(context);
-    const latest = this.latestRoute(context);
+    const latest = this.routeHistory(context, { limit: 1 }).routes[0] || null;
+    const latestStatus = latest ? {
+      routeId: latest.routeId,
+      action: latest.action,
+      category: latest.category,
+      ...(latest.target ? { target: latest.target } : {}),
+      transition: latest.transition,
+      reasonCodes: latest.reasonCodes,
+      verificationGate: latest.verificationGate,
+      classifier: latest.classifier.state,
+      escalations: latest.escalation.count,
+      previousRouteId: latest.previousRouteId,
+      createdAt: latest.createdAt,
+      outcome: latest.outcome,
+    } : null;
     const pendingProposals = Number(this.db.prepare(`
       SELECT count(*) AS count FROM policy_proposals WHERE project_id = ? AND status = 'pending'
     `).get(context.projectId).count);
@@ -563,17 +668,17 @@ export class RouterStore {
       routerVersion: ROUTER_VERSION,
       projectKey: context.projectId.slice(0, 12),
       contextKey: context.contextKey.slice(0, 12),
+      rootTask: { modelVisibility: "host_managed", changedByRouter: false },
+      currentStage: !latest
+        ? { state: "no_route", target: null, since: null }
+        : latest.action === "delegate" && latest.outcome == null
+          ? { state: "delegated_pending_outcome", target: latest.target, since: latest.createdAt }
+          : latest.action === "ask_user"
+            ? { state: "awaiting_user", target: null, since: latest.createdAt }
+            : { state: "root", target: null, since: latest.outcome?.recordedAt || latest.createdAt },
       settings,
       policy: { revisionId: policy.revisionId, categoryOffsets: policy.categoryOffsets },
-      latestRoute: latest ? {
-        routeId: latest.route_id,
-        action: latest.action,
-        category: latest.category,
-        target: latest.model ? { model: latest.model, effort: latest.effort } : undefined,
-        verificationGate: latest.verification_gate,
-        classifier: latest.classifier_state,
-        escalations: latest.escalation_count,
-      } : null,
+      latestRoute: latestStatus,
       pendingOutcomes,
       pendingProposals,
     };

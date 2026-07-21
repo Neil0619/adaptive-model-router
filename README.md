@@ -75,6 +75,28 @@ Every delegated route has a verification gate and one strict final outcome. Miss
 [tool reference](docs/TOOLS.md) for the strict route and outcome contracts, all
 management tools, and the source-tree developer CLI.
 
+## Current target and delegation history
+
+The router cannot inspect or switch the root-task model; the model shown by the
+Codex host remains host-managed. A `delegate` route's
+`target.model`/`target.effort` is only the bounded-stage subagent target. The
+skill visibly reports that boundary and the selected action after every
+`route_stage` call.
+
+Use either language to view current state or recent records:
+
+```text
+router: status
+router: history 10
+```
+
+Chinese equivalents are `路由器：状态` and `路由器：历史 10`. History includes the
+route commit time, action, model/effort, transition from the previous
+delegation, reasons, route ID, and outcome, scoped to the current project and
+task. See [routing triggers and history](docs/ROUTING.md) for the exact score
+thresholds and the distinction between a route decision and a root-model
+switch.
+
 ## Local learning
 
 Learning data is isolated per project in one SQLite database. Git worktrees share a project identity through their Git common directory; submodules remain separate. Raw project paths are never stored.

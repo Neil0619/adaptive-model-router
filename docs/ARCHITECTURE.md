@@ -18,6 +18,7 @@ flowchart LR
     Delegate --> Verify["Root verification gate"]
     Verify --> Outcome["record_outcome"]
     Outcome --> SQLite
+    SQLite --> History["status + route history projection"]
     SQLite --> Proposal["manual policy proposal"]
 ```
 
@@ -29,7 +30,10 @@ flowchart LR
 - `scripts/lib/router.mjs` applies deterministic scoring, override priority, catalog capability checks, and monotonic escalation.
 - `scripts/lib/app-server.mjs` owns one short-lived classifier app-server process with a single total deadline and early-notification buffering.
 - `scripts/lib/database.mjs` owns SQLite migrations, short `BEGIN IMMEDIATE` transactions, exactly-once claims, and project/context isolation.
-- `scripts/hook.mjs` handles exact control prefixes and the two-pass Stop outcome reminder.
+- `scripts/hook.mjs` handles exact control prefixes, visible status/history
+  reports, and the two-pass Stop outcome reminder.
+- `scripts/lib/presentation.mjs` formats user-visible reports while preserving
+  the root-model versus bounded-target boundary.
 - `hooks/hooks.json` supplies separate POSIX and `commandWindows` launch commands.
   Both resolve through the installed plugin root and the runtime launcher, so
   hook execution does not depend on a POSIX shell on Windows.
@@ -49,6 +53,13 @@ flowchart LR
 The route stores the model target and decision metadata, not the prompt or
 evidence payload. On retry, callers provide only `previousRouteId` and factual
 failure evidence; they cannot submit a forged previous route object.
+
+`get_route_status` and `get_route_history` are read-only projections over the
+same route/outcome rows. Consecutive delegated targets are compared at read
+time to classify an initial, unchanged, or changed target. No second log is
+maintained, so visible history cannot drift from learning/outcome state. The
+projection explicitly reports that the root model is host-managed and was not
+changed by the router.
 
 ## Concurrency
 

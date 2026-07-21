@@ -40,8 +40,9 @@ const packageJson = await json(join(pluginRoot, "package.json"));
 const marketplace = await json(join(repoRoot, ".agents", "plugins", "marketplace.json"));
 const hooks = await json(join(pluginRoot, "hooks", "hooks.json"));
 const skill = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8");
-assert(manifest.version === packageJson.version, "manifest and package versions differ");
-assert(manifest.version === "0.2.0", "release version must be 0.2.0");
+const skillUi = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "agents", "openai.yaml"), "utf8");
+assert(manifest.version.split("+")[0] === packageJson.version, "manifest base version and package version differ");
+assert(packageJson.version === "0.2.0", "release base version must be 0.2.0");
 assert(packageJson.private === true, "package must remain private");
 assert(!packageJson.dependencies && !packageJson.devDependencies, "runtime must have no third-party dependencies");
 assert(!Object.hasOwn(manifest, "hooks"), "default hooks/hooks.json discovery should not be duplicated in the manifest");
@@ -54,6 +55,10 @@ assert(routerMcp.args?.[1] === "./scripts/mcp-server.mjs", "MCP must use the rel
 assert(!JSON.stringify(routerMcp).includes("PLUGIN_ROOT"), "MCP config must not rely on hook-only PLUGIN_ROOT interpolation");
 assert(skill.includes("`target.effort` value to the current Codex subagent `reasoning_effort` parameter"), "skill must map router effort to the Codex subagent parameter");
 assert(!skill.includes("using exactly `target.model` and `target.effort`"), "skill must not present router output fields as host parameter names");
+assert(skill.includes("root-task model is unchanged and host-managed"), "skill must require a visible root/stage model boundary");
+assert(skill.includes("`get_route_history`"), "skill must expose the route history workflow");
+assert(skillUi.includes("$adaptive-model-router"), "skill default prompt must explicitly invoke $adaptive-model-router");
+assert(TOOL_DEFINITIONS.some((tool) => tool.name === "get_route_history"), "MCP must expose get_route_history");
 for (const event of ["UserPromptSubmit", "Stop"]) {
   const command = hooks.hooks?.[event]?.[0]?.hooks?.[0];
   assert(typeof command?.commandWindows === "string", `${event} must define commandWindows`);
