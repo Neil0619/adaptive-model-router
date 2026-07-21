@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   release:
-    if: github.ref_name == 'v0.2.0'
+    if: github.ref_name == 'v0.3.0'
     runs-on: ubuntu-latest
     environment: release
     steps:
@@ -31,15 +31,15 @@ jobs:
       - name: Build source archive, SBOM, and checksums
         run: |-
           mkdir -p dist
-          git archive --format=tar.gz --prefix=adaptive-model-router-v0.2.0/ -o dist/adaptive-model-router-v0.2.0.tar.gz HEAD
-          node plugins/adaptive-model-router/scripts/generate-sbom.mjs > dist/adaptive-model-router-v0.2.0.spdx.json
+          git archive --format=tar.gz --prefix=adaptive-model-router-v0.3.0/ -o dist/adaptive-model-router-v0.3.0.tar.gz HEAD
+          node plugins/adaptive-model-router/scripts/generate-sbom.mjs > dist/adaptive-model-router-v0.3.0.spdx.json
           cd dist
-          sha256sum adaptive-model-router-v0.2.0.tar.gz adaptive-model-router-v0.2.0.spdx.json > SHA256SUMS
+          sha256sum adaptive-model-router-v0.3.0.tar.gz adaptive-model-router-v0.3.0.spdx.json > SHA256SUMS
       - uses: actions/attest-build-provenance@v3
         with:
           subject-path: |-
-            dist/adaptive-model-router-v0.2.0.tar.gz
-            dist/adaptive-model-router-v0.2.0.spdx.json
+            dist/adaptive-model-router-v0.3.0.tar.gz
+            dist/adaptive-model-router-v0.3.0.spdx.json
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

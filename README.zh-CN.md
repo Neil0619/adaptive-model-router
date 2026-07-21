@@ -56,7 +56,7 @@ codex plugin marketplace remove adaptive-model-router
 Windows 环境问题参见[故障排查](docs/TROUBLESHOOTING.md)。发布维护者应直接使用
 [原生 Windows 11 冒烟手册](docs/WINDOWS_SMOKE.md)，不要根据 README 临时拼装发布测试。
 在 Windows 上打开仓库后，可以直接让 Codex“完整读取该手册、逐项执行、按模板回传，
-但不要创建或推送 `v0.2.0` tag”。
+但不要创建或推送 `v0.3.0` tag”。
 
 ## 路由规则
 

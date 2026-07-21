@@ -1,4 +1,4 @@
-export const ROUTER_VERSION = "0.2.0";
+export const ROUTER_VERSION = "0.3.0";
 export const SCHEMA_VERSION = "2.0";
 export const DATABASE_VERSION = 1;
 export const MIN_NODE = [24, 15, 0];
@@ -87,5 +87,6 @@ export const DEFAULT_OFFSETS = Object.freeze(
 );
 
 export const CONTROL_PREFIXES = ["router:", "路由器："];
+// Keep the owned block marker stable so upgrades can remove v0.2.0-era patches.
 export const AGENTS_MARKER_START = "<!-- adaptive-model-router:start v0.2.0 -->";
 export const AGENTS_MARKER_END = "<!-- adaptive-model-router:end -->";

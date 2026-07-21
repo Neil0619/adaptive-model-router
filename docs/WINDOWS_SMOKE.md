@@ -1,6 +1,6 @@
 # Native Windows 11 smoke test
 
-This is the blocking manual Windows gate for `v0.2.0`. Run it in native Windows
+This is the blocking manual Windows gate for `v0.3.0`. Run it in native Windows
 11 with the Codex agent using PowerShell, not inside WSL2. WSL2 is a separate
 non-blocking smoke target.
 
@@ -13,7 +13,7 @@ Suggested handoff prompt:
 请完整读取 docs/WINDOWS_SMOKE.md，并在原生 Windows 11 + PowerShell 环境中按顺序执行。
 你负责检查前置条件、安装、hook 信任、route → bounded subagent → verification →
 outcome、隐私断言、升级/卸载/重装和 AGENTS marker。遇到 Stop conditions 中任一情况
-立即停止并按模板返回 FAIL。不要创建或推送 v0.2.0 tag，也不要调用 clear_project_data。
+立即停止并按模板返回 FAIL。不要创建或推送 v0.3.0 tag，也不要调用 clear_project_data。
 ```
 
 ## Pass criteria
@@ -26,6 +26,8 @@ The smoke passes only when all of the following succeed:
 - one substantive `delegate` route and exactly one bounded subagent using the
   returned model and effort;
 - root verification followed by one strict final outcome;
+- visible status/history that preserve the root-model versus bounded-target
+  boundary and include the delegated route;
 - redacted status and diagnostics with no prompt, source, secret, or absolute
   project path;
 - native upgrade and uninstall;
@@ -157,13 +159,15 @@ actual retry count, userCorrection=false unless I corrected the result, and:
 - status=passed and failureType=null when the test passes;
 - otherwise status=failed with the factual enumerated failureType.
 
-Finally call get_route_status and diagnose_router with the same contextId.
-Check that their serialized output contains no task prompt, source code,
+Finally call get_route_status, get_route_history with limit=10 and action=all,
+and diagnose_router with the same contextId. Check that status preserves the
+host-managed root-model boundary, history contains this route and its outcome,
+and their serialized output contains no task prompt, source code,
 environment-variable values, secret values, or absolute project path. Return a
-short smoke summary containing the route action, target model/effort, reason
-codes, verification gate, test result, outcome result, pending outcome count,
-database health, classifier state, and privacy assertion. Do not return the
-absolute project path.
+short smoke summary containing the route action, target model/effort, target
+transition, history count, reason codes, verification gate, test result,
+outcome result, pending outcome count, database health, classifier state, and
+privacy assertion. Do not return the absolute project path.
 ```
 
 The Stop hook must not report a missing outcome after the successful result.
@@ -214,6 +218,7 @@ Verify the owned marker occurs exactly once:
 
 ```powershell
 $AgentsPath = Join-Path $HOME ".codex\AGENTS.md"
+# This token is intentionally stable for backward-compatible owned-block removal.
 $StartMarker = "<!-- adaptive-model-router:start v0.2.0 -->"
 $EndMarker = "<!-- adaptive-model-router:end -->"
 $AgentsText = if (Test-Path $AgentsPath) { Get-Content -Raw $AgentsPath } else { "" }

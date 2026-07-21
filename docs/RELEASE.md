@@ -1,4 +1,4 @@
-# v0.2.0 release checklist
+# v0.3.0 release checklist
 
 This file is the maintainer release gate. The detailed native Windows procedure
 lives in [WINDOWS_SMOKE.md](WINDOWS_SMOKE.md). Do not create the release tag
@@ -7,7 +7,7 @@ commit.
 
 ## 1. Freeze the candidate
 
-For the first release, `stable` must point to the exact reviewed `main` commit
+For this release, `stable` must point to the exact reviewed `main` commit
 before logged-in smoke testing. This makes the documented installation command
 usable without publishing a tag early.
 
@@ -59,8 +59,9 @@ Run the complete route lifecycle once on macOS and once on native Windows 11:
 4. Create exactly one bounded subagent using the returned model and effort.
 5. Integrate the result, run the returned verification gate, and record one
    strict `passed` or `failed` outcome.
-6. Confirm status and diagnostics expose no prompt, source, secret, or absolute
-   project path.
+6. Confirm status and route history preserve the root-model versus
+   bounded-target boundary, include the delegated route/outcome, and expose no
+   prompt, source, secret, or absolute project path.
 7. Exercise upgrade, uninstall, reinstall, idempotence, and optional AGENTS
    marker removal.
 
@@ -91,8 +92,8 @@ tag at the frozen candidate:
 git config --local --get gpg.format
 git config --local --get user.signingkey
 git config --local --get tag.gpgSign
-git tag --sign --message "Adaptive Model Router v0.2.0" v0.2.0
-git cat-file tag v0.2.0
+git tag --sign --message "Adaptive Model Router v0.3.0" v0.3.0
+git cat-file tag v0.3.0
 ```
 
 The tag object must contain an SSH signature and point to the recorded candidate
@@ -107,7 +108,7 @@ a normal fast-forward update after artifacts exist.
 Push only the signed tag:
 
 ```bash
-git push origin v0.2.0
+git push origin v0.3.0
 ```
 
 The release workflow must:
