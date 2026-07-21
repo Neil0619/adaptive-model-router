@@ -7,9 +7,10 @@ commit.
 
 ## 1. Freeze the candidate
 
-For this release, `stable` must point to the exact reviewed `main` commit
-before logged-in smoke testing. This makes the documented installation command
-usable without publishing a tag early.
+Keep `stable` on the last published release until the release workflow has
+created the new artifacts. For logged-in smoke testing, freeze a dedicated
+candidate ref at the reviewed commit. For v0.3.0 the handoff ref is
+`codex/v030-smoke-handoff`; do not move it after smoke evidence is collected.
 
 Record the candidate:
 
@@ -17,11 +18,21 @@ Record the candidate:
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/main
+git rev-parse origin/codex/v030-smoke-handoff
 git rev-parse origin/stable
 ```
 
-The worktree must be clean and all three commits must match. Any installed
-plugin, marketplace, wrapper, hook, skill, contract, test, or release-workflow
+The worktree must be clean. The candidate ref must contain the reviewed tree;
+`stable` may still point to v0.2.0. Before tagging a later `main` merge commit,
+verify that the release-relevant trees are byte-identical:
+
+```bash
+git diff --exit-code origin/main origin/codex/v030-smoke-handoff -- \
+  .agents plugins install.sh install.ps1 .github/workflows/release.yml
+```
+
+Any installed plugin, marketplace, wrapper, hook, skill, contract, test, or
+release-workflow
 change after this point creates a new runtime candidate and invalidates earlier
 manual smoke evidence.
 

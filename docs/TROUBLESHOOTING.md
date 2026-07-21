@@ -36,6 +36,11 @@ If a marketplace named `adaptive-model-router` points to a different source or
 ref, the wrapper stops rather than replacing it. Inspect the marketplace list
 and remove it only after confirming it belongs to this plugin.
 
+Release maintainers can pass an explicit reviewed candidate ref with
+`./install.sh --ref=<ref>` or `.\install.ps1 -Ref <ref>`. Use the same ref for
+install, upgrade, and uninstall. Ordinary users should omit this option and
+remain on the default protected `stable` branch.
+
 ## Hooks are installed but do not run
 
 Plugin installation does not automatically trust command hooks. In Codex, open

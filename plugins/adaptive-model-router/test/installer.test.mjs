@@ -23,7 +23,9 @@ if (args.join(" ") === "plugin marketplace list --json") { process.stdout.write(
 if (args.join(" ") === "plugin list --available --json") { process.stdout.write(JSON.stringify({installed:state.installed,available:state.available})); process.exit(0); }
 state.mutations.push(args);
 if (args[0] === "plugin" && args[1] === "marketplace" && args[2] === "add") {
-  state.marketplaces.push({name:"adaptive-model-router",marketplaceSource:{sourceType:"git",source:"https://github.com/Neil0619/adaptive-model-router.git",ref:"stable"}});
+  const refIndex = args.indexOf("--ref");
+  const ref = refIndex >= 0 ? args[refIndex + 1] : null;
+  state.marketplaces.push({name:"adaptive-model-router",marketplaceSource:{sourceType:"git",source:"https://github.com/Neil0619/adaptive-model-router.git",ref}});
   state.available=[{pluginId:"adaptive-model-router@adaptive-model-router",name:"adaptive-model-router",marketplaceName:"adaptive-model-router"}];
 } else if (args[0] === "plugin" && args[1] === "marketplace" && args[2] === "remove") {
   state.marketplaces=state.marketplaces.filter((entry)=>entry.name!==args[3]);
@@ -299,6 +301,36 @@ test("explicit legacy migration removes old plugin then marketplace before insta
   }
 });
 
+test("an explicit release-candidate ref is required consistently for install, upgrade, and uninstall", async () => {
+  const project = await temporaryProject();
+  try {
+    const candidateRef = "codex/v030-smoke-handoff";
+    const fake = await fakeCodex(project);
+    const invalid = runManager(project, fake, ["install", "--ref=../untrusted", "--non-interactive"]);
+    assert.equal(invalid.status, 2);
+    assert.deepEqual((await state(fake)).mutations, []);
+
+    const installed = runManager(project, fake, ["install", `--ref=${candidateRef}`, "--non-interactive"]);
+    assert.equal(installed.status, 0, installed.stderr);
+    assert.deepEqual((await state(fake)).mutations.slice(0, 2).map((args) => args.join(" ")), [
+      `plugin marketplace add Neil0619/adaptive-model-router --ref ${candidateRef}`,
+      "plugin add adaptive-model-router@adaptive-model-router",
+    ]);
+
+    const wrongUpgrade = runManager(project, fake, ["upgrade", "--non-interactive"]);
+    assert.equal(wrongUpgrade.status, 4);
+    const upgraded = runManager(project, fake, ["upgrade", `--ref=${candidateRef}`, "--non-interactive"]);
+    assert.equal(upgraded.status, 0, upgraded.stderr);
+
+    const wrongUninstall = runManager(project, fake, ["uninstall", "--non-interactive"]);
+    assert.equal(wrongUninstall.status, 4);
+    const removed = runManager(project, fake, ["uninstall", `--ref=${candidateRef}`, "--non-interactive"]);
+    assert.equal(removed.status, 0, removed.stderr);
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("same marketplace name from another source and partial AGENTS markers fail before mutation", async () => {
   const project = await temporaryProject();
   try {
@@ -327,20 +359,22 @@ test("platform wrapper performs the same native installation flow", async () => 
   try {
     const fake = await fakeCodex(project);
     const codexHome = join(project.root, "wrapper home 空格");
+    const candidateRef = "codex/v030-smoke-handoff";
     let result;
     if (process.platform === "win32") {
-      result = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(repoRoot, "install.ps1"), "-NonInteractive"], {
+      result = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(repoRoot, "install.ps1"), "-NonInteractive", "-Ref", candidateRef], {
         encoding: "utf8",
         env: { ...process.env, PATH: `${fake.bin};${dirname(process.execPath)};${process.env.PATH}`, CODEX_HOME: codexHome, FAKE_CODEX_STATE: fake.statePath },
       });
     } else {
-      result = spawnSync("sh", [join(repoRoot, "install.sh"), "--non-interactive"], {
+      result = spawnSync("sh", [join(repoRoot, "install.sh"), `--ref=${candidateRef}`, "--non-interactive"], {
         encoding: "utf8",
         env: { ...process.env, PATH: `${fake.bin}:${dirname(process.execPath)}:${process.env.PATH}`, CODEX_HOME: codexHome, FAKE_CODEX_STATE: fake.statePath },
       });
     }
     assert.equal(result.status, 0, result.stderr);
     assert.equal((await state(fake)).installed.length, 1);
+    assert.equal((await state(fake)).marketplaces[0].marketplaceSource.ref, candidateRef);
   } finally {
     await project.cleanup();
   }

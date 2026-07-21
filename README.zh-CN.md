@@ -37,7 +37,7 @@ codex plugin add adaptive-model-router@adaptive-model-router
 
 默认不会修改 `~/.codex/AGENTS.md`。只有显式使用 `--patch-agents` 或 `-PatchAgents` 才写入带起止标记的自有段落；重复执行不会重复写入，卸载只删除该段落。
 
-检测到旧 `adaptive-local` 安装时，交互模式会先询问；非交互模式会在任何修改前停止并打印两条精确清理命令。旧历史不会自动加入 v0.2 学习窗口。
+检测到旧 `adaptive-local` 安装时，交互模式会先询问；非交互模式会在任何修改前停止并打印两条精确清理命令。旧历史不会自动加入当前学习窗口。
 
 ## 升级与卸载
 

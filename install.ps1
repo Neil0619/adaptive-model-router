@@ -1,6 +1,7 @@
 param(
     [ValidateSet("Install", "Upgrade", "Uninstall")]
     [string]$Action = "Install",
+    [string]$Ref = "stable",
     [switch]$PatchAgents,
     [switch]$NonInteractive,
     [switch]$Yes
@@ -52,7 +53,7 @@ if ($codexPath.EndsWith(".ps1", [System.StringComparison]::OrdinalIgnoreCase)) {
 
 $env:CODEX_BIN = $codexPath
 $manager = Join-Path $PSScriptRoot "plugins/adaptive-model-router/scripts/manage-install.mjs"
-$managerArgs = @($Action.ToLowerInvariant())
+$managerArgs = @($Action.ToLowerInvariant(), "--ref=$Ref")
 if ($PatchAgents) { $managerArgs += "--patch-agents" }
 if ($NonInteractive) { $managerArgs += "--non-interactive" }
 if ($Yes) { $managerArgs += "--yes" }
