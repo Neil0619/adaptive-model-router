@@ -56,7 +56,7 @@ codex plugin marketplace remove adaptive-model-router
 Windows 环境问题参见[故障排查](docs/TROUBLESHOOTING.md)。发布维护者应直接使用
 [原生 Windows 11 冒烟手册](docs/WINDOWS_SMOKE.md)，不要根据 README 临时拼装发布测试。
 在 Windows 上打开仓库后，可以直接让 Codex“完整读取该手册、逐项执行、按模板回传，
-但不要创建或推送 `v0.2.0` tag”。
+但不要创建或推送 `v0.3.0` tag”。
 
 ## 路由规则
 
@@ -72,6 +72,24 @@ Windows 环境问题参见[故障排查](docs/TROUBLESHOOTING.md)。发布维护
 
 `continue` 和 `ask_user` 路由不接受 outcome。严格输入输出、管理工具以及源码内
 开发 CLI 参见[工具接口](docs/TOOLS.md)。
+
+## 当前模型与委派历史
+
+路由器不会读取或切换根任务模型；Codex 界面中显示的根模型仍由宿主管理。
+`delegate` 中的 `target.model`/`target.effort` 只是当前 bounded stage 的
+subagent 目标。每次 `route_stage` 后，skill 会明确显示这条边界和本次动作。
+
+随时发送以下命令查看当前状态或最近记录：
+
+```text
+路由器：状态
+路由器：历史 10
+```
+
+英文等价命令为 `router: status` 和 `router: history 10`。历史包含 route
+写入时间、action、目标模型/effort、相对前一次委派是否变化、原因、route ID
+和 outcome，并且只限当前项目与任务。完整触发顺序、评分阈值以及“路由决定”和
+“实际根模型切换”的区别参见[路由触发与历史](docs/ROUTING.zh-CN.md)。
 
 ## 本地学习与隐私
 

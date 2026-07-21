@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { parseControlPrompt } from "./lib/control.mjs";
 import { writeJsonLine } from "./lib/io.mjs";
+import { formatRouteHistory, formatRouteStatus } from "./lib/presentation.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
 
 let RouterStore;
@@ -24,9 +25,18 @@ function additionalContext(message) {
   });
 }
 
+function visibleReport(message, locale) {
+  const instruction = locale === "zh"
+    ? "请在本次回复中向用户清晰展示以下 Adaptive Model Router 报告；不要声称根任务模型发生了切换。"
+    : "Clearly show the following Adaptive Model Router report in this response; do not claim that the root-task model changed.";
+  additionalContext(`${instruction}\n\n${message}`);
+}
+
 async function promptHook(input) {
-  const control = parseControlPrompt(String(input.prompt || ""));
+  const prompt = String(input.prompt || "");
+  const control = parseControlPrompt(prompt);
   if (!control) return;
+  const locale = prompt.startsWith("路由器：") ? "zh" : "en";
   const contextId = String(input.session_id || input.turn_id || "");
   if (!contextId) return;
   const store = new RouterStore();
@@ -34,7 +44,12 @@ async function promptHook(input) {
     const context = store.context({ cwd: input.cwd || process.cwd(), contextId });
     if (control.command === "status") {
       const status = store.status(context);
-      additionalContext(`Adaptive routing status: enabled=${status.settings.enabled}, classifier=${status.settings.classifierMode}, pending outcomes=${status.pendingOutcomes}.`);
+      visibleReport(formatRouteStatus(status, { locale }), locale);
+      return;
+    }
+    if (control.command === "history") {
+      const history = store.routeHistory(context, { limit: control.limit });
+      visibleReport(formatRouteHistory(history, { locale }), locale);
       return;
     }
     if (control.command === "enable") {
@@ -60,7 +75,9 @@ async function promptHook(input) {
         model: control.model,
         effort: control.effort,
       });
-      additionalContext(`Adaptive routing lock set for scope ${control.scope}.`);
+      additionalContext(
+        `Adaptive routing lock set for scope ${control.scope}: model=${control.model}, effort=${control.effort || "automatic"}.`,
+      );
     }
   } finally {
     store.close();

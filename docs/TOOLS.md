@@ -62,6 +62,10 @@ parameter. The root integrates the result and runs the returned verification
 gate. If the host cannot express those parameters, continue in the root and do
 not claim the root model changed.
 
+After every route, the skill emits a compact visible notice. It always labels
+the root-task model as host-managed and unchanged; a delegated target is shown
+as a bounded-stage model/effort, never as the current root model.
+
 `continue` and `ask_user` routes do not accept outcomes.
 
 ### `record_outcome`
@@ -93,7 +97,8 @@ continues and stops again without one, the hook records `unknown`.
 
 | Tool | Purpose | State change |
 | --- | --- | --- |
-| `get_route_status` | Return redacted state for the current project/context. | No |
+| `get_route_status` | Return the host-managed root boundary, current-stage state, and latest redacted route/target/transition/outcome for the current project/context. | No |
+| `get_route_history` | Return a timestamped current-project/context route timeline, optionally filtered by action. | No |
 | `diagnose_router` | Check database health, classifier circuit state, current redacted status, and legacy-state presence. | No |
 | `set_route_override` | Lock, clear, enable, or disable routing at `once`, `session`, `project`, optional `global`, or `all` scope where supported. | Yes |
 | `configure_router` | Configure project/global enablement, classifier mode, and whether global overrides are allowed. | Yes |
@@ -105,6 +110,23 @@ continues and stops again without one, the hook records `unknown`.
 
 Policy proposals are never approved automatically. Rejection and rollback are
 also deliberate user actions; an agent must not infer them from routine work.
+
+`get_route_history` accepts optional `limit` (`1..100`, default `20`) and
+`action` (`all`, `delegate`, `continue`, or `ask_user`). Each newest-first item
+contains:
+
+- route ID, commit timestamp, action, category, reasons, verification gate,
+  classifier state, escalation count, and prior route ID;
+- an optional bounded-stage `target {model, effort}`;
+- `transition.state`: `initial_delegate`, `target_unchanged`,
+  `target_changed`, or `not_delegated`, with `from`/`to` targets where useful;
+- the strict final outcome and recorded timestamp, or `null` while pending.
+
+The top-level `rootTask` is always
+`{modelVisibility: "host_managed", changedByRouter: false}`. This is a product
+boundary: the plugin cannot introspect the exact root model. A history
+timestamp proves that a route decision was committed; it does not by itself
+prove that the host successfully started the subagent.
 
 ## Override priority
 
@@ -122,6 +144,17 @@ Only prompts beginning at the first character with `router:` or `路由器：` a
 hook control commands. Quotes, code blocks, negations, later-line prefixes, and
 ordinary discussion do not change state.
 
+The read-only visible reports are:
+
+```text
+router: status
+router: history 10
+路由器：状态
+路由器：历史 10
+```
+
+Hook history limits are `1..20` to keep the user-facing report compact.
+
 ## Developer CLI
 
 The repository includes a source-tree CLI for diagnostics and explicit legacy
@@ -132,6 +165,8 @@ refer to the script by repository-relative or absolute path:
 ```bash
 node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs doctor --context example
 node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs status --context example
+node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs history --context example --limit 20
+node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs history --context example --limit 20 --action delegate
 node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs catalog
 node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs proposals --context example
 node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs approve PROPOSAL_ID --context example

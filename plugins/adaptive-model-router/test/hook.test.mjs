@@ -23,6 +23,9 @@ function runHook(mode, input, home) {
 
 test("only exact complete control prefixes and known commands parse", () => {
   assert.deepEqual(parseControlPrompt("router: off"), { command: "disable" });
+  assert.deepEqual(parseControlPrompt("router: history 5"), { command: "history", limit: 5 });
+  assert.deepEqual(parseControlPrompt("路由器：历史"), { command: "history", limit: 10 });
+  assert.deepEqual(parseControlPrompt("路由器：记录 20"), { command: "history", limit: 20 });
   assert.deepEqual(parseControlPrompt("路由器：锁定 gpt-5.6-sol high 一次"), {
     command: "lock", model: "gpt-5.6-sol", effort: "high", scope: "once",
   });
@@ -36,6 +39,10 @@ test("only exact complete control prefixes and known commands parse", () => {
     "router：off",
     "router: ordinary discussion",
     "路由器：普通讨论",
+    "router: history 0",
+    "router: history 21",
+    "router: history two",
+    "router: history 5 extra",
   ]) assert.equal(parseControlPrompt(prompt), null, prompt);
 });
 
@@ -60,6 +67,61 @@ test("prompt hook applies a control idempotently and ignores ordinary discussion
       assert.equal(resolved.source, "once");
       assert.equal(resolved.override.model, "gpt-5.6-sol");
       store.close();
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("status and history controls visibly separate the root model from bounded stage targets", async () => {
+  const project = await temporaryProject("adaptive visible Unicode 展示 ");
+  try {
+    await withRouterEnvironment(project, async () => {
+      const contextId = "visible-session";
+      const store = new RouterStore();
+      const route = await routeStage(routeInput({
+        contextId,
+        override: { model: "gpt-5.6-sol", effort: "high" },
+      }), { catalog: CATALOG, cwd: project.root, store });
+      store.close();
+
+      const statusResult = runHook("prompt", {
+        cwd: project.root,
+        session_id: contextId,
+        prompt: "路由器：状态",
+      }, project.home);
+      assert.equal(statusResult.status, 0, statusResult.stderr);
+      const status = JSON.parse(statusResult.stdout).hookSpecificOutput.additionalContext;
+      assert.match(status, /根任务模型：由 Codex 主机管理；路由器从未切换根任务模型/);
+      assert.match(status, /委派目标 gpt-5\.6-sol \(high\)/);
+      assert.match(status, new RegExp(route.routeId));
+      assert.match(status, /路由器：历史 10/);
+      assert.match(status, /\d{4}-\d{2}-\d{2}T/);
+      assert.doesNotMatch(status, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+      const historyResult = runHook("prompt", {
+        cwd: project.root,
+        session_id: contextId,
+        prompt: "路由器：历史 5",
+      }, project.home);
+      assert.equal(historyResult.status, 0, historyResult.stderr);
+      const history = JSON.parse(historyResult.stdout).hookSpecificOutput.additionalContext;
+      assert.match(history, /阶段路由\/委派决定，不是根模型热切换/);
+      assert.match(history, /首次委派/);
+      assert.match(history, /结果 待记录/);
+      assert.match(history, new RegExp(route.routeId));
+      assert.doesNotMatch(history, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+      const englishResult = runHook("prompt", {
+        cwd: project.root,
+        session_id: contextId,
+        prompt: "router: history 1",
+      }, project.home);
+      assert.equal(englishResult.status, 0, englishResult.stderr);
+      const english = JSON.parse(englishResult.stdout).hookSpecificOutput.additionalContext;
+      assert.match(english, /root-task model remains host-managed/i);
+      assert.match(english, /initial delegation/);
+      assert.match(english, /outcome pending/);
     });
   } finally {
     await project.cleanup();

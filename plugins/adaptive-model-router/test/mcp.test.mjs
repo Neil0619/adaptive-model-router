@@ -26,6 +26,12 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
         goal: "hello", phase: "question", evidence: {}, contextId: "mcp", forged: true,
       } } }),
       JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "get_route_status", arguments: { contextId: "mcp" } } }),
+      JSON.stringify({ jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "get_route_history", arguments: {
+        contextId: "mcp", limit: 5, action: "delegate",
+      } } }),
+      JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "get_route_history", arguments: {
+        contextId: "mcp", limit: 0,
+      } } }),
     ];
     const result = spawnSync(process.execPath, [serverPath], {
       input: `${messages.join("\n")}\n`,
@@ -36,14 +42,15 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
     });
     assert.equal(result.status, 0, result.stderr);
     const responses = result.stdout.trim().split(/\r?\n/).map(JSON.parse);
-    assert.equal(responses.length, 6);
+    assert.equal(responses.length, 8);
     assert.equal(responses[0].error.code, -32700);
-    assert.equal(responses[1].result.serverInfo.version, "0.2.0");
+    assert.equal(responses[1].result.serverInfo.version, "0.3.0");
     const tools = responses[2].result.tools;
     assert.deepEqual(tools.map((tool) => tool.name), [
       "route_stage",
       "record_outcome",
       "get_route_status",
+      "get_route_history",
       "set_route_override",
       "list_policy_proposals",
       "approve_policy_proposal",
@@ -59,6 +66,14 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
     assert.match(responses[4].result.content[0].text, /not allowed/);
     assert.equal(responses[5].result.isError, false);
     assert.doesNotMatch(JSON.stringify(responses[5]), new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.equal(responses[6].result.isError, false);
+    assert.deepEqual(responses[6].result.structuredContent.rootTask, {
+      modelVisibility: "host_managed",
+      changedByRouter: false,
+    });
+    assert.deepEqual(responses[6].result.structuredContent.routes, []);
+    assert.equal(responses[7].result.isError, true);
+    assert.match(responses[7].result.content[0].text, />= 1/);
   } finally {
     await project.cleanup();
   }

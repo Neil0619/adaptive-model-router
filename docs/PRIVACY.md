@@ -34,6 +34,11 @@ Set `classifierMode` to `local-only` or `disabled`, or set `ADAPTIVE_ROUTER_LOCA
 
 Status and diagnostic tools are scoped to the current project/context and return truncated opaque identifiers. They cannot enumerate other projects or sessions. Hook errors are generic and do not include the prompt, last assistant message, transcript path, working directory, or secrets.
 
+`get_route_history` and the `router: history` / `路由器：历史` reports use only
+the already-minimized route and outcome rows. They expose route timestamps,
+model/effort targets, transitions, reason codes, and outcomes for the current
+project/context; they do not add a transcript log or store display text.
+
 The runtime launcher checks only Node executable versions from the current process, `ADAPTIVE_ROUTER_NODE`, `PATH`, common version-manager directories, and standard install locations. Candidate paths and versions are not stored, sent to a model, or included in errors.
 
 ## Legacy data

@@ -29,7 +29,11 @@ test("SQLite files and redacted status contain no prompt, source, absolute path,
         userCorrection: false,
       }, { store, cwd: project.root });
       const context = store.context({ cwd: project.root, contextId });
-      const publicState = JSON.stringify({ status: store.status(context), diagnose: store.diagnose(context) });
+      const publicState = JSON.stringify({
+        status: store.status(context),
+        history: store.routeHistory(context),
+        diagnose: store.diagnose(context),
+      });
       for (const forbidden of [goal, source, project.root, contextId, secret]) assert.equal(publicState.includes(forbidden), false, forbidden);
       store.close();
 
@@ -60,6 +64,8 @@ test("status is current-context only and clear_project_data requires confirmatio
       const statusA = await callRouterTool("get_route_status", { contextId: "context-a" }, { store, cwd: project.root });
       assert.equal(statusA.latestRoute.routeId, routeA.routeId);
       assert.notEqual(statusA.latestRoute.routeId, routeB.routeId);
+      const historyA = await callRouterTool("get_route_history", { contextId: "context-a" }, { store, cwd: project.root });
+      assert.deepEqual(historyA.routes.map((route) => route.routeId), [routeA.routeId]);
 
       const salt = store.db.prepare("SELECT value FROM meta WHERE key = 'local_salt'").get().value;
       await assert.rejects(

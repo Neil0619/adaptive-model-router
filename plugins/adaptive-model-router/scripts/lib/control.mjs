@@ -29,6 +29,11 @@ export function parseControl(text) {
     return { command: "auto", scope: SCOPE_MAP[tokens[0]] || "all" };
   }
   if (["status", "状态"].includes(command) && tokens.length === 0) return { command: "status" };
+  if (["history", "历史", "记录"].includes(command) && tokens.length <= 1) {
+    const limit = tokens.length ? Number(tokens[0]) : 10;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 20) return null;
+    return { command: "history", limit };
+  }
   if (["lock", "锁定"].includes(command)) {
     const model = tokens.shift();
     if (!model) return null;

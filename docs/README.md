@@ -9,6 +9,9 @@ specification.
 - [English README](../README.md): product boundary, installation, upgrade, and
   basic routing behavior.
 - [中文 README](../README.zh-CN.md)：产品定位、安装、升级和基本路由规则。
+- [Routing triggers and history](ROUTING.md) /
+  [中文说明](ROUTING.zh-CN.md): exact trigger path, score thresholds, visible
+  current-stage target, and route history.
 - [Tool reference](TOOLS.md): public MCP contracts, control scopes, outcomes,
   and the source-tree developer CLI.
 - [Privacy](PRIVACY.md): local storage, classifier redaction, diagnostics, legacy
