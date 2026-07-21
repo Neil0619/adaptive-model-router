@@ -3,6 +3,7 @@ import { parseControlPrompt } from "./lib/control.mjs";
 import { writeJsonLine } from "./lib/io.mjs";
 import { formatRouteHistory, formatRouteStatus } from "./lib/presentation.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
+import { emitDiagnostic } from "./lib/diagnostics.mjs";
 
 let RouterStore;
 
@@ -14,7 +15,13 @@ function readInput() {
       value += chunk;
       if (value.length > 1_000_000) reject(new Error("hook input is too large"));
     });
-    process.stdin.on("end", () => resolve(JSON.parse(value || "{}")));
+    process.stdin.on("end", () => {
+      try {
+        resolve(JSON.parse(value || "{}"));
+      } catch (error) {
+        reject(error);
+      }
+    });
     process.stdin.on("error", reject);
   });
 }
@@ -215,13 +222,25 @@ async function stopHook(input) {
   }
 }
 
+const startedAt = Date.now();
+let stage = "runtime";
+
 try {
   assertRuntime();
+  stage = "database_import";
   ({ RouterStore } = await import("./lib/database.mjs"));
+  stage = "input";
   const input = await readInput();
-  if (process.argv[2] === "prompt") await promptHook(input);
-  else if (process.argv[2] === "stop") await stopHook(input);
-} catch {
+  if (process.argv[2] === "prompt") {
+    stage = "prompt";
+    await promptHook(input);
+  } else if (process.argv[2] === "stop") {
+    stage = "stop";
+    await stopHook(input);
+  }
+} catch (error) {
   process.stderr.write("Adaptive Model Router hook failed safely.\n");
+  const category = stage === "runtime" ? "runtime" : stage === "input" ? "invalid_input" : undefined;
+  emitDiagnostic({ component: "hook", stage, error, category, startedAt });
   process.exitCode = 0;
 }
