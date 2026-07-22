@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { EFFORT_ORDER, FAMILY_MAP, FAMILY_ORDER } from "./constants.mjs";
+import { normalizeModelSlug } from "./model-slug.mjs";
 
 function effortValue(effort) {
   const index = EFFORT_ORDER.indexOf(effort);
@@ -15,15 +16,16 @@ export function modelFamily(entry) {
 export function normalizeCatalog(models = []) {
   return models
     .map((entry) => {
-      const model = entry.model || entry.slug || entry.id;
-      if (typeof model !== "string" || !model) return null;
+      const model = normalizeModelSlug(entry.model || entry.slug || entry.id);
+      if (!model) return null;
+      const id = normalizeModelSlug(entry.id) || model;
       const supported = (entry.supportedReasoningEfforts || entry.supported_reasoning_levels || [])
         .map((value) => value?.reasoningEffort || value?.effort || value?.reasoning_effort || value)
         .filter((value) => EFFORT_ORDER.includes(value));
       const defaultEffort = entry.defaultReasoningEffort || entry.default_reasoning_level || supported[0] || "medium";
       return {
         model,
-        id: entry.id || model,
+        id,
         visibility: entry.visibility || "list",
         priority: Number.isFinite(Number(entry.priority)) ? Number(entry.priority) : Number.MAX_SAFE_INTEGER,
         defaultReasoningEffort: EFFORT_ORDER.includes(defaultEffort) ? defaultEffort : "medium",

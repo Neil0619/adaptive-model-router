@@ -27,7 +27,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: "get_route_status",
-    description: "Show the host-managed root-task boundary plus the latest redacted route, target model, effort, transition, and outcome for the current project and context.",
+    description: "Show the observed-or-host-managed root-task boundary plus automatic activation, task mode, and the latest redacted route for the current project/context.",
     inputSchema: {
       type: "object", additionalProperties: false, required: ["contextId"], properties: { contextId: CONTEXT },
     },
@@ -101,8 +101,23 @@ export const TOOL_DEFINITIONS = [
         contextId: CONTEXT,
         scope: { type: "string", enum: ["project", "global"] },
         enabled: { type: "boolean" },
+        autoActivate: { type: "boolean" },
         classifierMode: { type: "string", enum: ["auxiliary", "local-only", "disabled"] },
         allowGlobalOverride: { type: "boolean" },
+      },
+    },
+  },
+  {
+    name: "resolve_host_model_intent",
+    description: "Resolve one pending observed root-model change as manual-root mode or keep automatic bounded-stage routing.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["contextId", "changeId", "decision"],
+      properties: {
+        contextId: CONTEXT,
+        changeId: { type: "string", minLength: 1, maxLength: 128 },
+        decision: { type: "string", enum: ["manual_root", "keep_automatic"] },
       },
     },
   },
@@ -134,11 +149,14 @@ function contextFor(store, args, cwd) {
 function configure(store, args, cwd) {
   const context = contextFor(store, args, cwd);
   const changes = Object.fromEntries(
-    ["enabled", "classifierMode", "allowGlobalOverride"]
+    ["enabled", "autoActivate", "classifierMode", "allowGlobalOverride"]
       .filter((key) => Object.hasOwn(args, key))
       .map((key) => [key, args[key]]),
   );
   if (!Object.keys(changes).length) throw new Error("configure_router requires at least one setting");
+  if (Object.hasOwn(changes, "autoActivate") && args.scope !== "global") {
+    throw new Error("autoActivate is a global setting");
+  }
   return store.configure(context, changes, args.scope);
 }
 
@@ -159,10 +177,13 @@ function setOverride(store, args, cwd) {
   }
   if (args.mode === "enable") {
     const cleared = store.clearOverrides(context, args.scope);
+    if (["session", "all"].includes(args.scope)) store.setTaskMode(context, "automatic");
     if (args.scope === "project" || args.scope === "all") store.configure(context, { enabled: true }, "project");
     return { enabled: true, ...cleared };
   }
-  return store.clearOverrides(context, args.scope);
+  const cleared = store.clearOverrides(context, args.scope);
+  if (["session", "all"].includes(args.scope)) store.setTaskMode(context, "automatic");
+  return cleared;
 }
 
 export async function callRouterTool(name, args, { store, cwd = process.cwd(), routeOptions = {} } = {}) {
@@ -184,6 +205,9 @@ export async function callRouterTool(name, args, { store, cwd = process.cwd(), r
   if (name === "reject_policy_proposal") return rejectPolicyProposal(args, { store, cwd });
   if (name === "rollback_policy") return rollbackPolicy(args, { store, cwd });
   if (name === "configure_router") return configure(store, args, cwd);
+  if (name === "resolve_host_model_intent") {
+    return store.resolveHostModelIntent(contextFor(store, args, cwd), args);
+  }
   if (name === "diagnose_router") return store.diagnose(contextFor(store, args, cwd));
   if (name === "clear_project_data") return store.clearProject(contextFor(store, args, cwd));
   throw new Error(`unknown tool: ${name}`);

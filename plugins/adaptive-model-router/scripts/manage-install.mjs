@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -177,16 +177,23 @@ function agentsPath() {
   return join(codexHome(), "AGENTS.md");
 }
 
-const AGENTS_BLOCK = `${AGENTS_MARKER_START}\n` +
-  "When adaptive routing context is present, route only bounded task stages to a subagent using the model and reasoning effort returned by route_stage. Keep the root task as orchestrator, avoid overlapping writers, verify the delegated work, and record exactly one final outcome.\n" +
-  `${AGENTS_MARKER_END}`;
+const AGENTS_INSTRUCTION = "When adaptive routing context is present, route only bounded task stages to a subagent using the model and reasoning effort returned by route_stage. Keep the root task as orchestrator, avoid overlapping writers, verify the delegated work, and record exactly one final outcome.";
+const AGENTS_RESTORE_PATTERN = /<!-- adaptive-model-router:restore separator=([012]) created=([01]) -->/;
+
+function agentsBlock({ separatorLength, created }) {
+  return `${AGENTS_MARKER_START}\n` +
+    `<!-- adaptive-model-router:restore separator=${separatorLength} created=${created ? 1 : 0} -->\n` +
+    `${AGENTS_INSTRUCTION}\n` +
+    `${AGENTS_MARKER_END}`;
+}
 
 function markerState(path = agentsPath()) {
-  const content = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const exists = existsSync(path);
+  const content = exists ? readFileSync(path, "utf8") : "";
   const starts = content.split(AGENTS_MARKER_START).length - 1;
   const ends = content.split(AGENTS_MARKER_END).length - 1;
   if (starts !== ends || starts > 1) throw new InstallError("AGENTS.md contains partial or duplicate Adaptive Model Router markers", 6);
-  return { path, content, present: starts === 1 };
+  return { path, content, exists, present: starts === 1 };
 }
 
 function atomicWrite(path, content) {
@@ -199,7 +206,8 @@ function atomicWrite(path, content) {
 function patchAgents(state = markerState()) {
   if (state.present) return false;
   const separator = state.content.length === 0 ? "" : state.content.endsWith("\n") ? "\n" : "\n\n";
-  atomicWrite(state.path, `${state.content}${separator}${AGENTS_BLOCK}\n`);
+  const block = agentsBlock({ separatorLength: separator.length, created: !state.exists });
+  atomicWrite(state.path, `${state.content}${separator}${block}\n`);
   return true;
 }
 
@@ -207,8 +215,29 @@ function unpatchAgents(state = markerState()) {
   if (!state.present) return false;
   const start = state.content.indexOf(AGENTS_MARKER_START);
   const end = state.content.indexOf(AGENTS_MARKER_END, start) + AGENTS_MARKER_END.length;
-  const updated = `${state.content.slice(0, start)}${state.content.slice(end)}`;
-  atomicWrite(state.path, updated);
+  const ownedBlock = state.content.slice(start, end);
+  const metadata = AGENTS_RESTORE_PATTERN.exec(ownedBlock);
+  if (!metadata) {
+    const updated = `${state.content.slice(0, start)}${state.content.slice(end)}`;
+    atomicWrite(state.path, updated);
+    return true;
+  }
+
+  const separatorLength = Number(metadata[1]);
+  const created = metadata[2] === "1";
+  const removeStart = start - separatorLength;
+  const expectedSeparator = "\n".repeat(separatorLength);
+  if (removeStart < 0 || state.content.slice(removeStart, start) !== expectedSeparator) {
+    throw new InstallError("AGENTS.md owned block restore metadata does not match its boundary", 6);
+  }
+
+  const removeEnd = state.content[end] === "\n" ? end + 1 : end;
+  const prefix = state.content.slice(0, removeStart);
+  const suffix = state.content.slice(removeEnd);
+  const joiner = separatorLength === 2 && prefix.length > 0 && suffix.length > 0 ? "\n" : "";
+  const updated = `${prefix}${joiner}${suffix}`;
+  if (created && updated.length === 0) unlinkSync(state.path);
+  else atomicWrite(state.path, updated);
   return true;
 }
 
@@ -253,6 +282,7 @@ async function installOrUpgrade(args, state) {
   if (args.patchAgents) patchAgents();
   process.stdout.write(`Adaptive Model Router ${ROUTER_VERSION} is installed.\n`);
   process.stdout.write("Trust the plugin hooks when Codex prompts, then start a new task.\n");
+  process.stdout.write('To opt into automatic routing for all local projects, send "router: global on" once in the new task.\n');
 }
 
 function uninstall(args, state) {

@@ -7,18 +7,23 @@ import {
   DEFAULT_OFFSETS,
   DEFAULT_SETTINGS,
   EFFORT_ORDER,
+  HOST_MODEL_INTENT_DECISIONS,
   ROUTER_VERSION,
 } from "./constants.mjs";
 import { databasePath, legacyStatePresent, opaqueId, projectIdentityMaterial } from "./context.mjs";
 import { canonicalJson, isSqliteBusy, parseJson, payloadHash, sleepSync } from "./io.mjs";
+import { normalizeModelSlug } from "./model-slug.mjs";
 
 const GLOBAL_PROJECT = "__global__";
 const GLOBAL_CONTEXT = "__global__";
 const DEFAULT_HISTORY_LIMIT = 20;
 const MAX_HISTORY_LIMIT = 100;
-
 function nowIso() {
   return new Date().toISOString();
+}
+
+export function normalizeRootModel(value) {
+  return normalizeModelSlug(value);
 }
 
 function sqliteOptions(timeout) {
@@ -86,7 +91,16 @@ export class RouterStore {
   migrate() {
     const version = Number(this.db.prepare("PRAGMA user_version").get().user_version || 0);
     if (version > DATABASE_VERSION) throw new Error("router database was created by a newer version");
-    if (version === DATABASE_VERSION) return;
+    if (version === DATABASE_VERSION) {
+      const columns = this.db.prepare("PRAGMA table_info(host_model_state)").all();
+      if (columns.length && !columns.some((column) => column.name === "model_visible")) {
+        this.transaction(() => {
+          this.db.exec("ALTER TABLE host_model_state ADD COLUMN model_visible INTEGER NOT NULL DEFAULT 0 CHECK (model_visible IN (0, 1))");
+          this.db.exec("UPDATE host_model_state SET model_visible = CASE WHEN current_model IS NULL THEN 0 ELSE 1 END");
+        });
+      }
+      return;
+    }
     this.transaction(() => {
       const current = Number(this.db.prepare("PRAGMA user_version").get().user_version || 0);
       if (current === 0) {
@@ -128,6 +142,7 @@ export class RouterStore {
             model TEXT,
             effort TEXT,
             family TEXT,
+            root_model TEXT,
             verification_gate TEXT NOT NULL,
             reason_codes_json TEXT NOT NULL,
             classifier_state TEXT NOT NULL,
@@ -221,6 +236,59 @@ export class RouterStore {
             history_records_archived INTEGER NOT NULL DEFAULT 0,
             imported_at TEXT NOT NULL
           );
+          CREATE TABLE IF NOT EXISTS host_model_changes (
+            change_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            context_key TEXT NOT NULL,
+            from_model TEXT NOT NULL,
+            to_model TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'manual_root', 'keep_automatic', 'cancelled', 'superseded')),
+            detected_at TEXT NOT NULL,
+            resolved_at TEXT
+          );
+          CREATE INDEX IF NOT EXISTS host_model_changes_context
+            ON host_model_changes(project_id, context_key, detected_at DESC);
+          CREATE UNIQUE INDEX IF NOT EXISTS one_pending_host_model_change
+            ON host_model_changes(project_id, context_key) WHERE status = 'pending';
+          CREATE TABLE IF NOT EXISTS host_model_state (
+            project_id TEXT NOT NULL,
+            context_key TEXT NOT NULL,
+            current_model TEXT,
+            model_visible INTEGER NOT NULL DEFAULT 0 CHECK (model_visible IN (0, 1)),
+            task_mode TEXT NOT NULL CHECK (task_mode IN ('automatic', 'manual_root')),
+            pending_change_id TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (project_id, context_key)
+          );
+        `);
+      }
+      if (current === 1) {
+        this.db.exec(`
+          ALTER TABLE routes ADD COLUMN root_model TEXT;
+          CREATE TABLE IF NOT EXISTS host_model_changes (
+            change_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            context_key TEXT NOT NULL,
+            from_model TEXT NOT NULL,
+            to_model TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'manual_root', 'keep_automatic', 'cancelled', 'superseded')),
+            detected_at TEXT NOT NULL,
+            resolved_at TEXT
+          );
+          CREATE INDEX IF NOT EXISTS host_model_changes_context
+            ON host_model_changes(project_id, context_key, detected_at DESC);
+          CREATE UNIQUE INDEX IF NOT EXISTS one_pending_host_model_change
+            ON host_model_changes(project_id, context_key) WHERE status = 'pending';
+          CREATE TABLE IF NOT EXISTS host_model_state (
+            project_id TEXT NOT NULL,
+            context_key TEXT NOT NULL,
+            current_model TEXT,
+            model_visible INTEGER NOT NULL DEFAULT 0 CHECK (model_visible IN (0, 1)),
+            task_mode TEXT NOT NULL CHECK (task_mode IN ('automatic', 'manual_root')),
+            pending_change_id TEXT,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (project_id, context_key)
+          );
         `);
       }
       this.db.exec(`PRAGMA user_version = ${DATABASE_VERSION}`);
@@ -239,15 +307,26 @@ export class RouterStore {
     });
   }
 
-  context({ cwd = process.cwd(), contextId }) {
+  context({ cwd = process.cwd(), contextId, authoritative = false }) {
     if (typeof contextId !== "string" || !contextId.trim()) throw new Error("contextId is required");
+    const normalizedContextId = contextId.normalize("NFC");
+    if (!authoritative) {
+      const observed = this.db.prepare(`
+        SELECT project_id, context_key
+        FROM host_model_state
+        ORDER BY updated_at DESC
+      `).all().find((row) => (
+        opaqueId(this.salt, "context", `${row.project_id}\0${normalizedContextId}`) === row.context_key
+      ));
+      if (observed) return { projectId: observed.project_id, contextKey: observed.context_key };
+    }
     let material = this.identityCache.get(cwd);
     if (!material) {
       material = projectIdentityMaterial(cwd);
       this.identityCache.set(cwd, material);
     }
     const projectId = opaqueId(this.salt, "project", material);
-    const contextKey = opaqueId(this.salt, "context", `${projectId}\0${contextId.normalize("NFC")}`);
+    const contextKey = opaqueId(this.salt, "context", `${projectId}\0${normalizedContextId}`);
     this.db.prepare("INSERT OR IGNORE INTO projects(project_id, created_at) VALUES(?, ?)").run(projectId, nowIso());
     return { projectId, contextKey };
   }
@@ -279,6 +358,230 @@ export class RouterStore {
     return this.getSettings(context);
   }
 
+  hostModelState(context) {
+    const row = this.db.prepare(`
+      SELECT current_model, model_visible, task_mode, pending_change_id
+      FROM host_model_state WHERE project_id = ? AND context_key = ?
+    `).get(context.projectId, context.contextKey);
+    const pending = row?.pending_change_id ? this.db.prepare(`
+      SELECT change_id, from_model, to_model, status, detected_at, resolved_at
+      FROM host_model_changes
+      WHERE change_id = ? AND project_id = ? AND context_key = ?
+    `).get(row.pending_change_id, context.projectId, context.contextKey) : null;
+    return {
+      currentModel: row?.current_model || null,
+      modelVisible: row?.model_visible === 1,
+      taskMode: pending?.status === "pending" ? "pending_confirmation" : row?.task_mode || "automatic",
+      pendingChange: pending ? {
+        changeId: pending.change_id,
+        fromModel: pending.from_model,
+        toModel: pending.to_model,
+        detectedAt: pending.detected_at,
+      } : null,
+    };
+  }
+
+  rootTask(context, model = null) {
+    const state = this.hostModelState(context);
+    const supplied = normalizeRootModel(model);
+    const observed = supplied || (state.modelVisible ? state.currentModel : null);
+    return {
+      modelVisibility: observed ? "hook_observed" : "host_managed",
+      ...(observed ? { model: observed } : {}),
+      reasoningEffortVisibility: "host_only",
+      changedByRouter: false,
+    };
+  }
+
+  observeHostModel(context, value, { detectChanges = true } = {}) {
+    const model = normalizeRootModel(value);
+    if (!model) {
+      this.transaction(() => {
+        this.db.prepare(`
+          UPDATE host_model_state SET model_visible = 0, updated_at = ?
+          WHERE project_id = ? AND context_key = ?
+        `).run(nowIso(), context.projectId, context.contextKey);
+      });
+      return { observed: false, changed: false, ...this.hostModelState(context) };
+    }
+    return this.transaction(() => {
+      const timestamp = nowIso();
+      const row = this.db.prepare(`
+        SELECT current_model, model_visible, task_mode, pending_change_id
+        FROM host_model_state WHERE project_id = ? AND context_key = ?
+      `).get(context.projectId, context.contextKey);
+      if (!row) {
+        this.db.prepare(`
+          INSERT INTO host_model_state(project_id, context_key, current_model, model_visible, task_mode, pending_change_id, updated_at)
+          VALUES(?, ?, ?, 1, 'automatic', NULL, ?)
+        `).run(context.projectId, context.contextKey, model, timestamp);
+        return { observed: true, changed: false, currentModel: model, taskMode: "automatic", pendingChange: null };
+      }
+      if (!row.current_model) {
+        this.db.prepare(`
+          UPDATE host_model_state SET current_model = ?, model_visible = 1, updated_at = ?
+          WHERE project_id = ? AND context_key = ?
+        `).run(model, timestamp, context.projectId, context.contextKey);
+        return { observed: true, changed: false, ...this.hostModelState(context) };
+      }
+      if (row.current_model === model) {
+        if (row.model_visible !== 1) {
+          this.db.prepare(`
+            UPDATE host_model_state SET model_visible = 1, updated_at = ?
+            WHERE project_id = ? AND context_key = ?
+          `).run(timestamp, context.projectId, context.contextKey);
+        }
+        const state = this.hostModelState(context);
+        return { observed: true, changed: false, ...state };
+      }
+      if (!detectChanges || row.task_mode === "manual_root") {
+        this.db.prepare(`
+          UPDATE host_model_state SET current_model = ?, model_visible = 1, updated_at = ?
+          WHERE project_id = ? AND context_key = ?
+        `).run(model, timestamp, context.projectId, context.contextKey);
+        return { observed: true, changed: true, ...this.hostModelState(context) };
+      }
+
+      let origin = row.current_model;
+      if (row.pending_change_id) {
+        const previous = this.db.prepare(`
+          SELECT from_model FROM host_model_changes
+          WHERE change_id = ? AND project_id = ? AND context_key = ? AND status = 'pending'
+        `).get(row.pending_change_id, context.projectId, context.contextKey);
+        if (previous) origin = previous.from_model;
+        if (model === origin) {
+          this.db.prepare(`
+            UPDATE host_model_changes SET status = 'cancelled', resolved_at = ?
+            WHERE change_id = ? AND project_id = ? AND context_key = ? AND status = 'pending'
+          `).run(timestamp, row.pending_change_id, context.projectId, context.contextKey);
+          this.db.prepare(`
+            UPDATE host_model_state
+            SET current_model = ?, model_visible = 1, task_mode = 'automatic', pending_change_id = NULL, updated_at = ?
+            WHERE project_id = ? AND context_key = ?
+          `).run(model, timestamp, context.projectId, context.contextKey);
+          return { observed: true, changed: true, currentModel: model, taskMode: "automatic", pendingChange: null };
+        }
+        this.db.prepare(`
+          UPDATE host_model_changes SET status = 'superseded', resolved_at = ?
+          WHERE change_id = ? AND project_id = ? AND context_key = ? AND status = 'pending'
+        `).run(timestamp, row.pending_change_id, context.projectId, context.contextKey);
+      }
+
+      const changeId = randomUUID();
+      this.db.prepare(`
+        INSERT INTO host_model_changes(change_id, project_id, context_key, from_model, to_model, status, detected_at, resolved_at)
+        VALUES(?, ?, ?, ?, ?, 'pending', ?, NULL)
+      `).run(changeId, context.projectId, context.contextKey, origin, model, timestamp);
+      this.db.prepare(`
+        UPDATE host_model_state
+        SET current_model = ?, model_visible = 1, task_mode = 'automatic', pending_change_id = ?, updated_at = ?
+        WHERE project_id = ? AND context_key = ?
+      `).run(model, changeId, timestamp, context.projectId, context.contextKey);
+      return {
+        observed: true,
+        changed: true,
+        currentModel: model,
+        taskMode: "pending_confirmation",
+        pendingChange: { changeId, fromModel: origin, toModel: model, detectedAt: timestamp },
+      };
+    });
+  }
+
+  setTaskMode(context, mode) {
+    if (!["automatic", "manual_root"].includes(mode)) throw new Error("task mode must be automatic or manual_root");
+    return this.transaction(() => {
+      const row = this.db.prepare(`
+        SELECT current_model, pending_change_id FROM host_model_state
+        WHERE project_id = ? AND context_key = ?
+      `).get(context.projectId, context.contextKey);
+      const timestamp = nowIso();
+      if (!row) {
+        this.db.prepare(`
+          INSERT INTO host_model_state(project_id, context_key, current_model, model_visible, task_mode, pending_change_id, updated_at)
+          VALUES(?, ?, NULL, 0, ?, NULL, ?)
+        `).run(context.projectId, context.contextKey, mode, timestamp);
+        return { taskMode: mode, pendingChange: null, currentModel: null };
+      }
+      if (row.pending_change_id) {
+        this.db.prepare(`
+          UPDATE host_model_changes SET status = ?, resolved_at = ?
+          WHERE change_id = ? AND project_id = ? AND context_key = ? AND status = 'pending'
+        `).run(mode === "manual_root" ? "manual_root" : "keep_automatic", timestamp,
+          row.pending_change_id, context.projectId, context.contextKey);
+      }
+      this.db.prepare(`
+        UPDATE host_model_state SET task_mode = ?, pending_change_id = NULL, updated_at = ?
+        WHERE project_id = ? AND context_key = ?
+      `).run(mode, timestamp, context.projectId, context.contextKey);
+      return { taskMode: mode, pendingChange: null, currentModel: row.current_model };
+    });
+  }
+
+  cancelPendingHostModelIntent(context) {
+    return this.transaction(() => {
+      const row = this.db.prepare(`
+        SELECT current_model, pending_change_id FROM host_model_state
+        WHERE project_id = ? AND context_key = ?
+      `).get(context.projectId, context.contextKey);
+      if (!row?.pending_change_id) return this.hostModelState(context);
+      const timestamp = nowIso();
+      this.db.prepare(`
+        UPDATE host_model_changes SET status = 'cancelled', resolved_at = ?
+        WHERE change_id = ? AND project_id = ? AND context_key = ? AND status = 'pending'
+      `).run(timestamp, row.pending_change_id, context.projectId, context.contextKey);
+      this.db.prepare(`
+        UPDATE host_model_state SET pending_change_id = NULL, updated_at = ?
+        WHERE project_id = ? AND context_key = ?
+      `).run(timestamp, context.projectId, context.contextKey);
+      return this.hostModelState(context);
+    });
+  }
+
+  resolveHostModelIntent(context, { changeId, decision }) {
+    if (!HOST_MODEL_INTENT_DECISIONS.includes(decision)) throw new Error("unsupported host-model intent decision");
+    return this.transaction(() => {
+      const change = this.db.prepare(`
+        SELECT status, from_model, to_model FROM host_model_changes
+        WHERE change_id = ? AND project_id = ? AND context_key = ?
+      `).get(changeId, context.projectId, context.contextKey);
+      if (!change) throw new Error("changeId does not belong to the current project and context");
+      const state = this.db.prepare(`
+        SELECT task_mode, pending_change_id FROM host_model_state
+        WHERE project_id = ? AND context_key = ?
+      `).get(context.projectId, context.contextKey);
+      if (["manual_root", "keep_automatic"].includes(change.status)) {
+        const latest = this.db.prepare(`
+          SELECT change_id FROM host_model_changes
+          WHERE project_id = ? AND context_key = ? ORDER BY rowid DESC LIMIT 1
+        `).get(context.projectId, context.contextKey);
+        const expectedMode = change.status === "manual_root" ? "manual_root" : "automatic";
+        if (latest?.change_id !== changeId || state?.pending_change_id || state?.task_mode !== expectedMode) {
+          throw new Error("host-model intent is stale");
+        }
+        if (change.status !== decision) throw new Error("host-model intent already has a conflicting decision");
+        return { resolved: false, idempotent: true, decision, taskMode: decision === "manual_root" ? "manual_root" : "automatic" };
+      }
+      if (change.status !== "pending") throw new Error("host-model intent is stale");
+      if (state?.pending_change_id !== changeId) throw new Error("host-model intent is stale");
+      const taskMode = decision === "manual_root" ? "manual_root" : "automatic";
+      const timestamp = nowIso();
+      this.db.prepare(`
+        UPDATE host_model_changes SET status = ?, resolved_at = ? WHERE change_id = ?
+      `).run(decision, timestamp, changeId);
+      this.db.prepare(`
+        UPDATE host_model_state SET task_mode = ?, pending_change_id = NULL, updated_at = ?
+        WHERE project_id = ? AND context_key = ?
+      `).run(taskMode, timestamp, context.projectId, context.contextKey);
+      return {
+        resolved: true,
+        idempotent: false,
+        decision,
+        taskMode,
+        rootModel: change.to_model,
+      };
+    });
+  }
+
   overrideKeys(context, scope) {
     if (scope === "global") return { projectId: GLOBAL_PROJECT, contextKey: GLOBAL_CONTEXT };
     if (scope === "project") return { projectId: context.projectId, contextKey: GLOBAL_CONTEXT };
@@ -286,6 +589,8 @@ export class RouterStore {
   }
 
   setOverride(context, { scope, mode = "locked", model = null, effort = null }) {
+    const normalizedModel = model == null ? null : normalizeModelSlug(model);
+    if (model != null && !normalizedModel) throw new Error("model has an invalid format");
     const keys = this.overrideKeys(context, scope);
     this.transaction(() => {
       this.db.prepare(`
@@ -293,9 +598,9 @@ export class RouterStore {
         VALUES(?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(scope, project_id, context_key) DO UPDATE SET
           mode = excluded.mode, model = excluded.model, effort = excluded.effort, created_at = excluded.created_at
-      `).run(scope, keys.projectId, keys.contextKey, mode, model, effort, nowIso());
+      `).run(scope, keys.projectId, keys.contextKey, mode, normalizedModel, effort, nowIso());
     });
-    return { scope, mode, model, effort };
+    return { scope, mode, model: normalizedModel, effort };
   }
 
   clearOverrides(context, scope = "all") {
@@ -342,8 +647,8 @@ export class RouterStore {
       this.db.prepare(`
         INSERT INTO routes(
           route_id, project_id, context_key, schema_version, action, category, model, effort, family,
-          verification_gate, reason_codes_json, classifier_state, escalation_count, previous_route_id, created_at
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          root_model, verification_gate, reason_codes_json, classifier_state, escalation_count, previous_route_id, created_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         route.routeId,
         context.projectId,
@@ -354,6 +659,7 @@ export class RouterStore {
         route.target?.model || null,
         route.target?.effort || null,
         route.family || null,
+        route.rootTask?.model || null,
         route.verificationGate,
         canonicalJson(route.reasonCodes),
         route.classifier.state,
@@ -390,6 +696,7 @@ export class RouterStore {
         r.category,
         r.model,
         r.effort,
+        r.root_model,
         r.verification_gate,
         r.reason_codes_json,
         r.classifier_state,
@@ -445,6 +752,12 @@ export class RouterStore {
         classifier: { state: row.classifier_state },
         escalation: { count: Number(row.escalation_count || 0) },
         previousRouteId: row.previous_route_id || null,
+        rootTask: {
+          modelVisibility: row.root_model ? "hook_observed" : "host_managed",
+          ...(row.root_model ? { model: row.root_model } : {}),
+          reasoningEffortVisibility: "host_only",
+          changedByRouter: false,
+        },
         createdAt: row.created_at,
         outcome: row.outcome_status ? {
           status: row.outcome_status,
@@ -462,7 +775,7 @@ export class RouterStore {
       projectKey: context.projectId.slice(0, 12),
       contextKey: context.contextKey.slice(0, 12),
       scope: "current_project_context",
-      rootTask: { modelVisibility: "host_managed", changedByRouter: false },
+      rootTask: this.rootTask(context),
       filter: { action, limit },
       routes,
     };
@@ -641,6 +954,8 @@ export class RouterStore {
 
   status(context) {
     const settings = this.getSettings(context);
+    const hostState = this.hostModelState(context);
+    const disabledByOverride = this.resolveOverride(context, null, settings).override?.mode === "disabled";
     const policy = this.ensurePolicy(context);
     const latest = this.routeHistory(context, { limit: 1 }).routes[0] || null;
     const latestStatus = latest ? {
@@ -654,6 +969,7 @@ export class RouterStore {
       classifier: latest.classifier.state,
       escalations: latest.escalation.count,
       previousRouteId: latest.previousRouteId,
+      rootTask: latest.rootTask,
       createdAt: latest.createdAt,
       outcome: latest.outcome,
     } : null;
@@ -668,8 +984,18 @@ export class RouterStore {
       routerVersion: ROUTER_VERSION,
       projectKey: context.projectId.slice(0, 12),
       contextKey: context.contextKey.slice(0, 12),
-      rootTask: { modelVisibility: "host_managed", changedByRouter: false },
-      currentStage: !latest
+      rootTask: this.rootTask(context),
+      taskMode: hostState.taskMode,
+      pendingHostModelChange: hostState.pendingChange,
+      autoActivation: {
+        globalEnabled: settings.autoActivate === true,
+        effective: settings.autoActivate === true && settings.enabled === true && !disabledByOverride,
+      },
+      currentStage: hostState.taskMode === "pending_confirmation"
+        ? { state: "pending_model_intent", target: null, since: hostState.pendingChange?.detectedAt || null }
+        : hostState.taskMode === "manual_root"
+          ? { state: "manual_root", target: null, since: null }
+          : !latest
         ? { state: "no_route", target: null, since: null }
         : latest.action === "delegate" && latest.outcome == null
           ? { state: "delegated_pending_outcome", target: latest.target, since: latest.createdAt }
@@ -713,6 +1039,8 @@ export class RouterStore {
       this.db.prepare("DELETE FROM policy_revisions WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM classifier_health WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM legacy_imports WHERE project_id = ?").run(projectId);
+      this.db.prepare("DELETE FROM host_model_changes WHERE project_id = ?").run(projectId);
+      this.db.prepare("DELETE FROM host_model_state WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM overrides WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM settings WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM projects WHERE project_id = ?").run(projectId);

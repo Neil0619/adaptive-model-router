@@ -3,6 +3,7 @@ import {
   EFFORT_ORDER,
   FAILURE_TYPES,
   REASON_CODES,
+  TASK_MODES,
   VERIFICATION_GATES,
 } from "./constants.mjs";
 
@@ -71,12 +72,24 @@ const ESCALATION_STATUS_SCHEMA = {
   },
 };
 
+export const ROOT_TASK_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["modelVisibility", "reasoningEffortVisibility", "changedByRouter"],
+  properties: {
+    modelVisibility: { type: "string", enum: ["hook_observed", "host_managed"] },
+    model: { type: "string", minLength: 1, maxLength: 128 },
+    reasoningEffortVisibility: { type: "string", enum: ["host_only"] },
+    changedByRouter: { type: "boolean", enum: [false] },
+  },
+};
+
 export const ROUTE_OUTPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["schemaVersion", "routeId", "action", "category", "reasonCodes", "verificationGate", "classifier", "escalation"],
+  required: ["schemaVersion", "routeId", "action", "category", "reasonCodes", "verificationGate", "classifier", "escalation", "rootTask", "taskMode"],
   properties: {
-    schemaVersion: { type: "string", enum: ["2.0"] },
+    schemaVersion: { type: "string", enum: ["3.0"] },
     routeId: { type: "string", minLength: 1 },
     action: { type: "string", enum: ["delegate", "continue", "ask_user"] },
     category: { type: "string", enum: CATEGORIES },
@@ -93,6 +106,8 @@ export const ROUTE_OUTPUT_SCHEMA = {
     verificationGate: { type: "string", enum: VERIFICATION_GATES },
     classifier: CLASSIFIER_STATUS_SCHEMA,
     escalation: ESCALATION_STATUS_SCHEMA,
+    rootTask: ROOT_TASK_SCHEMA,
+    taskMode: { type: "string", enum: TASK_MODES },
   },
 };
 

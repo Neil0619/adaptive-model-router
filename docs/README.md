@@ -32,10 +32,12 @@ specification.
   protected `stable` advancement.
 - [Native Windows 11 smoke test](WINDOWS_SMOKE.md): a self-contained handoff that
   can be given to Codex on a Windows machine.
+- [Native macOS smoke test](MACOS_SMOKE.md): the equivalent logged-in native
+  macOS gate for automatic routing and host-model intent.
 - [Changelog](../CHANGELOG.md): release-visible behavior changes.
 
-The release checklist is authoritative for release gates. The Windows runbook
-is authoritative for the native Windows manual smoke procedure.
+The release checklist is authoritative for release gates. The platform
+runbooks are authoritative for native Windows and macOS manual smoke procedures.
 
 ## Official Codex references
 

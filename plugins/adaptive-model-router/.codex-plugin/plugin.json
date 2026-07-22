@@ -21,11 +21,13 @@
   "interface": {
     "displayName": "Adaptive Model Router",
     "shortDescription": "Delegate bounded stages to the right Codex model",
-    "longDescription": "Choose an available model and reasoning effort for bounded subagent stages, verify outcomes, and learn local project policy only after explicit approval.",
+    "longDescription": "Opt in once to route substantive stages automatically, choose an available model and reasoning effort for bounded subagents, preserve host-model intent, verify outcomes, and learn local project policy only after explicit approval.",
     "developerName": "niuzhenya",
     "category": "Developer Tools",
     "capabilities": [
       "Model routing",
+      "Global automatic activation",
+      "Host-model intent protection",
       "Bounded delegation",
       "Route visibility and history",
       "Local learning",
@@ -37,8 +39,7 @@
     "defaultPrompt": [
       "Route the next implementation stage.",
       "Show the current route and delegated model target.",
-      "Show recent model delegation history.",
-      "Diagnose Adaptive Model Router."
+      "Show recent model delegation history."
     ],
     "brandColor": "#2563EB"
   }

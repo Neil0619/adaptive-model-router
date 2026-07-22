@@ -5,6 +5,7 @@ import { MAX_ESCALATIONS, SCHEMA_VERSION, EFFORT_ORDER, FAMILY_ORDER } from "./c
 import { ROUTE_INPUT_SCHEMA, ROUTE_OUTPUT_SCHEMA } from "./contracts.mjs";
 import { RouterStore } from "./database.mjs";
 import { clamp } from "./io.mjs";
+import { normalizeModelSlug } from "./model-slug.mjs";
 import { assertSchema } from "./schema.mjs";
 import {
   desiredRoute,
@@ -39,6 +40,8 @@ function publicRoute(internal) {
     verificationGate: internal.verificationGate,
     classifier: internal.classifier,
     escalation: internal.escalation,
+    rootTask: internal.rootTask,
+    taskMode: internal.taskMode,
   };
   if (internal.target) result.target = internal.target;
   assertSchema(ROUTE_OUTPUT_SCHEMA, result, "route output");
@@ -47,7 +50,16 @@ function publicRoute(internal) {
   return result;
 }
 
-function baseRoute({ action, category = "general", codes, gate = "none", classifier = "not_needed", escalation = null }) {
+function baseRoute({
+  action,
+  category = "general",
+  codes,
+  gate = "none",
+  classifier = "not_needed",
+  escalation = null,
+  rootTask = { modelVisibility: "host_managed", reasoningEffortVisibility: "host_only", changedByRouter: false },
+  taskMode = "automatic",
+}) {
   return {
     schemaVersion: SCHEMA_VERSION,
     routeId: randomUUID(),
@@ -60,7 +72,17 @@ function baseRoute({ action, category = "general", codes, gate = "none", classif
     family: null,
     target: null,
     previousRouteId: null,
+    rootTask,
+    taskMode,
   };
+}
+
+function contextualRoute(store, context, options) {
+  return baseRoute({
+    ...options,
+    rootTask: store.rootTask(context),
+    taskMode: store.hostModelState(context).taskMode,
+  });
 }
 
 function sourceCode(source) {
@@ -81,6 +103,15 @@ function validateRouteInput(input) {
   assertSchema(ROUTE_INPUT_SCHEMA, input, "route_stage input");
   if (input.override && input.override.model == null && input.override.effort == null) {
     throw new Error("override must include model or effort");
+  }
+  if (input.override?.model != null) {
+    const normalized = normalizeModelSlug(input.override.model);
+    if (!normalized) {
+      const error = new Error("override model has an invalid format");
+      error.code = "INVALID_INPUT";
+      throw error;
+    }
+    input.override.model = normalized;
   }
   if (input.evidence.verificationFailed === true) {
     if (!input.previousRouteId) throw new Error("previousRouteId is required after verification failure");
@@ -150,7 +181,7 @@ async function routeWithStore(input, options, store) {
   validateRouteInput(input);
   const context = store.context({ cwd: options.cwd || process.cwd(), contextId: input.contextId });
   const settings = store.getSettings(context);
-  const policy = store.ensurePolicy(context);
+  const hostState = store.hostModelState(context);
   let previous = null;
   if (input.previousRouteId) {
     previous = store.findRoute(context, input.previousRouteId);
@@ -158,27 +189,38 @@ async function routeWithStore(input, options, store) {
     if (previous.action !== "delegate") throw new Error("previousRouteId must reference a delegated route");
   }
 
+  if (hostState.taskMode === "pending_confirmation" || hostState.taskMode === "manual_root") {
+    const route = contextualRoute(store, context, {
+      action: "continue",
+      codes: [hostState.taskMode === "pending_confirmation" ? "HOST_MODEL_INTENT_PENDING" : "MANUAL_ROOT_SELECTED"],
+    });
+    store.commitRoute(context, route, null);
+    return publicRoute(route);
+  }
+
+  const policy = store.ensurePolicy(context);
+
   const initialOverride = store.resolveOverride(context, input.override || null, settings);
   if (!settings.enabled || initialOverride.override?.mode === "disabled") {
-    const route = baseRoute({ action: "continue", codes: ["ROUTER_DISABLED"] });
+    const route = contextualRoute(store, context, { action: "continue", codes: ["ROUTER_DISABLED"] });
     store.commitRoute(context, route, null);
     return publicRoute(route);
   }
   if (input.evidence.hostCanDelegate === false) {
-    const route = baseRoute({ action: "continue", codes: ["HOST_DELEGATION_UNAVAILABLE"] });
+    const route = contextualRoute(store, context, { action: "continue", codes: ["HOST_DELEGATION_UNAVAILABLE"] });
     store.commitRoute(context, route, null);
     return publicRoute(route);
   }
   if (!initialOverride.override && isTrivialTask(input.goal, input.evidence)) {
     const code = input.evidence.workProduct === false ? "NO_WORK_PRODUCT" : "TRIVIAL_CONTINUE";
-    const route = baseRoute({ action: "continue", codes: [code] });
+    const route = contextualRoute(store, context, { action: "continue", codes: [code] });
     store.commitRoute(context, route, null);
     return publicRoute(route);
   }
 
   const catalogResult = await getModelCatalog({ provided: options.catalog || null, store });
   if (!catalogResult.models.length) {
-    const route = baseRoute({ action: "continue", codes: ["CATALOG_UNAVAILABLE"] });
+    const route = contextualRoute(store, context, { action: "continue", codes: ["CATALOG_UNAVAILABLE"] });
     store.commitRoute(context, route, null);
     return publicRoute(route);
   }
@@ -210,7 +252,7 @@ async function routeWithStore(input, options, store) {
   let desired = desiredRoute(scored, input.evidence);
   const escalation = escalationPlan(previous, input.evidence, desired);
   if (escalation.askUser) {
-    const route = baseRoute({
+    const route = contextualRoute(store, context, {
       action: "ask_user",
       category: scored.category,
       codes: [escalation.reasonCode],
@@ -227,7 +269,7 @@ async function routeWithStore(input, options, store) {
     const resolved = store.resolveOverride(context, input.override || null, settings);
     const override = resolved.override;
     if (override?.mode === "disabled") {
-      const route = baseRoute({ action: "continue", category: scored.category, codes: ["ROUTER_DISABLED"] });
+      const route = contextualRoute(store, context, { action: "continue", category: scored.category, codes: ["ROUTER_DISABLED"] });
       store.commitRoute(context, route, null);
       return publicRoute(route);
     }
@@ -255,7 +297,7 @@ async function routeWithStore(input, options, store) {
       const code = explicit ? "EXPLICIT_TARGET_UNAVAILABLE" : escalation.status.state === "increased"
         ? "MONOTONIC_ESCALATION_UNAVAILABLE"
         : "CATALOG_UNAVAILABLE";
-      const route = baseRoute({
+      const route = contextualRoute(store, context, {
         action: explicit || escalation.status.state === "increased" ? "ask_user" : "continue",
         category: scored.category,
         codes: [code, sourceCode(resolved.source)],
@@ -275,7 +317,7 @@ async function routeWithStore(input, options, store) {
     ];
     if (selected.familyFallback) codes.push("MODEL_FAMILY_FALLBACK");
     if (selected.effortFallback) codes.push("EFFORT_CAPABILITY_FALLBACK");
-    const route = baseRoute({
+    const route = contextualRoute(store, context, {
       action: "delegate",
       category: scored.category,
       codes,

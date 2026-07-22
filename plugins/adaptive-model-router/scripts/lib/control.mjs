@@ -20,8 +20,18 @@ export function controlText(prompt) {
 }
 
 export function parseControl(text) {
-  const tokens = String(text || "").split(/\s+/).filter(Boolean);
+  const normalized = String(text || "").trim();
+  if (["全局开启", "全局启用"].includes(normalized)) return { command: "global_enable" };
+  if (["全局关闭", "全局禁用"].includes(normalized)) return { command: "global_disable" };
+  if (["本任务手动", "手动"].includes(normalized)) return { command: "manual" };
+  if (["本任务自动", "保持自动", "恢复自动"].includes(normalized)) return { command: "auto", scope: "session" };
+  const tokens = normalized.split(/\s+/).filter(Boolean);
   const command = String(tokens.shift() || "").toLowerCase();
+  if (command === "global" && tokens.length === 1) {
+    if (["on", "enable"].includes(tokens[0].toLowerCase())) return { command: "global_enable" };
+    if (["off", "disable"].includes(tokens[0].toLowerCase())) return { command: "global_disable" };
+  }
+  if (command === "manual" && tokens.length === 0) return { command: "manual" };
   if (["on", "enable", "启用", "开启"].includes(command) && tokens.length === 0) return { command: "enable" };
   if (["off", "disable", "禁用", "关闭"].includes(command) && tokens.length === 0) return { command: "disable" };
   if (["auto", "clear", "自动", "清除"].includes(command) && tokens.length <= 1) {

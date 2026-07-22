@@ -42,6 +42,7 @@ const hooks = await json(join(pluginRoot, "hooks", "hooks.json"));
 const skill = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8");
 const skillUi = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "agents", "openai.yaml"), "utf8");
 assert(manifest.version.split("+")[0] === packageJson.version, "manifest base version and package version differ");
+assert(Array.isArray(manifest.interface?.defaultPrompt) && manifest.interface.defaultPrompt.length <= 3, "manifest interface.defaultPrompt must contain at most 3 prompts");
 assert(packageJson.version === "0.3.0", "release base version must be 0.3.0");
 assert(packageJson.private === true, "package must remain private");
 assert(!packageJson.dependencies && !packageJson.devDependencies, "runtime must have no third-party dependencies");
@@ -56,13 +57,17 @@ assert(!JSON.stringify(routerMcp).includes("PLUGIN_ROOT"), "MCP config must not 
 assert(skill.includes("`target.effort` value to the current Codex subagent `reasoning_effort` parameter"), "skill must map router effort to the Codex subagent parameter");
 assert(!skill.includes("using exactly `target.model` and `target.effort`"), "skill must not present router output fields as host parameter names");
 assert(skill.includes("root-task model is unchanged and host-managed"), "skill must require a visible root/stage model boundary");
+assert(skill.includes("global automatic activation"), "skill must document opt-in automatic activation");
+assert(skill.includes("`resolve_host_model_intent`"), "skill must document host-model intent resolution");
 assert(skill.includes("`get_route_history`"), "skill must expose the route history workflow");
 assert(skillUi.includes("$adaptive-model-router"), "skill default prompt must explicitly invoke $adaptive-model-router");
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "get_route_history"), "MCP must expose get_route_history");
+assert(TOOL_DEFINITIONS.some((tool) => tool.name === "resolve_host_model_intent"), "MCP must expose host-model intent resolution");
 for (const event of ["UserPromptSubmit", "Stop"]) {
   const command = hooks.hooks?.[event]?.[0]?.hooks?.[0];
   assert(typeof command?.commandWindows === "string", `${event} must define commandWindows`);
-  assert(command.commandWindows.includes("%PLUGIN_ROOT%") && !command.commandWindows.includes("$PLUGIN_ROOT"), `${event} Windows command must use the Windows plugin root expansion`);
+  assert(command.commandWindows.includes("process.env.PLUGIN_ROOT"), `${event} Windows command must read PLUGIN_ROOT inside Node`);
+  assert(!["%PLUGIN_ROOT%", "$env:PLUGIN_ROOT", "$PLUGIN_ROOT"].some((value) => command.commandWindows.includes(value)), `${event} Windows command must not use shell-specific plugin root expansion`);
   assert(command.command.includes("node-launcher.mjs") && command.commandWindows.includes("node-launcher.mjs"), `${event} must use the runtime launcher`);
 }
 const entry = marketplace.plugins?.find((plugin) => plugin.name === manifest.name);
