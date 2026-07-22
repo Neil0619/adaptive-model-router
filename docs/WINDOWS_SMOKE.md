@@ -32,8 +32,8 @@ The smoke passes only when all of the following succeed:
   boundary and include the delegated route;
 - one host-model slug change that stays root-only while pending, followed by
   both keep-automatic and current-task manual-root behavior;
-- confirmation that the Codex model selector continues to show the root task,
-  not the bounded subagent target;
+- confirmation that the Codex Desktop model selector or CLI model status-line
+  field continues to show the root task, not the bounded subagent target;
 - redacted status and diagnostics with no prompt, source, secret, or absolute
   project path;
 - native upgrade and uninstall;
@@ -131,6 +131,12 @@ Then send `router: status`. Confirm that global automatic routing is on, this
 task is automatic, and the first valid host model is only the baseline. There
 must be no model-intent question on this first observation.
 
+On the CLI surface, send `/statusline`, add the `model` field to the footer,
+then send `/status` and record the active root model. The CLI does not expose
+the persistent top model selector used by Codex Desktop; the configured model
+status-line field is the equivalent visible root-model evidence for this
+smoke. Keep it visible during the bounded subagent run.
+
 ## 5. Run the route → subagent → verification → outcome smoke
 
 Paste the following ordinary task prompt into the fresh task. It intentionally
@@ -197,9 +203,10 @@ privacy assertion. Do not return the absolute project path.
 ```
 
 The Stop hook must not report a missing outcome after the successful result.
-While the bounded subagent runs, confirm visually that the Codex model selector
-continues to show the root task model. Inspect the Codex Subagents view for the
-bounded target instead.
+While the bounded subagent runs, confirm visually that the Codex Desktop model
+selector or CLI model status-line field continues to show the root task model.
+Inspect the Codex Subagents view (`/subagents` on CLI) for the bounded target
+instead.
 
 ## 6. Exercise host-model intent protection
 
@@ -360,7 +367,7 @@ Route action:
 Observed root model:
 Target model:
 Target effort:
-Codex selector stayed on root model: PASS | FAIL
+Codex selector/status line stayed on root model: PASS | FAIL
 Reason codes:
 Verification gate:
 node --test: PASS | FAIL

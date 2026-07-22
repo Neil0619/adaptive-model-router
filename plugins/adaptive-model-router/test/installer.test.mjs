@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { supportsRuntime } from "../scripts/lib/runtime.mjs";
@@ -113,11 +113,44 @@ test("install, upgrade, optional AGENTS patch, and uninstall are idempotent in a
     assert.equal(runManager(project, fake, ["uninstall", "--non-interactive"]).status, 0);
     const finalAgents = await readFile(agents, "utf8");
     assert.equal(finalAgents.includes(AGENTS_MARKER_START), false);
-    assert.match(finalAgents, /User instructions/);
-    assert.match(finalAgents, /User edit after the owned block/);
+    assert.equal(finalAgents, "User instructions.\nUser edit after the owned block.\n");
     const finalState = await state(fake);
     assert.equal(finalState.installed.length, 0);
     assert.equal(finalState.marketplaces.length, 0);
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("AGENTS patch and uninstall preserve the original content exactly", async () => {
+  const project = await temporaryProject("adaptive installer exact AGENTS 空格 ");
+  try {
+    const fake = await fakeCodex(project);
+    const codexHome = join(project.root, "Codex Home 空格");
+    await mkdir(codexHome, { recursive: true });
+    const agents = join(codexHome, "AGENTS.md");
+    const originals = [
+      "User instructions.\n",
+      "User instructions.",
+      "Windows instructions.\r\n\r\n",
+      "",
+    ];
+
+    for (const original of originals) {
+      await writeFile(agents, original);
+      const installed = runManager(project, fake, ["install", "--patch-agents", "--non-interactive"]);
+      assert.equal(installed.status, 0, installed.stderr);
+      const removed = runManager(project, fake, ["uninstall", "--non-interactive"]);
+      assert.equal(removed.status, 0, removed.stderr);
+      assert.equal(await readFile(agents, "utf8"), original);
+    }
+
+    await rm(agents, { force: true });
+    const installedWithoutFile = runManager(project, fake, ["install", "--patch-agents", "--non-interactive"]);
+    assert.equal(installedWithoutFile.status, 0, installedWithoutFile.stderr);
+    const removedWithoutFile = runManager(project, fake, ["uninstall", "--non-interactive"]);
+    assert.equal(removedWithoutFile.status, 0, removedWithoutFile.stderr);
+    await assert.rejects(access(agents), { code: "ENOENT" });
   } finally {
     await project.cleanup();
   }
