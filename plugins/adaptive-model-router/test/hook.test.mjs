@@ -263,6 +263,37 @@ test("prompt hook applies a control idempotently and ignores ordinary discussion
   }
 });
 
+test("router off keeps task mode automatic so the disabled override controls the route reason", async () => {
+  const project = await temporaryProject("adaptive off control 空格 ");
+  try {
+    const base = { cwd: project.root, session_id: "off-session", model: "gpt-5.6-sol" };
+    assert.equal(runHook("prompt", { ...base, prompt: "router: global on" }, project.home).status, 0);
+    assert.equal(runHook("prompt", { ...base, prompt: "router: manual" }, project.home).status, 0);
+    assert.equal(runHook("prompt", { ...base, prompt: "router: auto session" }, project.home).status, 0);
+    assert.equal(runHook("prompt", { ...base, prompt: "router: off" }, project.home).status, 0);
+
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      try {
+        const context = store.context({ cwd: project.root, contextId: "off-session" });
+        assert.equal(store.hostModelState(context).taskMode, "automatic");
+        assert.equal(store.resolveOverride(context).override.mode, "disabled");
+        const route = await routeStage(routeInput({ contextId: "off-session" }), {
+          catalog: CATALOG,
+          cwd: project.root,
+          store,
+        });
+        assert.equal(route.action, "continue");
+        assert.deepEqual(route.reasonCodes, ["ROUTER_DISABLED"]);
+      } finally {
+        store.close();
+      }
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("status and history controls visibly separate the root model from bounded stage targets", async () => {
   const project = await temporaryProject("adaptive visible Unicode 展示 ");
   try {

@@ -175,7 +175,6 @@ async function promptHook(input) {
     if (control.command === "disable") {
       store.setOverride(context, { scope: "session", mode: "disabled" });
       store.observeHostModel(context, input.model, { detectChanges: false });
-      store.setTaskMode(context, "manual_root");
       additionalContext("Adaptive routing is disabled for this session.");
       return;
     }
