@@ -29,6 +29,9 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Installed launchers recover the plugin data root when Windows MCP startup
+  omits `PLUGIN_DATA`, and MCP calls resolve the project most recently observed
+  by the trusted hook instead of relying on a stale server working directory.
 - `UserPromptSubmit` injects minimized model-visible routing context for
   ordinary tasks only after explicit global opt-in; it never copies prompt,
   path, or source content.

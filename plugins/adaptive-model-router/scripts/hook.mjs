@@ -98,7 +98,7 @@ async function promptHook(input) {
   if (!contextId) return;
   const store = new RouterStore();
   try {
-    const context = store.context({ cwd: input.cwd || process.cwd(), contextId });
+    const context = store.context({ cwd: input.cwd || process.cwd(), contextId, authoritative: true });
     if (!control) {
       const settings = store.getSettings(context);
       if (settings.autoActivate !== true || settings.enabled !== true) {
@@ -209,7 +209,7 @@ async function stopHook(input) {
   if (!contextId) return;
   const store = new RouterStore();
   try {
-    const context = store.context({ cwd: input.cwd || process.cwd(), contextId });
+    const context = store.context({ cwd: input.cwd || process.cwd(), contextId, authoritative: true });
     const result = store.handleStop(context, input.stop_hook_active === true);
     if (result.action === "block") {
       writeJsonLine(process.stdout, {

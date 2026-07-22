@@ -307,15 +307,26 @@ export class RouterStore {
     });
   }
 
-  context({ cwd = process.cwd(), contextId }) {
+  context({ cwd = process.cwd(), contextId, authoritative = false }) {
     if (typeof contextId !== "string" || !contextId.trim()) throw new Error("contextId is required");
+    const normalizedContextId = contextId.normalize("NFC");
+    if (!authoritative) {
+      const observed = this.db.prepare(`
+        SELECT project_id, context_key
+        FROM host_model_state
+        ORDER BY updated_at DESC
+      `).all().find((row) => (
+        opaqueId(this.salt, "context", `${row.project_id}\0${normalizedContextId}`) === row.context_key
+      ));
+      if (observed) return { projectId: observed.project_id, contextKey: observed.context_key };
+    }
     let material = this.identityCache.get(cwd);
     if (!material) {
       material = projectIdentityMaterial(cwd);
       this.identityCache.set(cwd, material);
     }
     const projectId = opaqueId(this.salt, "project", material);
-    const contextKey = opaqueId(this.salt, "context", `${projectId}\0${contextId.normalize("NFC")}`);
+    const contextKey = opaqueId(this.salt, "context", `${projectId}\0${normalizedContextId}`);
     this.db.prepare("INSERT OR IGNORE INTO projects(project_id, created_at) VALUES(?, ?)").run(projectId, nowIso());
     return { projectId, contextKey };
   }
