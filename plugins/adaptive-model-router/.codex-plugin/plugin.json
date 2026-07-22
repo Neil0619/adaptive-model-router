@@ -39,8 +39,7 @@
     "defaultPrompt": [
       "Route the next implementation stage.",
       "Show the current route and delegated model target.",
-      "Show recent model delegation history.",
-      "Diagnose Adaptive Model Router."
+      "Show recent model delegation history."
     ],
     "brandColor": "#2563EB"
   }
