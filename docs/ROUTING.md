@@ -77,7 +77,7 @@ The base score is `40`.
 | Redacted task text longer than 2,000 characters | `+8` |
 | Approved category policy | `-15` through `+15` |
 
-The clamped `0..100` default mapping is:
+The clamped `0..100` default mapping expresses the preferred policy family:
 
 | Score | Family | Effort |
 | ---: | --- | --- |
@@ -91,6 +91,14 @@ The clamped `0..100` default mapping is:
 Hard rules keep non-risk mechanical batches on Luna low, keep implementation
 off Luna, raise review to at least Sol medium, and raise risk/security/migration
 to at least Sol high.
+
+The final bounded target is the preferred family intersected with the current
+host's declared subagent capability. Root-model visibility is not delegation
+capability. On a host that exposes only Sol and Terra for bounded subagents, a
+Luna preference automatically becomes Terra with
+`MODEL_FAMILY_FALLBACK`. Explicit unavailable targets are never substituted.
+The auxiliary classifier has a third, independent catalog obtained from its
+ephemeral app-server's `model/list`.
 
 A substantive task is borderline when it is within 6 points of
 `25/55/75/90`, or has at most one matched signal with a score in `30..80`.

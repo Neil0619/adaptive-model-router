@@ -1,7 +1,7 @@
 # Native macOS smoke test
 
-This is the blocking logged-in macOS gate for `v0.3.0`. Run it in Codex Desktop
-or CLI on native macOS against the frozen `codex/v030-auto-routing-smoke` ref.
+This is the blocking logged-in macOS gate for `v0.3.1`. Run it in Codex Desktop
+or CLI on native macOS against the frozen `codex/v031-luna-delegate-fix` ref.
 Do not create or push the release tag from this smoke task.
 
 ## Pass criteria
@@ -10,6 +10,8 @@ Do not create or push the release tag from this smoke task.
 - Global automatic activation persists across a new project/task.
 - An ordinary substantive prompt, without a skill trigger phrase, produces one
   `delegate` route, one bounded subagent, root verification, and one outcome.
+- A Sol/Terra-only bounded capability never returns Luna; an explicit Luna
+  override asks the user without starting a subagent.
 - The Codex model selector remains the root model while Subagents shows the
   bounded target.
 - A changed model slug stays root-only while pending; keep-automatic resumes on
@@ -21,7 +23,7 @@ Do not create or push the release tag from this smoke task.
 ## 1. Prepare a Unicode project and candidate checkout
 
 ```bash
-CandidateRef="codex/v030-auto-routing-smoke"
+CandidateRef="codex/v031-luna-delegate-fix"
 SmokeRoot="$(mktemp -d)/Adaptive Router macOS 冒烟"
 Source="$SmokeRoot/source checkout"
 Project="$SmokeRoot/测试 project with spaces"

@@ -42,11 +42,39 @@ Optional input:
   only when continuing a retry or escalation.
 - `override`: a model, effort, or both for this call. An unavailable explicit
   target returns `ask_user`; it is never silently replaced.
+- `hostCapabilities.delegation`: the current host's bounded-subagent
+  capability, with `available` plus strict `targets[]` entries containing one
+  model slug and its supported `efforts`. When present, this is the only source
+  of bounded targets. Do not derive it from the root picker or model cache.
+
+Example for a host that currently exposes Sol and Terra:
+
+```json
+{
+  "hostCapabilities": {
+    "delegation": {
+      "available": true,
+      "targets": [
+        {
+          "model": "gpt-5.6-sol",
+          "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]
+        },
+        {
+          "model": "gpt-5.6-terra",
+          "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]
+        }
+      ]
+    }
+  }
+}
+```
 
 Important evidence fields include `workProduct`, `requirementsSettled`,
 `strongVerification`, `highRisk`, `securitySensitive`, `migration`,
 `crossCutting`, `mechanical`, `ambiguous`, `exploration`, `review`, `batchSize`,
 `hostCanDelegate`, `verificationFailed`, and enumerated `failureType`.
+`hostCanDelegate` is retained for older callers. Omit it when
+`hostCapabilities.delegation` is supplied; contradictory values are rejected.
 
 Output always contains:
 
@@ -68,6 +96,19 @@ If the action is `delegate`, create exactly one bounded subagent using
 parameter. The root integrates the result and runs the returned verification
 gate. If the host cannot express those parameters, continue in the root and do
 not claim the root model changed.
+
+The root-visible catalog, bounded delegate catalog, and classifier catalog are
+independent. A Luna entry in the root picker does not authorize Luna as a
+subagent. When the policy prefers Luna but the delegate catalog does not
+contain it, automatic routing selects Terra and includes
+`MODEL_FAMILY_FALLBACK`. An explicit unavailable Luna target returns
+`ask_user / EXPLICIT_TARGET_UNAVAILABLE`.
+
+If the host rejects a returned target before startup, record that route as
+`failed` with `failureType: tooling`. An automatic route may then be retried
+once with `previousRouteId`; the rejected model is excluded. An explicit route
+asks the user instead. If the automatic retry is also rejected, record it and
+continue in the root. Do not treat a committed route as proof of startup.
 
 After every route, the skill emits a compact visible notice. It shows the
 hook-observed root slug when available, always marks it unchanged, and notes

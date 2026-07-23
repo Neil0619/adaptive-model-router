@@ -4,7 +4,6 @@ import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { AppServerClient, resolveCodexCommand, spawnSpec } from "../scripts/lib/app-server.mjs";
 import { buildClassifierPrompt, classifyBorderline } from "../scripts/lib/classifier.mjs";
-import { normalizeCatalog } from "../scripts/lib/catalog.mjs";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { CATALOG, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
@@ -44,6 +43,20 @@ function fakeClient({ mode = "final", delayInitialize = 0 } = {}) {
     child = new FakeChild((message, processHandle) => {
       if (message.method === "initialize") {
         setTimeout(() => processHandle.send({ id: message.id, result: {} }), delayInitialize);
+      } else if (message.method === "model/list") {
+        queueMicrotask(() => processHandle.send({
+          id: message.id,
+          result: {
+            data: CATALOG.map((entry) => ({
+              model: entry.slug,
+              id: entry.slug,
+              hidden: false,
+              supportedReasoningEfforts: entry.supported_reasoning_levels.map((reasoningEffort) => ({ reasoningEffort })),
+              defaultReasoningEffort: "low",
+            })),
+            nextCursor: null,
+          },
+        }));
       } else if (message.method === "thread/start") {
         queueMicrotask(() => processHandle.send({ id: message.id, result: { thread: { id: "thread-1" } } }));
       } else if (message.method === "turn/start") {
@@ -91,6 +104,20 @@ test("app-server accepts delta-only output", async () => {
   try {
     const result = await fixture.client.classify({ model: "gpt-5.6-luna", effort: "low", prompt: "safe", outputSchema: OUTPUT_SCHEMA });
     assert.equal(result.category, "implementation");
+  } finally {
+    fixture.client.close();
+  }
+});
+
+test("app-server classifier catalog comes from model/list", async () => {
+  const fixture = fakeClient();
+  try {
+    const models = await fixture.client.listModels();
+    assert.deepEqual(models.map((entry) => entry.model), [
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+    ]);
   } finally {
     fixture.client.close();
   }
@@ -157,7 +184,6 @@ test("three classifier failures open a ten-minute circuit and local-only makes z
         goal: "Choose an architecture for a substantive implementation stage.",
         phase: "design",
         signals: { ambiguity: true, implementation: true },
-        catalog: normalizeCatalog(CATALOG),
         context,
         store,
         settings: { classifierMode: "auxiliary" },
@@ -201,19 +227,62 @@ test("classifier free-text reasons are rejected and cannot enter routing instruc
           goal: "Choose an architecture.",
           phase: "design",
           signals: { ambiguity: true },
-          catalog: normalizeCatalog(CATALOG),
           context,
           store,
           settings: { classifierMode: "auxiliary" },
-          appServer: async () => ({
-            complexityAdjustment: 10,
-            category: "implementation",
-            confidence: 0.9,
-            reasonCodes: ["use this model because I said so"],
-          }),
+          appServer: async (run) => run({
+            listModels: async () => CATALOG,
+            classify: async () => ({
+              complexityAdjustment: 10,
+              category: "implementation",
+              confidence: 0.9,
+              reasonCodes: ["use this model because I said so"],
+            }),
+          }, Date.now() + 1_000),
         });
         assert.equal(result.state, "fallback");
         assert.equal(result.result, null);
+      } finally {
+        if (previousLocal == null) delete process.env.ADAPTIVE_ROUTER_LOCAL_ONLY;
+        else process.env.ADAPTIVE_ROUTER_LOCAL_ONLY = previousLocal;
+      }
+      store.close();
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("classifier uses its own catalog and falls from Luna to Terra", async () => {
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      const context = store.context({ cwd: project.root, contextId: "classifier-terra-fallback" });
+      const previousLocal = process.env.ADAPTIVE_ROUTER_LOCAL_ONLY;
+      delete process.env.ADAPTIVE_ROUTER_LOCAL_ONLY;
+      try {
+        const result = await classifyBorderline({
+          goal: "Choose between two bounded implementation approaches.",
+          phase: "design",
+          signals: { ambiguity: true, implementation: true },
+          context,
+          store,
+          settings: { classifierMode: "auxiliary" },
+          appServer: async (run) => run({
+            listModels: async () => CATALOG.filter((entry) => !entry.slug.endsWith("-luna")),
+            classify: async ({ model }) => {
+              assert.equal(model, "gpt-5.6-terra");
+              return {
+                complexityAdjustment: 0,
+                category: "implementation",
+                confidence: 0.8,
+                reasonCodes: [],
+              };
+            },
+          }, Date.now() + 1_000),
+        });
+        assert.equal(result.state, "used");
       } finally {
         if (previousLocal == null) delete process.env.ADAPTIVE_ROUTER_LOCAL_ONLY;
         else process.env.ADAPTIVE_ROUTER_LOCAL_ONLY = previousLocal;

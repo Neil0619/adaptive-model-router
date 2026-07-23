@@ -204,6 +204,23 @@ export class AppServerClient {
     return () => this.subscribers.delete(callback);
   }
 
+  async listModels(deadlineAt = this.clock() + this.timeoutMs) {
+    await this.start(deadlineAt);
+    const models = [];
+    let cursor = null;
+    do {
+      const page = await this.request("model/list", {
+        cursor,
+        includeHidden: false,
+        limit: 100,
+      }, deadlineAt);
+      if (!Array.isArray(page?.data)) throw new Error("classifier model list is invalid");
+      models.push(...page.data);
+      cursor = typeof page.nextCursor === "string" && page.nextCursor ? page.nextCursor : null;
+    } while (cursor);
+    return models;
+  }
+
   async classify({ model, effort, prompt, outputSchema }, deadlineAt = this.clock() + this.timeoutMs) {
     await this.start(deadlineAt);
     const started = await this.request("thread/start", { model, ephemeral: true }, deadlineAt);

@@ -85,6 +85,15 @@ still stay in the root task without creating a subagent.
 
 Priority is: request override, once override, session override, project override, optional global override, approved project policy, then the balanced default. Unknown or hidden models are never chosen automatically. Explicit unavailable targets are never silently substituted.
 
+Root visibility, bounded delegation, and auxiliary classification use separate
+capability catalogs. A model shown in the Codex picker is not automatically a
+valid subagent target. The caller supplies the current bounded-subagent
+models/efforts through `hostCapabilities`; older callers conservatively permit
+only known Sol and Terra targets. When the policy prefers Luna but the host
+does not expose Luna for bounded delegation, automatic routing falls back to
+Terra and reports `MODEL_FAMILY_FALLBACK`. An explicit Luna target instead
+returns `ask_user`.
+
 Every delegated route has a verification gate and one strict final outcome. Missing outcomes are reminded once by the Stop hook; on the continued stop they become `unknown`, which is excluded from learning.
 
 `continue` and `ask_user` routes do not accept outcomes. See the

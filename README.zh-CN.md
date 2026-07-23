@@ -66,7 +66,7 @@ Windows 环境问题参见[故障排查](docs/TROUBLESHOOTING.md)。发布维护
 [原生 Windows 11](docs/WINDOWS_SMOKE.md)和
 [原生 macOS](docs/MACOS_SMOKE.md)冒烟手册，不要根据 README 临时拼装发布测试。
 在 Windows 上打开仓库后，可以直接让 Codex“完整读取该手册、逐项执行、按模板回传，
-但不要创建或推送 `v0.3.0` tag”。
+但不要创建或推送 `v0.3.1` tag”。
 
 ## 路由规则
 
@@ -81,6 +81,13 @@ Windows 环境问题参见[故障排查](docs/TROUBLESHOOTING.md)。发布维护
 - `ask_user`：显式目标不可用，或 reasoning failure 达到自动升级上限。
 
 优先级固定为：本次请求、once、session、project、可选 global、已批准项目策略、默认均衡策略。隐藏模型和未知模型不会自动入选；显式目标不可用时不会静默替换。
+
+根模型可见目录、bounded subagent 能力和辅助分类器使用三套独立目录。Codex
+选择器里能看到某个模型，不代表它可以作为 subagent。调用方通过
+`hostCapabilities` 提交当前宿主真实支持的 bounded 模型和 effort；旧调用方只会
+保守允许已知的 Sol、Terra。当策略偏好 Luna、但宿主没有公开 Luna 委派能力时，
+自动路由回退到 Terra 并返回 `MODEL_FAMILY_FALLBACK`；显式指定 Luna 则返回
+`ask_user`，不会静默换模型。
 
 每个委派都有 verification gate，并且最多记录一个严格最终 outcome。Stop hook 首次发现遗漏会提醒；继续后再次停止仍未提交，则记为不参与学习的 `unknown`。
 

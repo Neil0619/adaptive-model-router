@@ -16,6 +16,13 @@ Use the router at a meaningful stage boundary, not before every message. It does
    - a stable task/thread identifier as `contextId`;
    - `previousRouteId` only when continuing or retrying a route returned earlier;
    - an `override` only when the user explicitly requested a model or effort for this call.
+   - `hostCapabilities.delegation` whenever the host exposes the bounded
+     subagent tool contract. Set `available` factually and copy only the
+     supported model slugs and reasoning-effort enums into `targets`. Do not
+     infer bounded-subagent support from the root model picker, the observed
+     root slug, or `models_cache.json`. `evidence.hostCanDelegate` remains a
+     deprecated compatibility signal; omit it when the richer capability is
+     supplied.
 2. Follow the returned `action`:
    - `continue`: keep working in the current root task. Do not create a subagent.
    - `ask_user`: explain the reason code and obtain the missing decision.
@@ -38,6 +45,19 @@ Map the router's `target.effort` value to the current Codex subagent `reasoning_
 ## Failures and escalation
 
 On a verification failure, route the next attempt with the prior `routeId`, `verificationFailed: true`, and an enumerated `failureType`. Reasoning failures escalate monotonically. Environment and missing-information failures do not justify a stronger model. After the automatic limit, ask the user instead of silently changing targets.
+
+If the host rejects a returned bounded target before the subagent starts,
+record that route immediately as `failed` with `failureType: tooling`. For an
+automatic route, call `route_stage` once more with that `previousRouteId` and
+the tooling-failure evidence; the router excludes the rejected model. For an
+explicit route, it returns `ask_user` instead of substituting. If the one
+automatic retry is also rejected, record it as `failed/tooling` and continue in
+the root; never loop. A route decision is not proof that the subagent started.
+
+Root, delegate, and classifier model availability are separate. Luna may be
+visible as a root model or usable by the classifier's independent ephemeral
+app-server without being available to the current host's bounded subagent
+tool. Only `hostCapabilities.delegation.targets` authorizes a bounded target.
 
 ## Controls and learning
 

@@ -4,6 +4,26 @@ import { RouterStore } from "../scripts/lib/database.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
+const SOL_TERRA_CAPABILITIES = {
+  delegation: {
+    available: true,
+    targets: [
+      { model: "gpt-5.6-sol", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+      { model: "gpt-5.6-terra", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+    ],
+  },
+};
+
+const ALL_CAPABILITIES = {
+  delegation: {
+    available: true,
+    targets: [
+      ...SOL_TERRA_CAPABILITIES.delegation.targets,
+      { model: "gpt-5.6-luna", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+    ],
+  },
+};
+
 test("route actions cover continue, delegate, and ask_user", async () => {
   const project = await temporaryProject();
   try {
@@ -18,7 +38,8 @@ test("route actions cover continue, delegate, and ask_user", async () => {
         contextId: "b",
       }), { catalog: CATALOG, cwd: project.root });
       assert.equal(delegated.action, "delegate");
-      assert.equal(delegated.target.model, "gpt-5.6-luna");
+      assert.equal(delegated.target.model, "gpt-5.6-terra");
+      assert.ok(delegated.reasonCodes.includes("MODEL_FAMILY_FALLBACK"));
 
       const asked = await routeStage(routeInput({ contextId: "c", override: { model: "missing-model" } }), { catalog: CATALOG, cwd: project.root });
       assert.equal(asked.action, "ask_user");
@@ -42,19 +63,180 @@ test("override precedence is request then once, session, project, and optional g
       store.setOverride(context, { scope: "session", model: "gpt-5.6-sol" });
       store.setOverride(context, { scope: "once", model: "gpt-5.6-luna", effort: "high" });
 
-      const request = await routeStage(routeInput({ contextId: "priority", override: { model: "gpt-5.6-terra" } }), { catalog: CATALOG, cwd: project.root, store });
+      const options = { catalog: CATALOG, cwd: project.root, store };
+      const request = await routeStage(routeInput({ contextId: "priority", override: { model: "gpt-5.6-terra" }, hostCapabilities: ALL_CAPABILITIES }), options);
       assert.equal(request.target.model, "gpt-5.6-terra");
-      const once = await routeStage(routeInput({ contextId: "priority" }), { catalog: CATALOG, cwd: project.root, store });
+      const once = await routeStage(routeInput({ contextId: "priority", hostCapabilities: ALL_CAPABILITIES }), options);
       assert.equal(once.target.model, "gpt-5.6-luna");
-      const session = await routeStage(routeInput({ contextId: "priority" }), { catalog: CATALOG, cwd: project.root, store });
+      const session = await routeStage(routeInput({ contextId: "priority", hostCapabilities: ALL_CAPABILITIES }), options);
       assert.equal(session.target.model, "gpt-5.6-sol");
       store.clearOverrides(context, "session");
-      const projectRoute = await routeStage(routeInput({ contextId: "priority" }), { catalog: CATALOG, cwd: project.root, store });
+      const projectRoute = await routeStage(routeInput({ contextId: "priority", hostCapabilities: ALL_CAPABILITIES }), options);
       assert.equal(projectRoute.target.model, "gpt-5.6-terra");
       store.clearOverrides(context, "project");
-      const globalRoute = await routeStage(routeInput({ contextId: "priority" }), { catalog: CATALOG, cwd: project.root, store });
+      const globalRoute = await routeStage(routeInput({ contextId: "priority", hostCapabilities: ALL_CAPABILITIES }), options);
       assert.equal(globalRoute.target.model, "gpt-5.6-luna");
       store.close();
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("delegation capabilities are independent from root catalog and validate strictly", async () => {
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const automatic = await routeStage(routeInput({
+        goal: "Rename 100 fixture keys using the fixed mapping.",
+        evidence: { workProduct: true, mechanical: true, requirementsSettled: true, batchSize: 100 },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.equal(automatic.target.model, "gpt-5.6-terra");
+      assert.ok(automatic.reasonCodes.includes("MODEL_FAMILY_FALLBACK"));
+
+      const lunaEnabled = await routeStage(routeInput({
+        contextId: "luna-enabled",
+        goal: "Rename 100 fixture keys using the fixed mapping.",
+        evidence: { workProduct: true, mechanical: true, requirementsSettled: true, batchSize: 100 },
+        hostCapabilities: ALL_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.equal(lunaEnabled.target.model, "gpt-5.6-luna");
+
+      await assert.rejects(
+        routeStage(routeInput({
+          contextId: "capability-conflict",
+          evidence: { workProduct: true, hostCanDelegate: false },
+          hostCapabilities: SOL_TERRA_CAPABILITIES,
+        }), { catalog: CATALOG, cwd: project.root }),
+        /conflicts/,
+      );
+      await assert.rejects(
+        routeStage(routeInput({
+          contextId: "capability-duplicate",
+          hostCapabilities: { delegation: { available: true, targets: [
+            { model: "gpt-5.6-sol", efforts: ["high", "high"] },
+          ] } },
+        }), { catalog: CATALOG, cwd: project.root }),
+        /must not duplicate/,
+      );
+      await assert.rejects(
+        routeStage(routeInput({
+          contextId: "capability-unavailable-with-target",
+          hostCapabilities: {
+            delegation: {
+              available: false,
+              targets: [{ model: "gpt-5.6-sol", efforts: ["high"] }],
+            },
+          },
+        }), { catalog: CATALOG, cwd: project.root }),
+        /must be empty/,
+      );
+      await assert.rejects(
+        routeStage(routeInput({
+          contextId: "capability-invalid-effort",
+          hostCapabilities: {
+            delegation: {
+              available: true,
+              targets: [{ model: "gpt-5.6-sol", efforts: ["impossible"] }],
+            },
+          },
+        }), { catalog: CATALOG, cwd: project.root }),
+        /must be one of/,
+      );
+      const unavailable = await routeStage(routeInput({
+        contextId: "capability-unavailable",
+        hostCapabilities: { delegation: { available: false, targets: [] } },
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.equal(unavailable.action, "continue");
+      assert.ok(unavailable.reasonCodes.includes("HOST_DELEGATION_UNAVAILABLE"));
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("explicit unavailable Luna asks without consuming a once override", async () => {
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      const context = store.context({ cwd: project.root, contextId: "once-luna" });
+      store.setOverride(context, { scope: "once", model: "gpt-5.6-luna" });
+      const unavailable = await routeStage(routeInput({
+        contextId: "once-luna",
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root, store });
+      assert.equal(unavailable.action, "ask_user");
+      assert.ok(unavailable.reasonCodes.includes("EXPLICIT_TARGET_UNAVAILABLE"));
+
+      const enabled = await routeStage(routeInput({
+        contextId: "once-luna",
+        hostCapabilities: ALL_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root, store });
+      assert.equal(enabled.action, "delegate");
+      assert.equal(enabled.target.model, "gpt-5.6-luna");
+      assert.ok(enabled.reasonCodes.includes("ONCE_OVERRIDE"));
+      store.close();
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("tooling failures retry one automatic target but never replace an explicit target", async () => {
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const first = await routeStage(routeInput({ contextId: "tooling", hostCapabilities: SOL_TERRA_CAPABILITIES }), { catalog: CATALOG, cwd: project.root });
+      assert.equal(first.target.model, "gpt-5.6-terra");
+      const retry = await routeStage(routeInput({
+        contextId: "tooling",
+        previousRouteId: first.routeId,
+        evidence: { workProduct: true, verificationFailed: true, failureType: "tooling" },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.equal(retry.action, "delegate");
+      assert.equal(retry.target.model, "gpt-5.6-sol");
+      assert.ok(retry.reasonCodes.includes("TOOLING_TARGET_EXCLUDED"));
+      const exhausted = await routeStage(routeInput({
+        contextId: "tooling",
+        previousRouteId: retry.routeId,
+        evidence: { workProduct: true, verificationFailed: true, failureType: "tooling" },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.equal(exhausted.action, "continue");
+      assert.ok(exhausted.reasonCodes.includes("HOST_DELEGATION_UNAVAILABLE"));
+
+      const explicit = await routeStage(routeInput({
+        contextId: "tooling-explicit",
+        override: { model: "gpt-5.6-terra" },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      const explicitRetry = await routeStage(routeInput({
+        contextId: "tooling-explicit",
+        previousRouteId: explicit.routeId,
+        evidence: { workProduct: true, verificationFailed: true, failureType: "tooling" },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.equal(explicitRetry.action, "ask_user");
+      assert.ok(explicitRetry.reasonCodes.includes("EXPLICIT_TARGET_UNAVAILABLE"));
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("declared delegation targets remain authoritative when the root catalog is unavailable", async () => {
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const result = await routeStage(routeInput({
+        contextId: "capability-without-root-catalog",
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: [], cwd: project.root });
+      assert.equal(result.action, "delegate");
+      assert.equal(result.target.model, "gpt-5.6-terra");
     });
   } finally {
     await project.cleanup();
@@ -217,11 +399,17 @@ test("a negative auxiliary-classifier adjustment cannot penetrate the determinis
         }), {
           catalog: CATALOG,
           cwd: project.root,
-          appServer: async () => ({
-            complexityAdjustment: -10,
-            category: "implementation",
-            confidence: 0.9,
-            reasonCodes: ["CLASSIFIER_COMPLEXITY_DOWN"],
+          appServer: async (run) => run({
+            listModels: async () => CATALOG,
+            classify: async ({ model }) => {
+              assert.equal(model, "gpt-5.6-luna");
+              return {
+                complexityAdjustment: -10,
+                category: "implementation",
+                confidence: 0.9,
+                reasonCodes: ["CLASSIFIER_COMPLEXITY_DOWN"],
+              };
+            },
           }),
         });
         assert.equal(result.classifier.state, "used");

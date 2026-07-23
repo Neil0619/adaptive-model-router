@@ -1,4 +1,4 @@
-# v0.3.0 release checklist
+# v0.3.1 release checklist
 
 This file is the maintainer release gate. The detailed native Windows procedure
 lives in [WINDOWS_SMOKE.md](WINDOWS_SMOKE.md). Do not create the release tag
@@ -9,10 +9,9 @@ commit.
 
 Keep `stable` on the last published release until the release workflow has
 created the new artifacts. For logged-in smoke testing, freeze a dedicated
-candidate ref at the reviewed commit. For v0.3.0 the handoff ref is
-`codex/v030-auto-routing-smoke`; do not move it after smoke evidence is collected.
-The older `codex/v030-smoke-handoff` ref belongs to the pre-auto-routing
-candidate and must not be repointed or reused.
+candidate ref at the reviewed commit. For v0.3.1 the handoff ref is
+`codex/v031-luna-delegate-fix`; do not move it after smoke evidence is
+collected.
 
 Record the candidate:
 
@@ -20,16 +19,16 @@ Record the candidate:
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/main
-git rev-parse origin/codex/v030-auto-routing-smoke
+git rev-parse origin/codex/v031-luna-delegate-fix
 git rev-parse origin/stable
 ```
 
 The worktree must be clean. The candidate ref must contain the reviewed tree;
-`stable` may still point to v0.2.0. Before tagging a later `main` merge commit,
+`stable` may still point to v0.3.0. Before tagging a later `main` merge commit,
 verify that the release-relevant trees are byte-identical:
 
 ```bash
-git diff --exit-code origin/main origin/codex/v030-auto-routing-smoke -- \
+git diff --exit-code origin/main origin/codex/v031-luna-delegate-fix -- \
   .agents plugins install.sh install.ps1 .github/workflows/release.yml
 ```
 
@@ -67,7 +66,7 @@ npm run eval
 Run the complete route lifecycle once on macOS and once on native Windows 11:
 
 1. Install from the frozen candidate ref with the two native Codex commands;
-   published `stable` remains on v0.2.0 until all smoke evidence passes.
+   published `stable` remains on v0.3.0 until all smoke evidence passes.
 2. Review and trust the plugin's `UserPromptSubmit` and `Stop` handlers.
 3. Send `router: global on` once, restart into a new project/task, and confirm
    the setting persists without repeating the command.
@@ -75,6 +74,8 @@ Run the complete route lifecycle once on macOS and once on native Windows 11:
    a trigger phrase, and obtain a `delegate` route.
 5. Create exactly one bounded subagent using the returned model and effort;
    confirm the Codex selector continues to display the root task.
+   Confirm the route input uses the host's bounded-subagent capability rather
+   than the root picker. A Sol/Terra-only host must not return Luna.
 6. Integrate the result, run the returned verification gate, and record one
    strict `passed` or `failed` outcome.
 7. Confirm status and route history preserve the root-model versus
@@ -115,8 +116,8 @@ tag at the frozen candidate:
 git config --local --get gpg.format
 git config --local --get user.signingkey
 git config --local --get tag.gpgSign
-git tag --sign --message "Adaptive Model Router v0.3.0" v0.3.0
-git cat-file tag v0.3.0
+git tag --sign --message "Adaptive Model Router v0.3.1" v0.3.1
+git cat-file tag v0.3.1
 ```
 
 The tag object must contain an SSH signature and point to the recorded candidate
@@ -131,7 +132,7 @@ a normal fast-forward update after artifacts exist.
 Push only the signed tag:
 
 ```bash
-git push origin v0.3.0
+git push origin v0.3.1
 ```
 
 The release workflow must:

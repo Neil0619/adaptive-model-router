@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.1] - Unreleased
+
+### Fixed
+
+- Separated root-visible, bounded-delegation, and auxiliary-classifier model
+  catalogs so a root-only Luna model is never returned as a subagent target.
+- Added strict optional `hostCapabilities.delegation` input. Current host
+  models and effort enums are authoritative; older callers conservatively use
+  Sol and Terra only.
+- Automatic Luna preferences now fall back to Terra with
+  `MODEL_FAMILY_FALLBACK`; explicit unavailable Luna overrides ask the user and
+  do not consume a once override.
+- A host tooling rejection records a failed outcome and permits at most one
+  automatic retry with the rejected target excluded. Explicit failures never
+  silently substitute, and a second automatic rejection fails open to root.
+- The auxiliary classifier now discovers its own models from app-server
+  `model/list`, independently of bounded subagent capability.
+
 ## [0.3.0] - 2026-07-21
 
 ### Added

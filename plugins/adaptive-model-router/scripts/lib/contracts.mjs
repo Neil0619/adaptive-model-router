@@ -38,6 +38,42 @@ export const ROUTE_OVERRIDE_SCHEMA = {
   },
 };
 
+const DELEGATION_TARGET_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["model", "efforts"],
+  properties: {
+    model: { type: "string", minLength: 1, maxLength: 128 },
+    efforts: {
+      type: "array",
+      minItems: 1,
+      maxItems: EFFORT_ORDER.length,
+      items: { type: "string", enum: EFFORT_ORDER },
+    },
+  },
+};
+
+export const HOST_CAPABILITIES_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["delegation"],
+  properties: {
+    delegation: {
+      type: "object",
+      additionalProperties: false,
+      required: ["available", "targets"],
+      properties: {
+        available: { type: "boolean" },
+        targets: {
+          type: "array",
+          maxItems: 32,
+          items: DELEGATION_TARGET_SCHEMA,
+        },
+      },
+    },
+  },
+};
+
 export const ROUTE_INPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -49,6 +85,7 @@ export const ROUTE_INPUT_SCHEMA = {
     contextId: { type: "string", minLength: 1, maxLength: 256 },
     previousRouteId: { type: "string", minLength: 1, maxLength: 128 },
     override: ROUTE_OVERRIDE_SCHEMA,
+    hostCapabilities: HOST_CAPABILITIES_SCHEMA,
   },
 };
 
