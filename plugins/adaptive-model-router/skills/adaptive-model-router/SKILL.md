@@ -70,6 +70,16 @@ tool. Only `hostCapabilities.delegation.targets` authorizes a bounded target.
 
 Only prompts beginning exactly with `router:` or `路由器：` are control commands. Quoted text, code blocks, negations, and ordinary discussion do not change router state.
 
+The installed `UserPromptSubmit` hook executes every recognized exact control
+atomically before the model handles that turn. When its additional context says
+that the control was applied, report that result only: do not replay the
+control through `configure_router`, `set_route_override`,
+`resolve_host_model_intent`, or any other MCP tool. Never invent a `contextId`.
+For ordinary stage and inspection MCP calls, use only the exact fixed
+`contextId` injected by the hook. If a control turn has no trusted hook result,
+do not guess a task identifier or claim success; explain that the control could
+not be applied safely and advise the user to re-trust or diagnose the hook.
+
 The global automatic activation setting is opt-in. `router: global on` / `路由器：全局开启` enables it for local Codex tasks sharing this plugin data. `router: global off` / `路由器：全局关闭` stops automatic activation but keeps explicit skill use available. `router: manual` / `路由器：本任务手动` keeps the current task root-only; `router: auto session` / `路由器：本任务自动` resumes automatic routing.
 
 The hook may observe the active root-model slug, but never its reasoning effort. The first observation in a task is a baseline. If a later slug changes, the hook places the task in `pending_confirmation`: keep working in the root, never spawn a subagent, and remind the user to choose manual-root or keep-automatic. A `route_stage` call at a substantive boundary returns `continue` with `HOST_MODEL_INTENT_PENDING`; respect it. Continue root-only on later turns until the user explicitly answers. Then call `resolve_host_model_intent` with the pending `changeId`; never infer a decision from silence or unrelated text. `manual_root` lasts only for the current task and likewise forces `MANUAL_ROOT_SELECTED` plus `continue`.

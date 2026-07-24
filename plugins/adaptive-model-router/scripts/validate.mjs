@@ -76,6 +76,8 @@ assert(skill.includes("global automatic activation"), "skill must document opt-i
 assert(skill.includes("`resolve_host_model_intent`"), "skill must document host-model intent resolution");
 assert(skill.includes("`get_route_history`"), "skill must expose the route history workflow");
 assert(skill.includes("already a bounded subagent"), "skill must prevent recursive subagent routing");
+assert(skill.includes("do not replay the"), "skill must prevent hook-owned control replay");
+assert(skill.includes("Never invent a `contextId`"), "skill must forbid invented router context IDs");
 assert(skillUi.includes("$adaptive-model-router"), "skill default prompt must explicitly invoke $adaptive-model-router");
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "get_route_history"), "MCP must expose get_route_history");
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "resolve_host_model_intent"), "MCP must expose host-model intent resolution");

@@ -681,6 +681,36 @@ test("prompt hook applies a control idempotently and ignores ordinary discussion
   }
 });
 
+test("hook-owned control turns forbid duplicate MCP calls and invented context IDs", async () => {
+  const project = await temporaryProject("adaptive hook-owned controls 控制 ");
+  try {
+    const base = {
+      cwd: project.root,
+      session_id: "hook-owned-session",
+      model: "gpt-5.6-sol",
+    };
+    for (const prompt of [
+      "router: global on",
+      "router: manual",
+      "router: auto session",
+      "router: lock gpt-5.6-terra low once",
+      "router: off",
+      "router: status",
+      "router: history 1",
+      "router: global off",
+    ]) {
+      const result = runHook("prompt", { ...base, prompt }, project.home);
+      assert.equal(result.status, 0, result.stderr);
+      const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
+      assert.match(context, /already been applied atomically by the trusted UserPromptSubmit hook/i);
+      assert.match(context, /do not call any Adaptive Model Router MCP tool/i);
+      assert.match(context, /do not invent or substitute a contextId/i);
+    }
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("router off keeps task mode automatic so the disabled override controls the route reason", async () => {
   const project = await temporaryProject("adaptive off control 空格 ");
   try {

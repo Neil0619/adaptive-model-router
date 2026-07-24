@@ -44,6 +44,9 @@ All notable changes to this project are documented here.
 - Session-disabled routing now emits its own root-only context instead of
   incorrectly presenting the task as `manual_root`; quoted control text
   remains a no-op and live routes continue to report `ROUTER_DISABLED`.
+- Exact router controls are explicitly hook-owned: model-visible context and
+  Skill instructions forbid duplicate MCP replay and invented context IDs
+  after the trusted `UserPromptSubmit` hook has already applied a control.
 - Shadow scoring has no route, outcome, proposal, or cursor side effects.
 - Shadow output includes numeric before/after counts for all protected routing
   and learning tables, and derives its `sideEffects` flag from those counts.

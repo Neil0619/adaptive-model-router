@@ -32,11 +32,21 @@ function additionalContext(message, hookEventName = "UserPromptSubmit") {
   });
 }
 
+function controlResultContext(message) {
+  additionalContext([
+    "This exact router control has already been applied atomically by the trusted UserPromptSubmit hook.",
+    "Do not call any Adaptive Model Router MCP tool for this control turn, and do not invent or substitute a contextId.",
+    "Report only the hook result below.",
+    "",
+    message,
+  ].join("\n"));
+}
+
 function visibleReport(message, locale) {
   const instruction = locale === "zh"
     ? "请在本次回复中向用户清晰展示以下 Adaptive Model Router 报告；不要声称根任务模型发生了切换。"
     : "Clearly show the following Adaptive Model Router report in this response; do not claim that the root-task model changed.";
-  additionalContext(`${instruction}\n\n${message}`);
+  controlResultContext(`${instruction}\n\n${message}`);
 }
 
 function rootLabel(rootTask) {
@@ -202,7 +212,7 @@ async function promptHook(input) {
     if (control.command === "global_enable") {
       store.configure(context, { autoActivate: true }, "global");
       store.observeHostModel(context, input.model, { detectChanges: false });
-      additionalContext("Adaptive Router global automatic activation is enabled. Ordinary substantive tasks will route automatically after this control turn.");
+      controlResultContext("Adaptive Router global automatic activation is enabled. Ordinary substantive tasks will route automatically after this control turn.");
       return;
     }
     if (control.command === "global_disable") {
@@ -211,13 +221,13 @@ async function promptHook(input) {
         store.cancelPendingHostModelIntent(context);
       }
       store.observeHostModel(context, input.model, { detectChanges: false });
-      additionalContext("Adaptive Router global automatic activation is disabled. Explicit skill use remains available.");
+      controlResultContext("Adaptive Router global automatic activation is disabled. Explicit skill use remains available.");
       return;
     }
     if (control.command === "manual") {
       store.observeHostModel(context, input.model, { detectChanges: false });
       store.setTaskMode(context, "manual_root");
-      additionalContext("Adaptive routing is in manual-root mode for this task; do not create a routed subagent.");
+      controlResultContext("Adaptive routing is in manual-root mode for this task; do not create a routed subagent.");
       return;
     }
     if (control.command === "enable") {
@@ -225,20 +235,20 @@ async function promptHook(input) {
       store.clearOverrides(context, "session");
       store.setTaskMode(context, "automatic");
       store.observeHostModel(context, input.model, { detectChanges: false });
-      additionalContext("Adaptive routing is enabled for this project.");
+      controlResultContext("Adaptive routing is enabled for this project.");
       return;
     }
     if (control.command === "disable") {
       store.setOverride(context, { scope: "session", mode: "disabled" });
       store.observeHostModel(context, input.model, { detectChanges: false });
-      additionalContext("Adaptive routing is disabled for this session.");
+      controlResultContext("Adaptive routing is disabled for this session.");
       return;
     }
     if (control.command === "auto") {
       store.clearOverrides(context, control.scope);
       if (["session", "all"].includes(control.scope)) store.setTaskMode(context, "automatic");
       store.observeHostModel(context, input.model, { detectChanges: false });
-      additionalContext(`Adaptive routing override cleared for scope ${control.scope}.`);
+      controlResultContext(`Adaptive routing override cleared for scope ${control.scope}.`);
       return;
     }
     if (control.command === "lock") {
@@ -250,7 +260,7 @@ async function promptHook(input) {
       });
       if (["once", "session"].includes(control.scope)) store.setTaskMode(context, "automatic");
       store.observeHostModel(context, input.model, { detectChanges: false });
-      additionalContext(
+      controlResultContext(
         `Adaptive routing lock set for scope ${control.scope}: model=${control.model}, effort=${control.effort || "automatic"}.`,
       );
     }
