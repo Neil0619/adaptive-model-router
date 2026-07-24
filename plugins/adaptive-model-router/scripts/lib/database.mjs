@@ -47,11 +47,11 @@ export class RouterStore {
     } catch {
       // Windows ACLs are inherited from the user's Codex data directory.
     }
+    this.db.exec(`PRAGMA busy_timeout = ${Math.max(1, Math.trunc(timeout))}`);
     this.db.exec("PRAGMA journal_mode = WAL");
     this.db.exec("PRAGMA synchronous = NORMAL");
     this.db.exec("PRAGMA foreign_keys = ON");
     this.db.exec("PRAGMA trusted_schema = OFF");
-    this.db.exec(`PRAGMA busy_timeout = ${Math.max(1, Math.trunc(timeout))}`);
     this.migrate();
     this.salt = this.getOrCreateSalt();
     this.identityCache = new Map();
