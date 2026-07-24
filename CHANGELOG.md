@@ -36,6 +36,10 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Compatible runtime probing and pointer activation are now single-flight
+  across concurrent old Hook shells. A slow native-Windows process launch can
+  no longer make parallel probes quarantine a healthy runtime or fall back to
+  the pinned implementation.
 - Bounded subagents are isolated at both `SubagentStart` and
   subagent-marked `UserPromptSubmit`: child models are never observed as root
   model changes, child controls cannot mutate root-task state, recursive

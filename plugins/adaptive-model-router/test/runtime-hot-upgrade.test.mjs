@@ -10,7 +10,11 @@ import { temporaryProject } from "./fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-async function createRuntime(root, version, { hookMarker = null, brokenProbe = false } = {}) {
+async function createRuntime(
+  root,
+  version,
+  { hookMarker = null, brokenProbe = false, exclusiveProbe = false } = {},
+) {
   await cp(pluginRoot, root, { recursive: true });
   const descriptorPath = join(root, "runtime.json");
   const descriptor = JSON.parse(await readFile(descriptorPath, "utf8"));
@@ -39,6 +43,27 @@ async function createRuntime(root, version, { hookMarker = null, brokenProbe = f
   }
   if (brokenProbe) {
     await writeFile(join(root, "scripts", "runtime-probe.mjs"), "#!/usr/bin/env node\nprocess.exit(78);\n");
+  } else if (exclusiveProbe) {
+    const marker = join(root, ".exclusive-probe.lock");
+    await writeFile(
+      join(root, "scripts", "runtime-probe.mjs"),
+      `#!/usr/bin/env node
+import { closeSync, openSync, unlinkSync } from "node:fs";
+const marker = ${JSON.stringify(marker)};
+let descriptor;
+try {
+  descriptor = openSync(marker, "wx");
+} catch {
+  process.exit(78);
+}
+try {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+} finally {
+  closeSync(descriptor);
+  unlinkSync(marker);
+}
+`,
+    );
   }
 }
 
@@ -260,7 +285,10 @@ test("concurrent old hook shells activate one compatible runtime without corrupt
   await mkdir(versionsRoot, { recursive: true });
   await mkdir(pluginData, { recursive: true });
   await createRuntime(version040, "0.4.0");
-  await createRuntime(version041, "0.4.1", { hookMarker: "runtime-0.4.1" });
+  await createRuntime(version041, "0.4.1", {
+    hookMarker: "runtime-0.4.1",
+    exclusiveProbe: true,
+  });
   const env = {
     ...process.env,
     PLUGIN_ROOT: version040,
