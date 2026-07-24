@@ -198,17 +198,73 @@ function atomicWritePointer(value, env = process.env) {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = join(dirname(path), `.active-${process.pid}-${randomBytes(5).toString("hex")}.tmp`);
   writeFileSync(temporary, `${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o600 });
-  renameSync(temporary, path);
+  const deadline = Date.now() + 2_000;
+  try {
+    while (true) {
+      try {
+        renameSync(temporary, path);
+        break;
+      } catch (error) {
+        if (
+          !["EACCES", "EBUSY", "EPERM"].includes(error?.code) ||
+          Date.now() >= deadline
+        ) {
+          throw error;
+        }
+        Atomics.wait(pointerWait, 0, 0, 25);
+      }
+    }
+  } finally {
+    rmSync(temporary, { force: true });
+  }
   return true;
 }
 
-function removePointerLock(lockPath) {
-  rmSync(lockPath, {
-    recursive: true,
-    force: true,
-    maxRetries: 20,
-    retryDelay: 10,
-  });
+function retirePointerLock(lockPath) {
+  const retiredPath = `${lockPath}.retired-${process.pid}-${randomBytes(5).toString("hex")}`;
+  const deadline = Date.now() + 2_000;
+  while (true) {
+    try {
+      renameSync(lockPath, retiredPath);
+      break;
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      if (
+        !["EACCES", "EBUSY", "EPERM"].includes(error?.code) ||
+        Date.now() >= deadline
+      ) {
+        throw error;
+      }
+      Atomics.wait(pointerWait, 0, 0, 25);
+    }
+  }
+  try {
+    rmSync(retiredPath, {
+      recursive: true,
+      force: true,
+      maxRetries: 100,
+      retryDelay: 10,
+    });
+  } catch {
+    // The public lock name is already free. A retired empty lock directory is
+    // harmless and can be removed by normal plugin-data cleanup.
+  }
+}
+
+function cleanupRetiredPointerLocks(directory) {
+  try {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (!/^\.active\.lock\.retired-\d+-[a-f0-9]{10}$/u.test(entry.name)) continue;
+      try {
+        rmSync(join(directory, entry.name), {
+          recursive: true,
+          force: true,
+          maxRetries: 20,
+          retryDelay: 10,
+        });
+      } catch {}
+    }
+  } catch {}
 }
 
 function withPointerLock(env, action, timeoutMs = POINTER_LOCK_TIMEOUT_MS) {
@@ -218,6 +274,7 @@ function withPointerLock(env, action, timeoutMs = POINTER_LOCK_TIMEOUT_MS) {
   const lockPath = join(directory, ".active.lock");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const deadline = Date.now() + timeoutMs;
+  let nextStaleCheck = 0;
   let acquired = false;
   while (!acquired) {
     try {
@@ -225,22 +282,27 @@ function withPointerLock(env, action, timeoutMs = POINTER_LOCK_TIMEOUT_MS) {
       acquired = true;
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
-      try {
-        if (Date.now() - statSync(lockPath).mtimeMs > POINTER_STALE_LOCK_MS) {
-          removePointerLock(lockPath);
-          continue;
+      const now = Date.now();
+      if (now >= nextStaleCheck) {
+        nextStaleCheck = now + 1_000;
+        try {
+          if (now - statSync(lockPath).mtimeMs > POINTER_STALE_LOCK_MS) {
+            retirePointerLock(lockPath);
+            continue;
+          }
+        } catch (staleError) {
+          if (staleError?.code !== "ENOENT") throw staleError;
         }
-      } catch (staleError) {
-        if (staleError?.code !== "ENOENT") throw staleError;
       }
-      if (Date.now() >= deadline) throw new Error("runtime pointer is busy");
-      Atomics.wait(pointerWait, 0, 0, 10);
+      if (now >= deadline) throw new Error("runtime pointer is busy");
+      Atomics.wait(pointerWait, 0, 0, 15 + (process.pid % 17));
     }
   }
+  cleanupRetiredPointerLocks(directory);
   try {
     return action();
   } finally {
-    removePointerLock(lockPath);
+    retirePointerLock(lockPath);
   }
 }
 
