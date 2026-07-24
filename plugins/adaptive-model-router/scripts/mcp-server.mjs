@@ -5,6 +5,7 @@ import { ROUTER_VERSION } from "./lib/constants.mjs";
 import { canonicalJson, sanitizedError, writeJsonLine } from "./lib/io.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
 import {
+  activateRuntimeTrial,
   markRuntimeFailed,
   markRuntimeHealthy,
   pluginRootFrom,
@@ -74,10 +75,7 @@ async function importRuntime(resolution) {
 async function loadRuntime() {
   let resolution = resolveRuntime(pluginRoot);
   if (resolution.provisional) {
-    if (!probeRuntime(resolution)) {
-      markRuntimeFailed(resolution);
-      resolution = resolveRuntime(pluginRoot, { allowTrial: false });
-    }
+    resolution = activateRuntimeTrial(pluginRoot, { probe: probeRuntime });
   }
   try {
     const service = await importRuntime(resolution);

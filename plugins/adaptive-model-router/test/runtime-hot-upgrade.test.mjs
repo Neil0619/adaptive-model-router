@@ -45,24 +45,33 @@ async function createRuntime(
     await writeFile(join(root, "scripts", "runtime-probe.mjs"), "#!/usr/bin/env node\nprocess.exit(78);\n");
   } else if (exclusiveProbe) {
     const marker = join(root, ".exclusive-probe.lock");
+    const probePath = join(root, "scripts", "runtime-probe.mjs");
+    const probe = await readFile(probePath, "utf8");
     await writeFile(
-      join(root, "scripts", "runtime-probe.mjs"),
-      `#!/usr/bin/env node
-import { closeSync, openSync, unlinkSync } from "node:fs";
-const marker = ${JSON.stringify(marker)};
-let descriptor;
+      probePath,
+      probe.replace(
+        /^#!\/usr\/bin\/env node\r?\n/u,
+        `#!/usr/bin/env node
+import {
+  closeSync as closeExclusiveProbe,
+  openSync as openExclusiveProbe,
+  unlinkSync as unlinkExclusiveProbe,
+} from "node:fs";
+const exclusiveProbeMarker = ${JSON.stringify(marker)};
+let exclusiveProbeDescriptor;
 try {
-  descriptor = openSync(marker, "wx");
+  exclusiveProbeDescriptor = openExclusiveProbe(exclusiveProbeMarker, "wx");
 } catch {
   process.exit(78);
 }
 try {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 750);
 } finally {
-  closeSync(descriptor);
-  unlinkSync(marker);
+  closeExclusiveProbe(exclusiveProbeDescriptor);
+  unlinkExclusiveProbe(exclusiveProbeMarker);
 }
 `,
+      ),
     );
   }
 }
@@ -284,11 +293,8 @@ test("concurrent old hook shells activate one compatible runtime without corrupt
   const pluginData = join(project.root, "plugins", "data", "market-adaptive-model-router");
   await mkdir(versionsRoot, { recursive: true });
   await mkdir(pluginData, { recursive: true });
-  await createRuntime(version040, "0.4.0");
-  await createRuntime(version041, "0.4.1", {
-    hookMarker: "runtime-0.4.1",
-    exclusiveProbe: true,
-  });
+  await createRuntime(version040, "0.4.0", { exclusiveProbe: true });
+  await createRuntime(version041, "0.4.1", { hookMarker: "runtime-0.4.1" });
   const env = {
     ...process.env,
     PLUGIN_ROOT: version040,
