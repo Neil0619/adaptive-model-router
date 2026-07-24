@@ -281,8 +281,9 @@ async function installOrUpgrade(args, state) {
   codex(["plugin", "add", PLUGIN_ID]);
   if (args.patchAgents) patchAgents();
   process.stdout.write(`Adaptive Model Router ${ROUTER_VERSION} is installed.\n`);
-  process.stdout.write("Trust the plugin hooks when Codex prompts, then start a new task.\n");
-  process.stdout.write('To opt into automatic routing for all local projects, send "router: global on" once in the new task.\n');
+  process.stdout.write("On first install, or when upgrading from v0.3.x, trust the plugin hooks and start one new task.\n");
+  process.stdout.write("Compatible v0.4.x+ runtime updates activate on the next Hook or MCP call without reopening an existing task.\n");
+  process.stdout.write('To opt into automatic routing for all local projects, send "router: global on" once; upgrades preserve this setting.\n');
 }
 
 function uninstall(args, state) {

@@ -19,6 +19,8 @@ Do not create or push the release tag from this smoke task.
 - Status, history, diagnostics, Hook output, and SQLite contain no prompt,
   source, secret, or absolute project path.
 - Native and wrapper upgrade/uninstall/reinstall flows are idempotent.
+- Automated same-process v0.4 compatible-runtime activation, quarantine, and
+  rollback tests pass; no absolute cache path appears in the runtime pointer.
 
 ## 1. Prepare a Unicode project and candidate checkout
 
@@ -147,6 +149,13 @@ Confirm the owned AGENTS marker was inserted once and removed completely while
 surrounding user text remained unchanged. The final two installs must be
 idempotent and leave AGENTS unpatched.
 
+The wrapper output must distinguish the one-time v0.3.x → v0.4.0 fresh-task
+transition from later compatible v0.4.x+ runtime updates. Do not claim that
+every implementation-only upgrade needs a new task. The automated
+`runtime-hot-upgrade.test.mjs` is the blocking same-process activation test for
+this release; changes to Hook JSON, skill instructions, MCP schemas, or the
+storage contract still require a new task.
+
 Start Codex from a second temporary project without repeating `router: global
 on`. Trust the current Hook hash if asked, then use `router: status` to confirm
 the global setting persisted while task-specific manual state did not.
@@ -177,6 +186,7 @@ Shadow scoring had zero lifecycle side effects: PASS | FAIL
 Typed retry breakdown: PASS | FAIL
 Privacy assertion: PASS | FAIL
 Native and wrapper lifecycle: PASS | FAIL
+Compatible runtime hot-upgrade/rollback suite: PASS | FAIL
 AGENTS marker cleanup: PASS | FAIL
 Unexpected sanitized warnings:
 ```

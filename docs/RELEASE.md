@@ -53,6 +53,10 @@ smoke gate.
 - Ubuntu, macOS, and Windows pass on Node 24.15.0 and the latest Node 24 LTS.
 - Unit, 50-process concurrency, privacy, hook, MCP, installer, and the 226-case
   bilingual-route plus score-band evaluation suites pass.
+- The hot-runtime suite keeps one MCP process alive across a compatible
+  upgrade, activates the same candidate from old Hook shells under concurrency,
+  rejects a damaged candidate, rolls a later-failing active Hook back, and
+  asserts that the pointer contains no absolute path.
 - Syntax, manifest, marketplace, plugin, and skill validation pass.
 - CodeQL passes.
 - `private: true` remains present; no npm package is published.
@@ -91,7 +95,8 @@ Run the complete route lifecycle once on macOS and once on native Windows 11:
    current-task manual-root decisions. Record that effort-only changes are not
    observable by the hook.
 9. Exercise upgrade, uninstall, reinstall, idempotence, and optional AGENTS
-   marker removal.
+   marker removal. Confirm the installer explains the one-time v0.3 → v0.4
+   restart boundary and the compatible v0.4+ no-restart path.
 10. Confirm database v3 learning status, a versioned scoring profile, typed
     retry breakdown, and shadow scoring with no route/outcome/proposal/cursor
     changes.

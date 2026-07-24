@@ -26,6 +26,13 @@ All notable changes to this project are documented here.
   the Sol-high floor.
 - A 226-case deterministic evaluation gate: 24 bilingual end-to-end routes and
   202 score-band/hard-signal cases.
+- A stable v0.4 launch shell and strict `runtime.json` descriptor. Existing
+  v0.4 tasks can activate compatible implementation updates on the next Hook
+  or MCP call, with isolated contract/health probes, an atomic active/previous
+  pointer, concurrent activation safety, and automatic quarantine/rollback.
+- Forward-compatible storage-contract checks that allow an older v0.4 runtime
+  to reopen a newer additive SQLite schema while rejecting incompatible
+  future schemas.
 
 ### Changed
 
@@ -33,6 +40,9 @@ All notable changes to this project are documented here.
 - Proposal status now reports distinct-context, failure, correction, and
   reasoning-retry counts. Rebase keeps the proposal delta while advancing the
   old evidence cursor.
+- The v0.3.x → v0.4.0 transition requires one fresh task; later compatible
+  runtime-only updates do not. Hook, skill, MCP-schema, and storage-contract
+  changes remain explicit restart boundaries.
 
 ## [0.3.1] - Unreleased
 

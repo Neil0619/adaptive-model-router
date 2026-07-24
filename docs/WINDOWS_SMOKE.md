@@ -354,6 +354,13 @@ codex plugin marketplace list
 codex plugin list
 ```
 
+Confirm the wrapper output distinguishes the one-time v0.3.x → v0.4.0
+fresh-task transition from later compatible v0.4.x+ implementation updates.
+The automated `runtime-hot-upgrade.test.mjs` must have demonstrated one
+long-lived MCP process, concurrent old Hook shells, damaged-candidate
+quarantine, active-runtime rollback, and a path-free pointer. Hook JSON, skill,
+MCP-schema, or storage-contract changes remain explicit new-task boundaries.
+
 Start Codex again from a second temporary project without sending
 `router: global on` again:
 
@@ -384,6 +391,7 @@ Git version:
 Candidate ref:
 Candidate commit SHA:
 Native install: PASS | FAIL
+Compatible runtime hot-upgrade/rollback suite: PASS | FAIL
 UserPromptSubmit hook trusted/exercised: PASS | FAIL
 Stop hook trusted/exercised: PASS | FAIL
 Global automatic opt-in persisted across project/restart: PASS | FAIL

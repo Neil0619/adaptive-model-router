@@ -62,6 +62,16 @@ codex plugin marketplace remove adaptive-model-router
 
 包装脚本对应为 `./install.sh upgrade`、`./install.sh uninstall`、`.\install.ps1 -Action Upgrade` 和 `.\install.ps1 -Action Uninstall`。
 
+v0.4.0 增加了稳定启动壳。安装后续兼容的 v0.4.x 或更高版本后，已经打开的任务会在
+下一次 Hook 或 MCP 调用时加载新实现，不需要更换根模型，也不必重新开任务。旧壳会先
+核对 shell、工具和存储契约，在隔离目录运行健康探针，再原子切换活动运行时；候选
+失败会被隔离，并继续使用上一版。
+
+从 v0.3.x 升到 v0.4.0 仍需一次性新开任务，因为 v0.3 的启动壳没有热加载能力，
+而且 MCP 契约已在任务开始时固定。以后如果更新 Hook 定义、skill 指令、MCP 工具
+Schema 或存储契约，也会被视为不兼容升级，需要重新审阅 Hook 并新开任务；只改兼容
+实现的升级不需要。
+
 Windows 环境问题参见[故障排查](docs/TROUBLESHOOTING.md)。发布维护者应直接使用
 [原生 Windows 11](docs/WINDOWS_SMOKE.md)和
 [原生 macOS](docs/MACOS_SMOKE.md)冒烟手册，不要根据 README 临时拼装发布测试。
@@ -166,6 +176,9 @@ npm test
 npm run validate
 npm run eval
 ```
+
+本地使用 Codex plugin cachebuster helper 改写版本后，应先运行
+`npm run sync-runtime-version`，再执行校验，确保 `runtime.json` 与缓存版本一致。
 
 运行时无第三方依赖。可从[文档导航](docs/README.md)开始，或直接查看
 [架构文档](docs/ARCHITECTURE.md)、[隐私说明](docs/PRIVACY.md)、

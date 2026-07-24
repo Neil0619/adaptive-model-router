@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "runtimeVersion": "0.4.0",
+  "shellProtocolVersion": 1,
+  "toolContractVersion": 3,
+  "storageContractVersion": 1,
+  "databaseVersion": 3,
+  "entrypoints": {
+    "hook": "scripts/hook.mjs",
+    "service": "scripts/lib/service.mjs",
+    "probe": "scripts/runtime-probe.mjs"
+  }
+}

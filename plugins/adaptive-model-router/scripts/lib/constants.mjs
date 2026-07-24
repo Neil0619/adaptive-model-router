@@ -1,6 +1,7 @@
 export const ROUTER_VERSION = "0.4.0";
 export const SCHEMA_VERSION = "3.0";
 export const DATABASE_VERSION = 3;
+export const STORAGE_CONTRACT_VERSION = 1;
 export const MIN_NODE = [24, 15, 0];
 export const MAX_ESCALATIONS = 2;
 export const CLASSIFIER_TIMEOUT_MS = 8_000;

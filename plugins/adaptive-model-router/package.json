@@ -12,6 +12,7 @@
     "test": "node --test --test-concurrency=1 test/*.test.mjs",
     "test:concurrency": "node --test test/concurrency.test.mjs",
     "eval": "node eval/run.mjs",
+    "sync-runtime-version": "node scripts/sync-runtime-version.mjs",
     "validate": "node scripts/validate.mjs"
   }
 }

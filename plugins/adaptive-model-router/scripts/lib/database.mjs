@@ -10,6 +10,7 @@ import {
   EFFORT_ORDER,
   HOST_MODEL_INTENT_DECISIONS,
   ROUTER_VERSION,
+  STORAGE_CONTRACT_VERSION,
 } from "./constants.mjs";
 import { databasePath, legacyStatePresent, opaqueId, projectIdentityMaterial } from "./context.mjs";
 import { canonicalJson, isSqliteBusy, parseJson, payloadHash, sleepSync } from "./io.mjs";
@@ -19,6 +20,62 @@ const GLOBAL_PROJECT = "__global__";
 const GLOBAL_CONTEXT = "__global__";
 const DEFAULT_HISTORY_LIMIT = 20;
 const MAX_HISTORY_LIMIT = 100;
+const STORAGE_CONTRACT_SCHEMA = Object.freeze({
+  meta: ["key", "value"],
+  projects: ["project_id", "created_at"],
+  settings: ["scope", "project_id", "key", "value_json", "updated_at"],
+  overrides: ["id", "scope", "project_id", "context_key", "mode", "model", "effort", "created_at"],
+  routes: [
+    "route_id", "project_id", "context_key", "schema_version", "action", "category", "model",
+    "effort", "family", "root_model", "verification_gate", "reason_codes_json",
+    "classifier_state", "escalation_count", "previous_route_id", "created_at",
+  ],
+  outcomes: [
+    "seq", "route_id", "project_id", "context_key", "category", "status", "gate",
+    "failure_type", "retries", "escalations", "user_correction", "payload_hash", "recorded_at",
+    "retry_reasoning", "retry_environment", "retry_information", "retry_tooling",
+  ],
+  stop_observations: ["project_id", "context_key", "route_id", "reminded_at", "resolved_at"],
+  policy_revisions: [
+    "revision_id", "project_id", "parent_revision_id", "offsets_json", "outcome_seq",
+    "proposal_id", "created_at",
+  ],
+  project_policy: ["project_id", "active_revision_id"],
+  learning_cursors: ["project_id", "category", "last_outcome_seq"],
+  policy_proposals: [
+    "proposal_id", "project_id", "category", "delta", "base_revision_id", "start_seq",
+    "end_seq", "eligible_count", "affected_count", "status", "created_at", "decided_at",
+    "context_count", "failure_count", "correction_count", "reasoning_retry_count",
+    "base_profile_id", "kind",
+  ],
+  classifier_health: [
+    "project_id", "context_key", "consecutive_failures", "opened_until", "updated_at",
+  ],
+  catalog_cache: ["cache_key", "models_json", "fetched_at"],
+  host_model_changes: [
+    "change_id", "project_id", "context_key", "from_model", "to_model", "status",
+    "detected_at", "resolved_at",
+  ],
+  host_model_state: [
+    "project_id", "context_key", "current_model", "model_visible", "task_mode",
+    "pending_change_id", "updated_at",
+  ],
+  scoring_profiles: [
+    "profile_id", "project_id", "parent_profile_id", "profile_version", "definition_json",
+    "source", "outcome_seq", "created_at",
+  ],
+  project_scoring_profile: [
+    "project_id", "active_profile_id", "last_safe_profile_id", "updated_at",
+  ],
+  route_score_snapshots: [
+    "route_id", "project_id", "context_key", "profile_id", "base_score", "final_score",
+    "category", "signals_json", "policy_offset", "classifier_adjustment", "hard_signal_count",
+    "desired_family", "desired_effort", "eligible_learning", "exclusion_codes_json", "created_at",
+  ],
+  learning_events: [
+    "event_id", "project_id", "event_type", "profile_id", "details_json", "created_at",
+  ],
+});
 function nowIso() {
   return new Date().toISOString();
 }
@@ -91,7 +148,11 @@ export class RouterStore {
 
   migrate() {
     const version = Number(this.db.prepare("PRAGMA user_version").get().user_version || 0);
-    if (version > DATABASE_VERSION) throw new Error("router database was created by a newer version");
+    if (version > DATABASE_VERSION) {
+      this.assertStorageContract();
+      this.forwardDatabaseVersion = version;
+      return;
+    }
     if (version === DATABASE_VERSION) {
       const columns = this.db.prepare("PRAGMA table_info(host_model_state)").all();
       if (columns.length && !columns.some((column) => column.name === "model_visible")) {
@@ -363,6 +424,17 @@ export class RouterStore {
       }
       this.db.exec(`PRAGMA user_version = ${DATABASE_VERSION}`);
     });
+  }
+
+  assertStorageContract() {
+    for (const [table, requiredColumns] of Object.entries(STORAGE_CONTRACT_SCHEMA)) {
+      const columns = new Set(
+        this.db.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name),
+      );
+      if (requiredColumns.some((column) => !columns.has(column))) {
+        throw new Error("router database storage contract is incompatible");
+      }
+    }
   }
 
   getOrCreateSalt() {
@@ -1516,6 +1588,9 @@ export class RouterStore {
     return {
       routerVersion: ROUTER_VERSION,
       databaseVersion: Number(this.db.prepare("PRAGMA user_version").get().user_version),
+      supportedDatabaseVersion: DATABASE_VERSION,
+      storageContractVersion: STORAGE_CONTRACT_VERSION,
+      databaseCompatibility: this.forwardDatabaseVersion ? "forward_compatible" : "native",
       databaseHealth: Object.values(quick)[0] === "ok" ? "ok" : "needs_attention",
       journalMode: String(Object.values(this.db.prepare("PRAGMA journal_mode").get())[0]),
       classifier: {

@@ -94,6 +94,9 @@ test("install, upgrade, optional AGENTS patch, and uninstall are idempotent in a
 
     const installed = runManager(project, fake, ["install", "--non-interactive"]);
     assert.equal(installed.status, 0, installed.stderr);
+    assert.match(installed.stdout, /v0\.3\.x/);
+    assert.match(installed.stdout, /Compatible v0\.4\.x\+ runtime updates/);
+    assert.match(installed.stdout, /upgrades preserve this setting/);
     assert.equal(await readFile(agents, "utf8"), "User instructions.\n");
     assert.equal((await state(fake)).installed.length, 1);
 

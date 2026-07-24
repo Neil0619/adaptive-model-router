@@ -77,6 +77,14 @@ source, paths, or environment values.
 
 The runtime launcher checks only Node executable versions from the current process, `ADAPTIVE_ROUTER_NODE`, `PATH`, common version-manager directories, and standard install locations. Candidate paths and versions are not stored, sent to a model, or included in errors.
 
+Compatible-runtime activation stores one small `runtime/active.json` pointer in
+plugin data. It contains only validated cache directory names, runtime versions,
+the previous compatible version, and a bounded quarantine list. It contains no
+absolute path, project identifier, prompt, source, model input, environment
+value, or secret. Candidate health checks use a newly created temporary data
+directory and delete it before returning. Diagnostic output exposes only
+contract/version numbers and the count of quarantined runtimes.
+
 ## Legacy data
 
 Data under the v0.1 legacy directory is never used for v0.2 learning

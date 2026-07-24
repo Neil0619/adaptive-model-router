@@ -3,7 +3,13 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { DATABASE_VERSION, STORAGE_CONTRACT_VERSION } from "./lib/constants.mjs";
 import { supportsRuntime } from "./lib/runtime.mjs";
+import {
+  parseRuntimeDescriptor,
+  SHELL_PROTOCOL_VERSION,
+  TOOL_CONTRACT_VERSION,
+} from "./lib/runtime-loader.mjs";
 
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(pluginRoot, "../..");
@@ -37,11 +43,20 @@ const { TOOL_DEFINITIONS } = await import("./lib/service.mjs");
 const manifest = await json(join(pluginRoot, ".codex-plugin", "plugin.json"));
 const mcpConfig = await json(join(pluginRoot, ".mcp.json"));
 const packageJson = await json(join(pluginRoot, "package.json"));
+const runtimeDescriptor = parseRuntimeDescriptor(await json(join(pluginRoot, "runtime.json")));
 const marketplace = await json(join(repoRoot, ".agents", "plugins", "marketplace.json"));
 const hooks = await json(join(pluginRoot, "hooks", "hooks.json"));
 const skill = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8");
 const skillUi = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "agents", "openai.yaml"), "utf8");
 assert(manifest.version.split("+")[0] === packageJson.version, "manifest base version and package version differ");
+assert(runtimeDescriptor.runtimeVersion === manifest.version, "runtime and manifest versions differ");
+assert(runtimeDescriptor.shellProtocolVersion === SHELL_PROTOCOL_VERSION, "runtime shell protocol differs from the pinned shell");
+assert(runtimeDescriptor.toolContractVersion === TOOL_CONTRACT_VERSION, "runtime tool contract differs from the pinned shell");
+assert(runtimeDescriptor.storageContractVersion === STORAGE_CONTRACT_VERSION, "runtime storage contract differs from the database implementation");
+assert(runtimeDescriptor.databaseVersion === DATABASE_VERSION, "runtime database version differs from the database implementation");
+assert(runtimeDescriptor.entrypoints.hook === "scripts/hook.mjs", "runtime hook entrypoint is invalid");
+assert(runtimeDescriptor.entrypoints.service === "scripts/lib/service.mjs", "runtime service entrypoint is invalid");
+assert(runtimeDescriptor.entrypoints.probe === "scripts/runtime-probe.mjs", "runtime probe entrypoint is invalid");
 assert(Array.isArray(manifest.interface?.defaultPrompt) && manifest.interface.defaultPrompt.length <= 3, "manifest interface.defaultPrompt must contain at most 3 prompts");
 assert(packageJson.version === "0.4.0", "release base version must be 0.4.0");
 assert(packageJson.private === true, "package must remain private");
