@@ -43,7 +43,9 @@ All notable changes to this project are documented here.
   routing instruction and use a short-lived context guard that rejects an
   accidental live `route_stage` call before it can persist a route. This
   covers status, history, proposal listing, learning status, diagnostics, and
-  shadow scoring.
+  shadow scoring. Direct inspection requests must name a read-only tool
+  immediately after the request verb, so substantive lifecycle prompts that
+  later ask for status, history, or diagnostics are not misclassified.
 - Proposal status now reports distinct-context, failure, correction, and
   reasoning-retry counts. Rebase keeps the proposal delta while advancing the
   old evidence cursor.

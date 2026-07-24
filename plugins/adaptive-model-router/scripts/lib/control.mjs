@@ -13,6 +13,12 @@ const READ_ONLY_TOOL_PATTERN = new RegExp(
   `(?:^|[^A-Za-z0-9_])(${READ_ONLY_INSPECTION_TOOLS.join("|")})(?=$|[^A-Za-z0-9_])`,
   "gu",
 );
+const DIRECT_READ_ONLY_INSPECTION_PATTERN = new RegExp(
+  `^(?:(?:please\\s+)?(?:call|invoke|run|use|get|show|inspect)\\s+(?:the\\s+)?`
+  + `|(?:请)?(?:调用|运行|使用|查看|获取|显示|检查)\\s*)`
+  + `(?:${READ_ONLY_INSPECTION_TOOLS.join("|")})(?=$|[^A-Za-z0-9_])`,
+  "iu",
+);
 
 const SCOPE_MAP = {
   once: "once",
@@ -86,9 +92,7 @@ export function parseReadOnlyInspectionPrompt(prompt) {
   const declaresInspection =
     /^this is (?:a )?read-only router inspection\b/iu.test(text)
     || /^这是(?:一次)?只读路由器检查/u.test(text);
-  const directlyRequestsInspection =
-    /^(?:please\s+)?(?:call|invoke|run|use|get|show|inspect)\b/iu.test(text)
-    || /^(?:请)?(?:调用|运行|使用|查看|获取|显示|检查)/u.test(text);
+  const directlyRequestsInspection = DIRECT_READ_ONLY_INSPECTION_PATTERN.test(text);
   if (!declaresInspection && !directlyRequestsInspection) return null;
   return { tools: [...new Set(tools)] };
 }

@@ -83,6 +83,10 @@ test("only explicit direct read-only inspection requests activate the inspection
     parseReadOnlyInspectionPrompt("Call list_policy_proposals for the current project."),
     { tools: ["list_policy_proposals"] },
   );
+  assert.deepEqual(
+    parseReadOnlyInspectionPrompt("Use diagnose_router for the current task."),
+    { tools: ["diagnose_router"] },
+  );
   for (const prompt of [
     "Discuss whether to call shadow_route_stage.",
     "Do not call shadow_route_stage.",
@@ -93,7 +97,47 @@ test("only explicit direct read-only inspection requests activate the inspection
     "Fix shadow_route_stage because it writes a route.",
     "The docs say: Call shadow_route_stage.",
     "不要调用 shadow_route_stage。",
+    "Use the current host task ID as contextId. Call route_stage for implementation, "
+      + "then call get_route_status, get_route_history, and diagnose_router.",
   ]) assert.equal(parseReadOnlyInspectionPrompt(prompt), null, prompt);
+});
+
+test("a substantive route lifecycle with trailing reports is not isolated as inspection", async () => {
+  const project = await temporaryProject("adaptive inspection negative Unicode 自动 ");
+  try {
+    const base = {
+      cwd: project.root,
+      session_id: "substantive-session",
+      model: "gpt-5.6-luna",
+    };
+    const enabled = runHook("prompt", { ...base, prompt: "router: global on" }, project.home);
+    assert.equal(enabled.status, 0, enabled.stderr);
+    const substantive = runHook("prompt", {
+      ...base,
+      prompt: "Use the current host task ID as contextId. Call route_stage for implementation, "
+        + "then call record_outcome, get_route_status, get_route_history, and diagnose_router.",
+    }, project.home);
+    assert.equal(substantive.status, 0, substantive.stderr);
+    const context = JSON.parse(substantive.stdout).hookSpecificOutput.additionalContext;
+    assert.match(context, /global automatic activation is enabled/);
+    assert.doesNotMatch(context, /Read-only router inspection is active/);
+
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      try {
+        const identity = store.context({
+          cwd: project.root,
+          contextId: base.session_id,
+          authoritative: true,
+        });
+        assert.equal(store.inspectionGuardActive(identity), false);
+      } finally {
+        store.close();
+      }
+    });
+  } finally {
+    project.cleanup();
+  }
 });
 
 test("global automatic activation is opt-in, crosses projects, and detects later root-model changes", async () => {
