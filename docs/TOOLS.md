@@ -71,8 +71,10 @@ Example for a host that currently exposes Sol and Terra:
 
 Important evidence fields include `workProduct`, `requirementsSettled`,
 `strongVerification`, `highRisk`, `securitySensitive`, `migration`,
-`crossCutting`, `mechanical`, `ambiguous`, `exploration`, `review`, `batchSize`,
-`hostCanDelegate`, `verificationFailed`, and enumerated `failureType`.
+`crossCutting`, `publicContract`, `architectureTradeoff`, `highFailureCost`,
+`irreversible`, `parallelWriteRisk`, `mechanical`, `ambiguous`, `exploration`,
+`review`, `batchSize`, `hostCanDelegate`, `verificationFailed`, and enumerated
+`failureType`.
 `hostCanDelegate` is retained for older callers. Omit it when
 `hostCapabilities.delegation` is supplied; contradictory values are rejected.
 
@@ -109,6 +111,13 @@ If the host rejects a returned target before startup, record that route as
 once with `previousRouteId`; the rejected model is excluded. An explicit route
 asks the user instead. If the automatic retry is also rejected, record it and
 continue in the root. Do not treat a committed route as proof of startup.
+
+Automatic static routing never starts at Ultra. Sol Max requires a score of at
+least 98 and two independent hard-signal dimensions. Only a reasoning failure
+may increase effort, at most twice, in the order
+`high < xhigh < max < ultra`; environment, information, and tooling failures
+hold effort. `parallelWriteRisk: true` prevents an Ultra delegation and returns
+`ask_user`.
 
 After every route, the skill emits a compact visible notice. It shows the
 hook-observed root slug when available, always marks it unchanged, and notes

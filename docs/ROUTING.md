@@ -86,11 +86,24 @@ The clamped `0..100` default mapping expresses the preferred policy family:
 | `46..60` | Terra | medium |
 | `61..80` | Sol | medium |
 | `81..92` | Sol | high |
-| `93..100` | Sol | xhigh |
+| `93..97` | Sol | xhigh |
+| `98..100`, with at least two independent hard signals | Sol | max |
 
-Hard rules keep non-risk mechanical batches on Luna low, keep implementation
-off Luna, raise review to at least Sol medium, and raise risk/security/migration
-to at least Sol high.
+Low-complexity, non-batch stages at `0..25` remain in the root unless an
+explicit override requests delegation. Implementation, review, and
+risk/security/migration stages do not use that shortcut. Hard rules keep
+non-risk mechanical batches on Luna low, keep delegated implementation off
+Luna, raise review to at least Sol medium, and raise
+risk/security/migration to at least Sol high.
+
+The Max gate counts independent dimensions, not correlated labels:
+security-or-migration, explicit high risk or high failure cost, a cross-cutting
+public contract, an architecture trade-off, and irreversibility. Static
+routing never starts at Ultra. Reasoning-only verification failures may
+increase effort twice in the exact order `high → xhigh → max → ultra`, after
+which the router asks the user. Environment, information, and tooling failures
+do not increase effort. An Ultra target with reported parallel-write risk asks
+the user instead of delegating.
 
 The final bounded target is the preferred family intersected with the current
 host's declared subagent capability. Root-model visibility is not delegation
@@ -101,7 +114,7 @@ The auxiliary classifier has a third, independent catalog obtained from its
 ephemeral app-server's `model/list`.
 
 A substantive task is borderline when it is within 6 points of
-`25/55/75/90`, or has at most one matched signal with a score in `30..80`.
+`25/45/60/80/92/97`, or has at most one matched signal with a score in `30..80`.
 The auxiliary classifier can adjust by only `-10/0/+10` and cannot cross the
 deterministic risk floor.
 

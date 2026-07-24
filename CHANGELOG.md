@@ -6,6 +6,21 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Re-anchored deterministic routing to keep low-complexity, non-batch stages in
+  the root; use Terra for routine bounded work; and reserve stronger Sol effort
+  for review, risk, architecture, and failure-cost signals.
+- Corrected the effort strength order to
+  `high < xhigh < max < ultra`. Static routing can select Max only at score
+  `98..100` with at least two independent hard signals and never selects Ultra;
+  Ultra is reachable only through reasoning-failure escalation or an explicit
+  override.
+- Counted correlated security and migration evidence as one hard-signal
+  dimension for the Max gate. Added explicit public-contract, architecture
+  trade-off, irreversibility, and high-failure-cost evidence fields.
+- Kept environment, information, and tooling failures from increasing effort,
+  and made the two-step reasoning escalation chains monotonic through Max and
+  Ultra before asking the user.
+- Refused Ultra delegation when the caller reports parallel-write risk.
 - Separated root-visible, bounded-delegation, and auxiliary-classifier model
   catalogs so a root-only Luna model is never returned as a subagent target.
 - Added strict optional `hostCapabilities.delegation` input. Current host

@@ -122,11 +122,11 @@ test("-5 proposal requires 20 completely clean eligible results", async () => {
     await withRouterEnvironment(project, async () => {
       const store = new RouterStore();
       for (let index = 0; index < 19; index += 1) {
-        const route = await createRoute(store, cleanProject, "minus", `Document specified option ${index}.`);
+        const route = await createRoute(store, cleanProject, "minus", `Implement specified option ${index} with targeted tests.`);
         recordOutcome(outcomeFor(route, "minus"), { store, cwd: cleanProject });
       }
       assert.equal(listPolicyProposals({ contextId: "minus" }, { store, cwd: cleanProject }).length, 0);
-      const route = await createRoute(store, cleanProject, "minus", "Document specified option twenty.");
+      const route = await createRoute(store, cleanProject, "minus", "Implement specified option twenty with targeted tests.");
       recordOutcome(outcomeFor(route, "minus"), { store, cwd: cleanProject });
       const proposals = listPolicyProposals({ contextId: "minus" }, { store, cwd: cleanProject });
       assert.equal(proposals.length, 1);

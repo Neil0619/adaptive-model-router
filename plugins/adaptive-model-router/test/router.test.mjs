@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { RouterStore } from "../scripts/lib/database.mjs";
+import { EFFORT_ORDER } from "../scripts/lib/constants.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
+import { desiredRoute } from "../scripts/lib/scorer.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const SOL_TERRA_CAPABILITIES = {
@@ -24,6 +26,45 @@ const ALL_CAPABILITIES = {
   },
 };
 
+test("deterministic score bands map to the documented family and effort", () => {
+  const base = {
+    category: "general",
+    hardSignalCount: 0,
+    signals: {
+      mechanical: false,
+      implementation: false,
+      review: false,
+      risk: false,
+      security: false,
+      migration: false,
+    },
+  };
+  const cases = [
+    [25, 0, "luna", "low"],
+    [26, 0, "terra", "low"],
+    [45, 0, "terra", "low"],
+    [46, 0, "terra", "medium"],
+    [60, 0, "terra", "medium"],
+    [61, 0, "sol", "medium"],
+    [80, 0, "sol", "medium"],
+    [81, 0, "sol", "high"],
+    [92, 0, "sol", "high"],
+    [93, 0, "sol", "xhigh"],
+    [97, 0, "sol", "xhigh"],
+    [98, 1, "sol", "xhigh"],
+    [98, 2, "sol", "max"],
+    [100, 2, "sol", "max"],
+  ];
+  for (const [score, hardSignalCount, family, effort] of cases) {
+    const result = desiredRoute({ ...base, score, hardSignalCount });
+    assert.deepEqual(
+      { family: result.family, effort: result.effort },
+      { family, effort },
+      `score=${score}, hardSignalCount=${hardSignalCount}`,
+    );
+  }
+});
+
 test("route actions cover continue, delegate, and ask_user", async () => {
   const project = await temporaryProject();
   try {
@@ -45,6 +86,45 @@ test("route actions cover continue, delegate, and ask_user", async () => {
       assert.equal(asked.action, "ask_user");
       assert.equal("target" in asked, false);
       assert.ok(asked.reasonCodes.includes("EXPLICIT_TARGET_UNAVAILABLE"));
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("low-complexity non-batch work stays in root while explicit routing still delegates", async () => {
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const input = routeInput({
+        goal: "Rename one specified fixture key using the fixed mapping.",
+        contextId: "low-complexity",
+        evidence: {
+          workProduct: true,
+          mechanical: true,
+          requirementsSettled: true,
+          strongVerification: true,
+          batchSize: 1,
+        },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      });
+      const continued = await routeStage(input, { catalog: CATALOG, cwd: project.root });
+      assert.equal(continued.action, "continue");
+      assert.ok(continued.reasonCodes.includes("LOW_COMPLEXITY_CONTINUE"));
+      const withoutCatalog = await routeStage({
+        ...input,
+        contextId: "low-complexity-no-catalog",
+      }, { catalog: [], cwd: project.root });
+      assert.equal(withoutCatalog.action, "continue");
+      assert.ok(withoutCatalog.reasonCodes.includes("LOW_COMPLEXITY_CONTINUE"));
+
+      const delegated = await routeStage({
+        ...input,
+        contextId: "low-complexity-explicit",
+        override: { model: "gpt-5.6-terra", effort: "low" },
+      }, { catalog: CATALOG, cwd: project.root });
+      assert.equal(delegated.action, "delegate");
+      assert.deepEqual(delegated.target, { model: "gpt-5.6-terra", effort: "low" });
     });
   } finally {
     await project.cleanup();
@@ -188,7 +268,11 @@ test("tooling failures retry one automatic target but never replace an explicit 
   const project = await temporaryProject();
   try {
     await withRouterEnvironment(project, async () => {
-      const first = await routeStage(routeInput({ contextId: "tooling", hostCapabilities: SOL_TERRA_CAPABILITIES }), { catalog: CATALOG, cwd: project.root });
+      const first = await routeStage(routeInput({
+        contextId: "tooling",
+        evidence: { workProduct: true, requirementsSettled: true, strongVerification: true, crossCutting: true },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
       assert.equal(first.target.model, "gpt-5.6-terra");
       const retry = await routeStage(routeInput({
         contextId: "tooling",
@@ -233,6 +317,7 @@ test("declared delegation targets remain authoritative when the root catalog is 
     await withRouterEnvironment(project, async () => {
       const result = await routeStage(routeInput({
         contextId: "capability-without-root-catalog",
+        evidence: { workProduct: true, requirementsSettled: true, strongVerification: true, crossCutting: true },
         hostCapabilities: SOL_TERRA_CAPABILITIES,
       }), { catalog: [], cwd: project.root });
       assert.equal(result.action, "delegate");
@@ -280,7 +365,9 @@ test("hidden and unknown models are never selected automatically", async () => {
   const project = await temporaryProject();
   try {
     await withRouterEnvironment(project, async () => {
-      const result = await routeStage(routeInput(), { catalog: [
+      const result = await routeStage(routeInput({
+        evidence: { workProduct: true, requirementsSettled: true, strongVerification: true, crossCutting: true },
+      }), { catalog: [
         { slug: "gpt-5.6-sol", visibility: "hide", supported_reasoning_levels: ["high"] },
         { slug: "future-unknown", visibility: "list", priority: 0, supported_reasoning_levels: ["high"] },
       ], cwd: project.root });
@@ -302,7 +389,7 @@ test("reasoning escalation is monotonic and asks after two automatic escalations
         previousRouteId: first.routeId,
         evidence: { workProduct: true, verificationFailed: true, failureType: "reasoning" },
       }), { catalog: CATALOG, cwd: project.root });
-      assert.ok(["max", "xhigh", "ultra"].includes(second.target.effort));
+      assert.equal(second.target.effort, "xhigh");
       assert.equal(second.escalation.count, 1);
       const third = await routeStage(routeInput({
         contextId: "escalate",
@@ -310,7 +397,7 @@ test("reasoning escalation is monotonic and asks after two automatic escalations
         evidence: { workProduct: true, verificationFailed: true, failureType: "reasoning" },
       }), { catalog: CATALOG, cwd: project.root });
       assert.equal(third.target.model, "gpt-5.6-sol");
-      assert.ok(["xhigh", "max", "ultra"].includes(third.target.effort));
+      assert.equal(third.target.effort, "max");
       assert.equal(third.escalation.count, 2);
       const exhausted = await routeStage(routeInput({
         contextId: "escalate",
@@ -319,6 +406,171 @@ test("reasoning escalation is monotonic and asks after two automatic escalations
       }), { catalog: CATALOG, cwd: project.root });
       assert.equal(exhausted.action, "ask_user");
       assert.ok(exhausted.reasonCodes.includes("ESCALATION_LIMIT_REACHED"));
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("effort order and Sol escalation reach max then ultra without skipping tiers", async () => {
+  assert.deepEqual(EFFORT_ORDER.slice(-4), ["high", "xhigh", "max", "ultra"]);
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const first = await routeStage(routeInput({
+        contextId: "sol-escalation",
+        override: { model: "gpt-5.6-sol", effort: "xhigh" },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      const second = await routeStage(routeInput({
+        contextId: "sol-escalation",
+        previousRouteId: first.routeId,
+        evidence: { workProduct: true, verificationFailed: true, failureType: "reasoning" },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.deepEqual(second.target, { model: "gpt-5.6-sol", effort: "max" });
+      const third = await routeStage(routeInput({
+        contextId: "sol-escalation",
+        previousRouteId: second.routeId,
+        evidence: { workProduct: true, verificationFailed: true, failureType: "reasoning" },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.deepEqual(third.target, { model: "gpt-5.6-sol", effort: "ultra" });
+      const exhausted = await routeStage(routeInput({
+        contextId: "sol-escalation",
+        previousRouteId: third.routeId,
+        evidence: { workProduct: true, verificationFailed: true, failureType: "reasoning" },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.equal(exhausted.action, "ask_user");
+      assert.ok(exhausted.reasonCodes.includes("ESCALATION_LIMIT_REACHED"));
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("static routing uses Sol max only at 98+ with two hard signals and never starts at ultra", async () => {
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const gated = await routeStage(routeInput({
+        contextId: "static-max",
+        goal: "Design and implement an irreversible production authentication migration across multiple modules.",
+        evidence: {
+          workProduct: true,
+          ambiguous: true,
+          highRisk: true,
+          securitySensitive: true,
+          migration: true,
+          crossCutting: true,
+          publicContract: true,
+          architectureTradeoff: true,
+          irreversible: true,
+          highFailureCost: true,
+          hostCanDelegate: true,
+        },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.deepEqual(gated.target, { model: "gpt-5.6-sol", effort: "max" });
+      assert.ok(gated.reasonCodes.includes("MAX_EFFORT_GATE"));
+      assert.notEqual(gated.target.effort, "ultra");
+
+      const correlatedSafetySignals = await routeStage(routeInput({
+        contextId: "static-correlated-safety",
+        goal: "Implement a production authentication schema migration with extensive verification.",
+        evidence: {
+          workProduct: true,
+          securitySensitive: true,
+          migration: true,
+          strongVerification: true,
+          hostCanDelegate: true,
+        },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.equal(correlatedSafetySignals.target.effort, "high");
+      assert.equal(correlatedSafetySignals.reasonCodes.includes("MAX_EFFORT_GATE"), false);
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("implementation, review, and risk floors never use low-complexity continue", async () => {
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const cases = [
+        routeInput({
+          contextId: "implementation-floor",
+          goal: "Implement the specified one-line parser fix with tests.",
+          evidence: { workProduct: true, requirementsSettled: true, strongVerification: true },
+        }),
+        routeInput({
+          contextId: "review-floor",
+          goal: "Review one specified function.",
+          phase: "review",
+          evidence: { workProduct: true, review: true, requirementsSettled: true, strongVerification: true },
+        }),
+        routeInput({
+          contextId: "risk-floor",
+          goal: "Apply one specified authentication hardening change.",
+          evidence: { workProduct: true, highRisk: true, requirementsSettled: true, strongVerification: true },
+        }),
+      ];
+      for (const input of cases) {
+        const route = await routeStage(input, { catalog: CATALOG, cwd: project.root });
+        assert.equal(route.action, "delegate");
+        assert.equal(route.reasonCodes.includes("LOW_COMPLEXITY_CONTINUE"), false);
+      }
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("Ultra with parallel write risk asks instead of creating a nested unsafe delegate", async () => {
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const route = await routeStage(routeInput({
+        contextId: "ultra-write-risk",
+        override: { model: "gpt-5.6-sol", effort: "ultra" },
+        evidence: { workProduct: true, parallelWriteRisk: true },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.equal(route.action, "ask_user");
+      assert.ok(route.reasonCodes.includes("ULTRA_PARALLEL_WRITE_RISK"));
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("Sol max escalates to ultra and then asks instead of repeating or downgrading", async () => {
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const first = await routeStage(routeInput({
+        contextId: "max-escalation",
+        override: { model: "gpt-5.6-sol", effort: "max" },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      const second = await routeStage(routeInput({
+        contextId: "max-escalation",
+        previousRouteId: first.routeId,
+        evidence: { workProduct: true, verificationFailed: true, failureType: "reasoning" },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.deepEqual(second.target, { model: "gpt-5.6-sol", effort: "ultra" });
+      const exhausted = await routeStage(routeInput({
+        contextId: "max-escalation",
+        previousRouteId: second.routeId,
+        evidence: { workProduct: true, verificationFailed: true, failureType: "reasoning" },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.equal(exhausted.action, "ask_user");
+      assert.ok(exhausted.reasonCodes.includes("MONOTONIC_ESCALATION_UNAVAILABLE"));
     });
   } finally {
     await project.cleanup();

@@ -74,21 +74,31 @@ Hook 只保留通过校验的活动根模型 slug；缺失或非法值显示为 
 | `46..60` | Terra | medium |
 | `61..80` | Sol | medium |
 | `81..92` | Sol | high |
-| `93..100` | Sol | xhigh |
+| `93..97` | Sol | xhigh |
+| `98..100`，且至少两个独立硬信号 | Sol | max |
 
 另外还有硬规则：
 
+- `0..25` 的低复杂度非批量阶段默认留在根任务；显式 override 除外；
 - 无风险的批量机械任务使用 Luna low；
-- 实现任务不会自动落到 Luna；
+- 实现、review、风险、安全和迁移任务不使用低复杂度 `continue` 捷径；
+- 需要委派的实现任务不会自动落到 Luna；
 - review 至少使用 Sol medium；
 - 风险、安全或迁移任务至少使用 Sol high。
+
+Max 门只计算彼此独立的维度，不重复计算相关标签：安全或迁移、显式高风险或高
+失败成本、跨模块公共契约、架构权衡、不可逆性。静态评分永远不会直接选择 Ultra。
+只有 reasoning verification failure 可以最多自动增强两次，严格遵循
+`high → xhigh → max → ultra`；之后询问用户。environment、information 和
+tooling failure 不提高 effort。若 Ultra 阶段存在并行写入风险，则返回
+`ask_user`，不创建委派。
 
 最终 bounded 目标还必须与当前宿主声明的 subagent 能力求交集；根模型可见不等于
 可委派。当前宿主如果只向 bounded subagent 公开 Sol、Terra，Luna 偏好会自动
 回退到 Terra，并带上 `MODEL_FAMILY_FALLBACK`。用户显式指定的不可用目标不会被
 替换。辅助分类器使用第三套独立目录，来自其临时 app-server 的 `model/list`。
 
-实质性任务距离 `25/55/75/90` 任一边界不超过 6 分，或者只匹配到很少信号且
+实质性任务距离 `25/45/60/80/92/97` 任一边界不超过 6 分，或者只匹配到很少信号且
 分数在 `30..80`，才属于临界任务。默认辅助分类器最多只把复杂度调整
 `-10/0/+10`，且不能突破风险底线。
 

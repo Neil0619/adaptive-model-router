@@ -14,8 +14,8 @@ export const EFFORT_ORDER = [
   "low",
   "medium",
   "high",
-  "max",
   "xhigh",
+  "max",
   "ultra",
 ];
 
@@ -42,6 +42,7 @@ export const VERIFICATION_GATES = ["none", "task-specific", "targeted-tests", "s
 export const REASON_CODES = [
   "TRIVIAL_CONTINUE",
   "NO_WORK_PRODUCT",
+  "LOW_COMPLEXITY_CONTINUE",
   "ROUTER_DISABLED",
   "HOST_DELEGATION_UNAVAILABLE",
   "CATALOG_UNAVAILABLE",
@@ -62,6 +63,8 @@ export const REASON_CODES = [
   "EXPLORATION_STAGE",
   "REVIEW_STAGE",
   "STRONG_VERIFICATION",
+  "MAX_EFFORT_GATE",
+  "ULTRA_PARALLEL_WRITE_RISK",
   "CLASSIFIER_COMPLEXITY_UP",
   "CLASSIFIER_COMPLEXITY_DOWN",
   "CLASSIFIER_SKIPPED",

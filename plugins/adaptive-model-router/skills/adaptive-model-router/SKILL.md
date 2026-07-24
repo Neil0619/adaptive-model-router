@@ -44,7 +44,7 @@ Map the router's `target.effort` value to the current Codex subagent `reasoning_
 
 ## Failures and escalation
 
-On a verification failure, route the next attempt with the prior `routeId`, `verificationFailed: true`, and an enumerated `failureType`. Reasoning failures escalate monotonically. Environment and missing-information failures do not justify a stronger model. After the automatic limit, ask the user instead of silently changing targets.
+On a verification failure, route the next attempt with the prior `routeId`, `verificationFailed: true`, and an enumerated `failureType`. Reasoning failures escalate monotonically at most twice in the exact effort order `high < xhigh < max < ultra`. Static routing never starts at Ultra, and Max requires the hard-signal gate. Environment, missing-information, and tooling failures do not justify a stronger effort. After the automatic limit, ask the user instead of silently changing targets. If an Ultra stage would create parallel writers, pass `parallelWriteRisk: true` and respect the returned `ask_user`.
 
 If the host rejects a returned bounded target before the subagent starts,
 record that route immediately as `failed` with `failureType: tooling`. For an
