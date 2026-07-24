@@ -1,6 +1,7 @@
-export const ROUTER_VERSION = "0.3.1";
+export const ROUTER_VERSION = "0.4.0";
 export const SCHEMA_VERSION = "3.0";
-export const DATABASE_VERSION = 2;
+export const DATABASE_VERSION = 3;
+export const STORAGE_CONTRACT_VERSION = 1;
 export const MIN_NODE = [24, 15, 0];
 export const MAX_ESCALATIONS = 2;
 export const CLASSIFIER_TIMEOUT_MS = 8_000;
@@ -95,6 +96,35 @@ export const HOST_MODEL_INTENT_DECISIONS = ["manual_root", "keep_automatic"];
 export const DEFAULT_OFFSETS = Object.freeze(
   Object.fromEntries(CATEGORIES.map((category) => [category, 0])),
 );
+
+export const DEFAULT_SCORING_PROFILE = Object.freeze({
+  profileVersion: 1,
+  weights: Object.freeze({
+    base: 40,
+    ambiguity: 18,
+    risk: 25,
+    safety: 10,
+    crossCutting: 15,
+    missingVerification: 8,
+    review: 10,
+    mechanicalBatch: -28,
+    mechanicalSingle: -20,
+    requirementsSettled: -10,
+    settledWithVerification: -5,
+    nonRiskExploration: -8,
+    longSummary: 8,
+  }),
+  thresholds: Object.freeze({
+    rootMax: 25,
+    terraLowMax: 45,
+    terraMediumMax: 60,
+    solMediumMax: 80,
+    solHighMax: 92,
+    solXhighMax: 97,
+    solMaxMin: 98,
+    solMaxHardSignals: 2,
+  }),
+});
 
 export const CONTROL_PREFIXES = ["router:", "路由器："];
 // Keep the owned block marker stable so upgrades can remove v0.2.0-era patches.

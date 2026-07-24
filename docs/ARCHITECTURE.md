@@ -32,11 +32,27 @@ flowchart LR
 ## Components
 
 - `skills/adaptive-model-router/` describes the stage-boundary orchestration contract.
-- `scripts/node-launcher.mjs` starts under the Node executable resolved by Codex, discovers a qualifying Node 24.15+ runtime when necessary, and preserves stdio, arguments, environment, and exit status across the handoff.
-- `scripts/mcp-server.mjs` exposes strict, closed JSON schemas and emits only JSON-RPC on stdout.
+- `scripts/node-launcher.mjs` is the task-pinned launch shell. It discovers a
+  qualifying Node 24.15+ runtime, resolves a compatible installed Router
+  runtime, and preserves stdio, arguments, environment, signals, and exit
+  status across the handoff.
+- `runtime.json`, `scripts/lib/runtime-loader.mjs`, and
+  `scripts/runtime-probe.mjs` define the hot-runtime boundary. The shell accepts
+  only matching shell/tool/storage contracts, validates the candidate with
+  both the old shell and the candidate's own isolated probe, and persists an
+  atomic active/previous/quarantine pointer.
+- `scripts/mcp-server.mjs` exposes strict, closed JSON schemas and emits only
+  JSON-RPC on stdout. The schema stays pinned for a task, while each tool call
+  may import a newer contract-compatible service implementation.
 - `scripts/lib/router.mjs` applies deterministic scoring, override priority, catalog capability checks, and monotonic escalation.
+- `scripts/lib/scorer.mjs` evaluates an immutable scoring-profile definition;
+  approved project category offsets remain a separate bounded layer.
 - `scripts/lib/app-server.mjs` owns one short-lived classifier app-server process with a single total deadline and early-notification buffering.
-- `scripts/lib/database.mjs` owns SQLite migrations, short `BEGIN IMMEDIATE` transactions, exactly-once claims, and project/context isolation.
+- `scripts/lib/database.mjs` owns SQLite migrations, immutable scoring profiles
+  and snapshots, short `BEGIN IMMEDIATE` transactions, exactly-once claims, and
+  project/context isolation.
+- `scripts/lib/learning.mjs` validates typed retry outcomes, filters eligible
+  snapshots, and manages approval-gated immutable policy revisions.
 - `scripts/hook.mjs` handles exact control prefixes, the global automatic
   opt-in, root-model observation, fixed model-visible context, visible
   status/history reports, and the two-pass Stop outcome reminder.
@@ -84,9 +100,73 @@ that reasoning effort remains host-only, and that the router did not change the
 root model. The Codex model selector therefore continues to describe the root
 task, never the bounded-stage target.
 
-SQLite `user_version` 2 adds task root-model state, model-change events, and the
-root snapshot on each route while preserving version 1 routes, outcomes,
-policy revisions, proposals, and learning cursors.
+SQLite `user_version` 3 preserves the v2 task/root-model tables and adds:
+
+- immutable per-project scoring profiles with parent links;
+- a prompt-free score snapshot keyed one-to-one with every scored delegated
+  route;
+- typed reasoning/environment/information/tooling retry counts;
+- distinct-context and affected-result proposal statistics;
+- redacted profile re-anchor, proposal rebase, and safety rollback events.
+
+Migration falls through transactionally from v1 to v2 to v3. Pre-v3 routes
+without score snapshots remain visible in history but are ineligible for new
+learning windows.
+
+## Compatible runtime upgrades
+
+Codex resolves Hook definitions, MCP schemas, and skill instructions when a
+task starts. v0.4.0 therefore keeps those host-facing contracts in a small
+stable shell and separates them from the runtime implementation:
+
+1. A normal plugin upgrade installs another immutable sibling cache directory.
+2. The next Hook launch or MCP tool call scans only those sibling Router
+   versions and reads each strict `runtime.json`.
+3. A candidate is eligible only when its shell protocol, tool contract, and
+   storage contract equal the pinned shell. Its manifest name/version and
+   entrypoints must also validate.
+4. The pinned probe compares exact tool names and input schemas, then the
+   candidate probe opens a fresh temporary database and runs redacted
+   diagnostics.
+5. The first successful real Hook or MCP store initialization atomically moves
+   the active pointer. Failed provisional or active runtimes are quarantined,
+   and the previous compatible runtime is selected on the next invocation.
+
+The pointer stores only cache directory names, versions, and a bounded failed
+list under plugin data; it never stores an absolute cache path. Concurrent
+shells serialize the short pointer update through an exclusive local lock and
+converge through atomic replacement. Quarantine wins over a later success from
+the same immutable cache directory. Database transactions continue to provide
+process-level state safety.
+
+This mechanism deliberately does not hot-reload task-pinned skill prose or add
+new MCP tools. A changed shell protocol, tool schema, storage contract, Hook
+definition, or skill workflow requires a new task. The v0.3.x → v0.4.0 upgrade
+is the one-time bootstrap transition because v0.3 has no stable loader.
+
+Storage contract 1 permits only forward-compatible, additive database
+migrations: existing tables and columns remain, and additions must not make old
+writes invalid. A v0.4 shell may read a newer `user_version` only after checking
+its required table/column shape; otherwise it stops instead of guessing.
+
+## Scoring evolution
+
+Online learning remains deliberately narrow: it proposes only category offsets
+within `[-15, 15]`. Routes with overrides, classifier adjustments, escalation,
+tooling retry, or unknown/non-reasoning outcomes are quarantined. Evidence must
+span distinct task contexts so one repeated session cannot anchor policy.
+
+Offline re-anchoring installs a higher-version profile only after explicit
+confirmation. The profile is immutable, links to its predecessor, preserves
+approved category offsets, marks pending proposals stale, and advances their
+evidence cursors. Shadow scoring runs the same deterministic scorer but writes
+no route, outcome, proposal, or cursor.
+
+After a final outcome, the database checks the persisted boolean snapshot
+against the non-negotiable risk floor. A risk/security/migration stage below
+Sol high is a hard invariant violation and rolls an active offline profile back
+to its parent. Ordinary failures, agreement drift, or weak statistical signals
+never trigger automatic rollback.
 
 ## Concurrency
 

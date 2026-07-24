@@ -1,7 +1,7 @@
 # Native macOS smoke test
 
-This is the blocking logged-in macOS gate for `v0.3.1`. Run it in Codex Desktop
-or CLI on native macOS against the frozen `codex/v031-luna-delegate-fix` ref.
+This is the blocking logged-in macOS gate for `v0.4.0`. Run it in Codex Desktop
+or CLI on native macOS against the frozen `codex/v040-scoring-evolution` ref.
 Do not create or push the release tag from this smoke task.
 
 ## Pass criteria
@@ -19,11 +19,13 @@ Do not create or push the release tag from this smoke task.
 - Status, history, diagnostics, Hook output, and SQLite contain no prompt,
   source, secret, or absolute project path.
 - Native and wrapper upgrade/uninstall/reinstall flows are idempotent.
+- Automated same-process v0.4 compatible-runtime activation, quarantine, and
+  rollback tests pass; no absolute cache path appears in the runtime pointer.
 
 ## 1. Prepare a Unicode project and candidate checkout
 
 ```bash
-CandidateRef="codex/v031-luna-delegate-fix"
+CandidateRef="codex/v040-scoring-evolution"
 SmokeRoot="$(mktemp -d)/Adaptive Router macOS 冒烟"
 Source="$SmokeRoot/source checkout"
 Project="$SmokeRoot/测试 project with spaces"
@@ -110,7 +112,22 @@ explicit `router: manual` when they mean root-only intent.
 Also run the negative control in section 7 of the
 [Windows smoke runbook](WINDOWS_SMOKE.md).
 
-## 5. Exercise lifecycle wrappers and persistence
+## 5. Exercise scoring-evolution visibility
+
+In the same temporary project:
+
+1. Call `get_learning_status` and confirm database version 3 is healthy, the
+   active scoring profile is versioned, and no prompt or path is returned.
+2. Record the current counts of routes, outcomes, proposals, and learning
+   cursors. Call `shadow_route_stage` for one risk review stage using the
+   active definition. Confirm `shadow: true`, `sideEffects: false`, a Sol-high
+   or stronger preference, and unchanged counts.
+3. Confirm the completed delegated route's outcome includes a four-field
+   `retryBreakdown` whose sum equals `retries`.
+4. Rely on `npm test` for destructive profile re-anchor/rebase/automatic
+   rollback fixtures; do not mutate the smoke project's active profile.
+
+## 6. Exercise lifecycle wrappers and persistence
 
 Exit the task and run:
 
@@ -132,11 +149,18 @@ Confirm the owned AGENTS marker was inserted once and removed completely while
 surrounding user text remained unchanged. The final two installs must be
 idempotent and leave AGENTS unpatched.
 
+The wrapper output must distinguish the one-time v0.3.x → v0.4.0 fresh-task
+transition from later compatible v0.4.x+ runtime updates. Do not claim that
+every implementation-only upgrade needs a new task. The automated
+`runtime-hot-upgrade.test.mjs` is the blocking same-process activation test for
+this release; changes to Hook JSON, skill instructions, MCP schemas, or the
+storage contract still require a new task.
+
 Start Codex from a second temporary project without repeating `router: global
 on`. Trust the current Hook hash if asked, then use `router: status` to confirm
 the global setting persisted while task-specific manual state did not.
 
-## 6. Report
+## 7. Report
 
 Return:
 
@@ -157,8 +181,12 @@ Verification and record_outcome: PASS | FAIL
 Pending keep-automatic behavior: PASS | FAIL
 Manual-root behavior: PASS | FAIL
 Negative control: PASS | FAIL
+Learning status/database v3: PASS | FAIL
+Shadow scoring had zero lifecycle side effects: PASS | FAIL
+Typed retry breakdown: PASS | FAIL
 Privacy assertion: PASS | FAIL
 Native and wrapper lifecycle: PASS | FAIL
+Compatible runtime hot-upgrade/rollback suite: PASS | FAIL
 AGENTS marker cleanup: PASS | FAIL
 Unexpected sanitized warnings:
 ```

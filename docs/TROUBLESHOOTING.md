@@ -29,8 +29,11 @@ files, or Codex credentials into a public issue.
    codex plugin add adaptive-model-router@adaptive-model-router
    ```
 
-3. Start a new Codex task. If the ChatGPT desktop app still shows stale plugin
-   state, restart the app and open another new task.
+3. On a first install, a v0.3.x → v0.4.0 upgrade, or an incompatible contract
+   update, start a new Codex task. For a compatible v0.4.x+ runtime update,
+   invoke the Hook or any Router MCP tool in the existing task; no task restart
+   is required. If the ChatGPT desktop app still shows stale plugin state after
+   a required restart, restart the app and open another task.
 
 If a marketplace named `adaptive-model-router` points to a different source or
 ref, the wrapper stops rather than replacing it. Inspect the marketplace list
@@ -64,8 +67,35 @@ router: global on
 The setting persists across projects and restarts. If the command succeeds but
 ordinary substantive tasks still receive no router context, re-open `/hooks`,
 trust the current `UserPromptSubmit` definition, and start another new task.
-Hook trust is hash-specific after an upgrade. Simple questions and stages with
-no work product may still continue in the root task by design.
+Hook trust is hash-specific when an upgrade changes the Hook definition.
+Compatible implementation-only runtime updates keep the stable definition and
+do not require renewed trust. Simple questions and stages with no work product
+may still continue in the root task by design.
+
+## An existing task still reports the old Router runtime
+
+Call `diagnose_router` in that task and inspect its redacted `runtime` object.
+For a compatible update, `runtimeVersion` and `activeVersion` should advance on
+the next MCP call. `previousVersion` is the rollback target and
+`failedRuntimeCount` reports quarantined candidates without exposing paths.
+
+If it does not advance:
+
+1. Confirm the new package appears in `codex plugin list`.
+2. Run `npm run validate` in a source checkout and confirm `runtime.json`
+   matches the plugin manifest.
+3. Check whether the new version changed the shell protocol, tool schemas, or
+   storage contract. Such a version is intentionally ignored by the old shell
+   and needs a new task.
+4. If `failedRuntimeCount` increased, the old shell rejected the candidate's
+   contract probe, isolated database probe, or first real initialization and
+   kept the prior runtime active. Reinstall a fixed, higher version; do not edit
+   the pointer by hand.
+
+Hook definitions and skill text themselves remain task-pinned. If an update
+depends on new Hook JSON, a new tool, or new skill instructions, review the
+Hook hash and start a new task even if its implementation files are otherwise
+compatible.
 
 ## Node.js is missing or too old
 
@@ -211,8 +241,9 @@ ADAPTIVE_ROUTER_LOCAL_ONLY=1
 
 `record_outcome` accepts delegated route IDs only. Use the same `contextId` as
 the route, the exact verification-gate enum, an allowed status, and consistent
-failure fields. Repeating an identical outcome is safe; changing an already
-recorded final outcome is rejected.
+failure fields. `retryBreakdown` must contain all four failure-type counters and
+sum exactly to `retries`. Repeating an identical outcome is safe; changing an
+already recorded final outcome is rejected.
 
 ## Data cleanup
 

@@ -168,7 +168,7 @@ test("missing or invalid current hook models display host-managed without losing
   }
 });
 
-test("database v1 migrates transactionally to v2 without losing routes, outcomes, or policy", async () => {
+test("database v1 migrates transactionally through v2 to v3 without losing routes, outcomes, or policy", async () => {
   const project = await temporaryProject("adaptive migration v1 ");
   try {
     await withRouterEnvironment(project, async () => {
@@ -181,6 +181,7 @@ test("database v1 migrates transactionally to v2 without losing routes, outcomes
         gate: route.verificationGate,
         failureType: null,
         retries: 0,
+        retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
         escalations: 0,
         userCorrection: false,
       }, { store, cwd: project.root });
@@ -190,6 +191,20 @@ test("database v1 migrates transactionally to v2 without losing routes, outcomes
 
       const old = new DatabaseSync(database);
       old.exec(`
+        DROP TABLE learning_events;
+        DROP TABLE route_score_snapshots;
+        DROP TABLE project_scoring_profile;
+        DROP TABLE scoring_profiles;
+        ALTER TABLE outcomes DROP COLUMN retry_reasoning;
+        ALTER TABLE outcomes DROP COLUMN retry_environment;
+        ALTER TABLE outcomes DROP COLUMN retry_information;
+        ALTER TABLE outcomes DROP COLUMN retry_tooling;
+        ALTER TABLE policy_proposals DROP COLUMN context_count;
+        ALTER TABLE policy_proposals DROP COLUMN failure_count;
+        ALTER TABLE policy_proposals DROP COLUMN correction_count;
+        ALTER TABLE policy_proposals DROP COLUMN reasoning_retry_count;
+        ALTER TABLE policy_proposals DROP COLUMN base_profile_id;
+        ALTER TABLE policy_proposals DROP COLUMN kind;
         DROP TABLE host_model_state;
         DROP TABLE host_model_changes;
         ALTER TABLE routes DROP COLUMN root_model;
@@ -198,19 +213,21 @@ test("database v1 migrates transactionally to v2 without losing routes, outcomes
       old.close();
 
       store = new RouterStore({ path: database });
-      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 2);
+      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 3);
       assert.equal(store.db.prepare("SELECT count(*) AS count FROM routes").get().count, 1);
       assert.equal(store.db.prepare("SELECT count(*) AS count FROM outcomes").get().count, 1);
       assert.equal(store.db.prepare("SELECT active_revision_id FROM project_policy").get().active_revision_id, revisionId);
       assert.equal(store.db.prepare("PRAGMA table_info(routes)").all().some((column) => column.name === "root_model"), true);
+      assert.equal(store.db.prepare("PRAGMA table_info(outcomes)").all().some((column) => column.name === "retry_reasoning"), true);
       assert.doesNotThrow(() => store.db.prepare("SELECT * FROM host_model_state").all());
+      assert.doesNotThrow(() => store.db.prepare("SELECT * FROM route_score_snapshots").all());
       const context = store.context({ cwd: project.root, contextId: "migration" });
       store.observeHostModel(context, "gpt-5.6-sol");
       store.close();
 
-      const beta = new DatabaseSync(database);
-      beta.exec("ALTER TABLE host_model_state DROP COLUMN model_visible; PRAGMA user_version = 2;");
-      beta.close();
+      const damaged = new DatabaseSync(database);
+      damaged.exec("ALTER TABLE host_model_state DROP COLUMN model_visible; PRAGMA user_version = 3;");
+      damaged.close();
       store = new RouterStore({ path: database });
       assert.equal(store.db.prepare("PRAGMA table_info(host_model_state)").all().some((column) => column.name === "model_visible"), true);
       assert.equal(store.rootTask(store.context({ cwd: project.root, contextId: "migration" })).model, "gpt-5.6-sol");

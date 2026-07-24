@@ -32,8 +32,10 @@ Usage:
   node scripts/codex-route.mjs history [--context ID] [--limit 20] [--action all|delegate|continue|ask_user]
   node scripts/codex-route.mjs catalog
   node scripts/codex-route.mjs proposals [--context ID]
+  node scripts/codex-route.mjs learning [--context ID]
   node scripts/codex-route.mjs approve PROPOSAL_ID [--context ID]
   node scripts/codex-route.mjs reject PROPOSAL_ID [--context ID]
+  node scripts/codex-route.mjs rebase PROPOSAL_ID [--context ID]
   node scripts/codex-route.mjs rollback [--context ID]
   node scripts/codex-route.mjs import-legacy --confirm IMPORT_LEGACY_SETTINGS_POLICY [--context ID]
 `);
@@ -65,11 +67,17 @@ async function main() {
     }
     if (command === "catalog") return print(await getModelCatalog({ store }));
     if (command === "proposals") return print(await callRouterTool("list_policy_proposals", { contextId }, { store }));
-    if (command === "approve" || command === "reject") {
+    if (command === "learning") return print(await callRouterTool("get_learning_status", { contextId }, { store }));
+    if (command === "approve" || command === "reject" || command === "rebase") {
       const proposalId = args._[1];
       if (!proposalId) throw new Error(`${command} requires a proposal id`);
+      const tool = {
+        approve: "approve_policy_proposal",
+        reject: "reject_policy_proposal",
+        rebase: "rebase_policy_proposal",
+      }[command];
       return print(await callRouterTool(
-        command === "approve" ? "approve_policy_proposal" : "reject_policy_proposal",
+        tool,
         { contextId, proposalId },
         { store },
       ));

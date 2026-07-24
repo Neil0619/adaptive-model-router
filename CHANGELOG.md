@@ -2,6 +2,48 @@
 
 All notable changes to this project are documented here.
 
+## [0.4.0] - Unreleased
+
+### Added
+
+- SQLite `user_version` 3 with immutable, versioned scoring profiles and one
+  redacted score snapshot per delegated route. Snapshots contain only numeric
+  scores, boolean signals, enum decisions, profile IDs, and learning
+  eligibility reasons.
+- Strict per-failure `retryBreakdown` outcomes so reasoning retries can be
+  learned independently from environment, information, and tooling failures.
+- Conservative online category-offset evidence: explicit overrides,
+  classifier-adjusted routes, escalations, unknown outcomes, and non-reasoning
+  failures are quarantined; proposals also require evidence across distinct
+  task contexts.
+- `get_learning_status`, `shadow_route_stage`,
+  `reanchor_scoring_profile`, and `rebase_policy_proposal` tools.
+- Offline scoring-profile re-anchoring with explicit confirmation, immutable
+  parent links, stale-proposal handling, and preserved approved category
+  offsets.
+- A hard safety invariant that automatically rolls an active offline profile
+  back to its parent if a snapshotted risk/security/migration route violates
+  the Sol-high floor.
+- A 226-case deterministic evaluation gate: 24 bilingual end-to-end routes and
+  202 score-band/hard-signal cases.
+- A stable v0.4 launch shell and strict `runtime.json` descriptor. Existing
+  v0.4 tasks can activate compatible implementation updates on the next Hook
+  or MCP call, with isolated contract/health probes, an atomic active/previous
+  pointer, concurrent activation safety, and automatic quarantine/rollback.
+- Forward-compatible storage-contract checks that allow an older v0.4 runtime
+  to reopen a newer additive SQLite schema while rejecting incompatible
+  future schemas.
+
+### Changed
+
+- Shadow scoring has no route, outcome, proposal, or cursor side effects.
+- Proposal status now reports distinct-context, failure, correction, and
+  reasoning-retry counts. Rebase keeps the proposal delta while advancing the
+  old evidence cursor.
+- The v0.3.x → v0.4.0 transition requires one fresh task; later compatible
+  runtime-only updates do not. Hook, skill, MCP-schema, and storage-contract
+  changes remain explicit restart boundaries.
+
 ## [0.3.1] - Unreleased
 
 ### Fixed

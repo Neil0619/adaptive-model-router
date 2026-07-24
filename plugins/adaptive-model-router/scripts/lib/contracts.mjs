@@ -156,7 +156,7 @@ export const ROUTE_OUTPUT_SCHEMA = {
 export const OUTCOME_INPUT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["routeId", "contextId", "status", "gate", "failureType", "retries", "escalations", "userCorrection"],
+  required: ["routeId", "contextId", "status", "gate", "failureType", "retries", "retryBreakdown", "escalations", "userCorrection"],
   properties: {
     routeId: { type: "string", minLength: 1, maxLength: 128 },
     contextId: { type: "string", minLength: 1, maxLength: 256 },
@@ -164,6 +164,17 @@ export const OUTCOME_INPUT_SCHEMA = {
     gate: { type: "string", enum: VERIFICATION_GATES },
     failureType: { type: ["string", "null"], enum: [...FAILURE_TYPES, null] },
     retries: { type: "integer", minimum: 0, maximum: 1000 },
+    retryBreakdown: {
+      type: "object",
+      additionalProperties: false,
+      required: FAILURE_TYPES,
+      properties: Object.fromEntries(
+        FAILURE_TYPES.map((failureType) => [
+          failureType,
+          { type: "integer", minimum: 0, maximum: 1000 },
+        ]),
+      ),
+    },
     escalations: { type: "integer", minimum: 0, maximum: 1000 },
     userCorrection: { type: "boolean" },
   },

@@ -38,7 +38,7 @@ Use the router at a meaningful stage boundary, not before every message. It does
    and localize labels to the user's language.
 4. When delegation is unavailable in the current host, fail open by continuing with the current model. Do not claim that the root task model changed.
 5. Keep the delegated scope concrete and bounded. The root owns orchestration, integration, user communication, and verification. Never create overlapping writers.
-6. Run the returned `verificationGate` at the root. Then call `record_outcome` once with the route ID and the exact final outcome schema.
+6. Run the returned `verificationGate` at the root. Then call `record_outcome` once with the route ID and the exact final outcome schema, including all four `retryBreakdown` counters whose sum equals `retries`.
 
 Map the router's `target.effort` value to the current Codex subagent `reasoning_effort` parameter. Do not submit an `effort` parameter to a host that does not define one, and do not invent `agentType`, `agent_type`, or other unsupported parameters.
 
@@ -67,7 +67,7 @@ The global automatic activation setting is opt-in. `router: global on` / `路由
 
 The hook may observe the active root-model slug, but never its reasoning effort. The first observation in a task is a baseline. If a later slug changes, the hook places the task in `pending_confirmation`: keep working in the root, never spawn a subagent, and remind the user to choose manual-root or keep-automatic. A `route_stage` call at a substantive boundary returns `continue` with `HOST_MODEL_INTENT_PENDING`; respect it. Continue root-only on later turns until the user explicitly answers. Then call `resolve_host_model_intent` with the pending `changeId`; never infer a decision from silence or unrelated text. `manual_root` lasts only for the current task and likewise forces `MANUAL_ROOT_SELECTED` plus `continue`.
 
-Learning is project-local. A proposal never changes policy until the user explicitly calls `approve_policy_proposal`. Rejection advances the evidence window; rollback walks backward through immutable revisions. Do not approve, reject, roll back, import legacy settings, or clear project data without an explicit user instruction.
+Learning is project-local. A proposal never changes policy until the user explicitly calls `approve_policy_proposal`. Rejection advances the evidence window; rollback walks backward through immutable revisions. `get_learning_status` is read-only. `shadow_route_stage` must remain free of route/outcome/proposal/cursor writes. Rebase and offline scoring-profile re-anchor require an explicit user instruction; re-anchor also requires the exact confirmation. Do not approve, reject, rebase, re-anchor, roll back, import legacy settings, or clear project data without an explicit user instruction. The only automatic learning mutation beyond proposal creation is a hard risk-floor rollback.
 
 The auxiliary classifier receives only a redacted short summary, phase, and boolean signals. If it is disabled, local-only, timed out, or circuit-broken, use the deterministic route.
 

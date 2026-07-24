@@ -1,9 +1,17 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
-import { basename, dirname, join } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverNodeRuntime } from "./lib/node-discovery.mjs";
 import { emitDiagnostic } from "./lib/diagnostics.mjs";
+import {
+  markRuntimeFailed,
+  markRuntimeHealthy,
+  pluginRootFrom,
+  resolveRuntime,
+  RUNTIME_PROBE_TIMEOUT_MS,
+  runtimeEntrypoint,
+} from "./lib/runtime-loader.mjs";
 
 const target = process.argv[2];
 const targetArgs = process.argv.slice(3);
@@ -49,16 +57,78 @@ if (!runtime) {
   process.exit(2);
 }
 
+const launchEnv = childEnvironment();
+let resolvedTarget = target;
+let selectedResolution = null;
+let attemptedResolution = null;
+try {
+  const currentRoot = launchEnv.PLUGIN_ROOT
+    ? resolve(launchEnv.PLUGIN_ROOT)
+    : pluginRootFrom(import.meta.url);
+  let resolution = resolveRuntime(currentRoot, { env: launchEnv });
+  const currentHook = runtimeEntrypoint(resolution.current, "hook");
+  if (resolve(target) === resolve(currentHook)) {
+    if (resolution.candidate.root !== resolution.current.root) attemptedResolution = resolution;
+    if (resolution.provisional) {
+      const contractProbe = spawnSync(runtime.executable, [
+        runtimeEntrypoint(resolution.current, "probe"),
+        resolution.candidate.root,
+      ], {
+        env: launchEnv,
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: RUNTIME_PROBE_TIMEOUT_MS,
+      });
+      const healthProbe = !contractProbe.error && contractProbe.status === 0
+        ? spawnSync(runtime.executable, [runtimeEntrypoint(resolution.candidate, "probe")], {
+          env: launchEnv,
+          encoding: "utf8",
+          windowsHide: true,
+          timeout: RUNTIME_PROBE_TIMEOUT_MS,
+        })
+        : null;
+      const probesPassed =
+        !contractProbe.error &&
+        contractProbe.status === 0 &&
+        healthProbe &&
+        !healthProbe.error &&
+        healthProbe.status === 0;
+      if (!probesPassed) {
+        markRuntimeFailed(resolution, launchEnv);
+        resolution = resolveRuntime(currentRoot, { env: launchEnv, allowTrial: false });
+      }
+    }
+    resolvedTarget = runtimeEntrypoint(resolution.candidate, "hook");
+    selectedResolution = resolution;
+    attemptedResolution = null;
+    if (launchEnv.ADAPTIVE_ROUTER_RUNTIME_TRACE === "1") {
+      process.stderr.write(`Adaptive Model Router runtime=${resolution.candidate.descriptor.runtimeVersion}\n`);
+    }
+  } else if (launchEnv.ADAPTIVE_ROUTER_RUNTIME_TRACE === "1") {
+    process.stderr.write("Adaptive Model Router runtime=unmapped\n");
+  }
+} catch {
+  // A damaged optional hot-runtime candidate must not block the pinned shell.
+  if (attemptedResolution) markRuntimeFailed(attemptedResolution, launchEnv);
+  resolvedTarget = target;
+  if (launchEnv.ADAPTIVE_ROUTER_RUNTIME_TRACE === "1") {
+    process.stderr.write("Adaptive Model Router runtime=pinned\n");
+  }
+}
+
 let child;
 try {
   stage = "spawn";
-  child = spawn(runtime.executable, [target, ...targetArgs], {
-    env: childEnvironment(),
+  child = spawn(runtime.executable, [resolvedTarget, ...targetArgs], {
+    env: launchEnv,
     stdio: "inherit",
     windowsHide: true,
     shell: false,
   });
 } catch (error) {
+  if (selectedResolution && selectedResolution.candidate.root !== selectedResolution.current.root) {
+    markRuntimeFailed(selectedResolution, launchEnv);
+  }
   process.stderr.write(failure);
   emitDiagnostic({ component: "launcher", stage, error, category: "spawn_failed", startedAt });
   process.exit(2);
@@ -79,6 +149,9 @@ child.once("error", (error) => {
   if (settled) return;
   settled = true;
   cleanup();
+  if (selectedResolution && selectedResolution.candidate.root !== selectedResolution.current.root) {
+    markRuntimeFailed(selectedResolution, launchEnv);
+  }
   process.stderr.write(failure);
   emitDiagnostic({ component: "launcher", stage: "spawn", error, category: "spawn_failed", startedAt });
   process.exitCode = 2;
@@ -89,6 +162,10 @@ child.once("exit", (code) => {
   settled = true;
   cleanup();
   process.exitCode = Number.isInteger(code) ? code : 1;
+  if (selectedResolution && selectedResolution.candidate.root !== selectedResolution.current.root) {
+    if (process.exitCode === 0) markRuntimeHealthy(selectedResolution, launchEnv);
+    else markRuntimeFailed(selectedResolution, launchEnv);
+  }
   if (process.exitCode !== 0) {
     emitDiagnostic({ component: "launcher", stage: "child", category: "child_exit", startedAt });
   }

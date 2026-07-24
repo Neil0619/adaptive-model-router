@@ -15,10 +15,13 @@ function validateOutcomeSemantics(input, route) {
   if (input.escalations !== Number(route.escalation_count)) throw new Error("escalations must match the route");
   if (input.status === "failed" && !input.failureType) throw new Error("failed outcomes require failureType");
   if (input.status !== "failed" && input.failureType !== null) throw new Error(`${input.status} outcomes require failureType null`);
+  const retryTotal = Object.values(input.retryBreakdown).reduce((sum, value) => sum + value, 0);
+  if (retryTotal !== input.retries) throw new Error("retryBreakdown must sum to retries");
 }
 
 export function maybeGenerateProposal(store, context, category) {
   const policy = store.ensurePolicy(context);
+  const profile = store.ensureScoringProfile(context);
   return store.transaction(() => {
     const current = store.db.prepare(`
       SELECT p.active_revision_id, r.offsets_json, r.outcome_seq
@@ -34,20 +37,36 @@ export function maybeGenerateProposal(store, context, category) {
     const cursor = store.db.prepare(`
       SELECT last_outcome_seq FROM learning_cursors WHERE project_id = ? AND category = ?
     `).get(context.projectId, category);
-    const afterSeq = Math.max(Number(cursor?.last_outcome_seq || 0), Number(current.outcome_seq || 0));
+    const afterSeq = Math.max(
+      Number(cursor?.last_outcome_seq || 0),
+      Number(current.outcome_seq || 0),
+      Number(profile.outcomeSeq || 0),
+    );
     const window = store.db.prepare(`
       SELECT count(*) AS eligible_count,
-             coalesce(sum(CASE WHEN status = 'failed' OR user_correction = 1 OR retries > 0 THEN 1 ELSE 0 END), 0) AS affected_count,
-             coalesce(min(seq), 0) AS start_seq,
-             coalesce(max(seq), 0) AS end_seq
-      FROM outcomes
-      WHERE project_id = ? AND category = ? AND status != 'unknown' AND seq > ?
-    `).get(context.projectId, category, afterSeq);
+             count(DISTINCT o.context_key) AS context_count,
+             coalesce(sum(CASE WHEN o.status = 'failed' OR o.user_correction = 1 OR o.retry_reasoning > 0 THEN 1 ELSE 0 END), 0) AS affected_count,
+             coalesce(sum(CASE WHEN o.status = 'failed' THEN 1 ELSE 0 END), 0) AS failure_count,
+             coalesce(sum(CASE WHEN o.user_correction = 1 THEN 1 ELSE 0 END), 0) AS correction_count,
+             coalesce(sum(o.retry_reasoning), 0) AS reasoning_retry_count,
+             coalesce(min(o.seq), 0) AS start_seq,
+             coalesce(max(o.seq), 0) AS end_seq
+      FROM outcomes o
+      JOIN route_score_snapshots s ON s.route_id = o.route_id
+      WHERE o.project_id = ? AND o.category = ? AND o.status != 'unknown' AND o.seq > ?
+        AND s.profile_id = ?
+        AND s.eligible_learning = 1
+        AND (o.failure_type IS NULL OR o.failure_type = 'reasoning')
+        AND o.retry_environment = 0
+        AND o.retry_information = 0
+        AND o.retry_tooling = 0
+    `).get(context.projectId, category, afterSeq, profile.profileId);
     const eligible = Number(window.eligible_count || 0);
     const affected = Number(window.affected_count || 0);
+    const contextCount = Number(window.context_count || 0);
     let delta = 0;
-    if (eligible >= 12 && affected >= 4) delta = 5;
-    else if (eligible >= 20 && affected === 0) delta = -5;
+    if (eligible >= 12 && affected >= 4 && contextCount >= 4) delta = 5;
+    else if (eligible >= 20 && affected === 0 && contextCount >= 5) delta = -5;
     if (!delta) return null;
     const offsets = { ...DEFAULT_OFFSETS, ...parseJson(current.offsets_json, {}) };
     const oldOffset = Number(offsets[category] || 0);
@@ -63,8 +82,9 @@ export function maybeGenerateProposal(store, context, category) {
     store.db.prepare(`
       INSERT INTO policy_proposals(
         proposal_id, project_id, category, delta, base_revision_id, start_seq, end_seq,
-        eligible_count, affected_count, status, created_at
-      ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+        eligible_count, affected_count, context_count, failure_count, correction_count,
+        reasoning_retry_count, base_profile_id, status, created_at
+      ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
     `).run(
       proposalId,
       context.projectId,
@@ -75,9 +95,23 @@ export function maybeGenerateProposal(store, context, category) {
       Number(window.end_seq),
       eligible,
       affected,
+      contextCount,
+      Number(window.failure_count || 0),
+      Number(window.correction_count || 0),
+      Number(window.reasoning_retry_count || 0),
+      profile.profileId,
       nowIso(),
     );
-    return { proposalId, category, delta, eligibleCount: eligible, affectedCount: affected, from: oldOffset, to: newOffset };
+    return {
+      proposalId,
+      category,
+      delta,
+      eligibleCount: eligible,
+      affectedCount: affected,
+      contextCount,
+      from: oldOffset,
+      to: newOffset,
+    };
   });
 }
 
@@ -91,9 +125,10 @@ export function recordOutcome(input, options = {}) {
     if (!route) throw new Error("routeId does not belong to the current project and context");
     validateOutcomeSemantics(input, route);
     const result = store.insertOutcome(context, route, input);
+    const safety = result.recorded ? store.enforceScoringSafety(context, route) : null;
     let proposal = null;
     if (result.recorded && input.status !== "unknown") proposal = maybeGenerateProposal(store, context, route.category);
-    return { ...result, proposal };
+    return { ...result, proposal, safety };
   } finally {
     ownedStore?.close();
   }
@@ -106,6 +141,12 @@ function proposalResult(row) {
     delta: Number(row.delta),
     eligibleCount: Number(row.eligible_count),
     affectedCount: Number(row.affected_count),
+    contextCount: Number(row.context_count || 0),
+    failureCount: Number(row.failure_count || 0),
+    correctionCount: Number(row.correction_count || 0),
+    reasoningRetryCount: Number(row.reasoning_retry_count || 0),
+    baseProfileId: row.base_profile_id || null,
+    kind: row.kind || "offset",
     status: row.status,
   };
 }
@@ -116,7 +157,9 @@ export function listPolicyProposals({ contextId }, options = {}) {
     const store = options.store || (ownedStore = new RouterStore(options.database ? { path: options.database } : {}));
     const context = store.context({ cwd: options.cwd || process.cwd(), contextId });
     return store.db.prepare(`
-      SELECT proposal_id, category, delta, eligible_count, affected_count, status
+      SELECT proposal_id, category, delta, eligible_count, affected_count,
+             context_count, failure_count, correction_count, reasoning_retry_count,
+             base_profile_id, kind, status
       FROM policy_proposals WHERE project_id = ? AND status = 'pending' ORDER BY created_at
     `).all(context.projectId).map(proposalResult);
   } finally {
@@ -138,6 +181,7 @@ export function approvePolicyProposal({ contextId, proposalId }, options = {}) {
     const store = options.store || (ownedStore = new RouterStore(options.database ? { path: options.database } : {}));
     const context = store.context({ cwd: options.cwd || process.cwd(), contextId });
     store.ensurePolicy(context);
+    const profile = store.ensureScoringProfile(context);
     return store.transaction(() => {
       const row = store.db.prepare(`
         SELECT * FROM policy_proposals WHERE proposal_id = ? AND project_id = ?
@@ -150,7 +194,11 @@ export function approvePolicyProposal({ contextId, proposalId }, options = {}) {
         FROM project_policy p JOIN policy_revisions r ON r.revision_id = p.active_revision_id
         WHERE p.project_id = ?
       `).get(context.projectId);
-      if (!active || active.active_revision_id !== row.base_revision_id) {
+      if (
+        !active
+        || active.active_revision_id !== row.base_revision_id
+        || (row.base_profile_id && row.base_profile_id !== profile.profileId)
+      ) {
         store.db.prepare("UPDATE policy_proposals SET status = 'stale', decided_at = ? WHERE proposal_id = ?")
           .run(nowIso(), proposalId);
         advanceCursor(store, row);
@@ -200,6 +248,82 @@ export function rejectPolicyProposal({ contextId, proposalId }, options = {}) {
         .run(nowIso(), proposalId);
       advanceCursor(store, row);
       return { ...proposalResult({ ...row, status: "rejected" }), idempotent: false };
+    });
+  } finally {
+    ownedStore?.close();
+  }
+}
+
+export function rebasePolicyProposal({ contextId, proposalId }, options = {}) {
+  let ownedStore = null;
+  try {
+    const store = options.store || (ownedStore = new RouterStore(options.database ? { path: options.database } : {}));
+    const context = store.context({ cwd: options.cwd || process.cwd(), contextId });
+    const policy = store.ensurePolicy(context);
+    const profile = store.ensureScoringProfile(context);
+    return store.transaction(() => {
+      const row = store.db.prepare(`
+        SELECT * FROM policy_proposals
+        WHERE proposal_id = ? AND project_id = ?
+      `).get(proposalId, context.projectId);
+      if (!row) throw new Error("policy proposal was not found in the current project");
+      if (!["pending", "stale"].includes(row.status)) {
+        throw new Error(`policy proposal is ${row.status}`);
+      }
+      const existing = store.db.prepare(`
+        SELECT * FROM policy_proposals
+        WHERE project_id = ? AND category = ? AND status = 'pending'
+          AND proposal_id != ?
+      `).get(context.projectId, row.category, proposalId);
+      if (existing) throw new Error("category already has a pending policy proposal");
+      const timestamp = nowIso();
+      if (row.status === "pending") {
+        store.db.prepare(`
+          UPDATE policy_proposals SET status = 'stale', decided_at = ?
+          WHERE proposal_id = ?
+        `).run(timestamp, proposalId);
+      }
+      advanceCursor(store, row);
+      const rebasedId = randomUUID();
+      store.db.prepare(`
+        INSERT INTO policy_proposals(
+          proposal_id, project_id, category, delta, base_revision_id, start_seq, end_seq,
+          eligible_count, affected_count, context_count, failure_count, correction_count,
+          reasoning_retry_count, base_profile_id, kind, status, created_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'rebase', 'pending', ?)
+      `).run(
+        rebasedId,
+        context.projectId,
+        row.category,
+        Number(row.delta),
+        policy.revisionId,
+        Number(row.start_seq),
+        Number(row.end_seq),
+        Number(row.eligible_count),
+        Number(row.affected_count),
+        Number(row.context_count || 0),
+        Number(row.failure_count || 0),
+        Number(row.correction_count || 0),
+        Number(row.reasoning_retry_count || 0),
+        profile.profileId,
+        timestamp,
+      );
+      store.db.prepare(`
+        INSERT INTO learning_events(
+          event_id, project_id, event_type, profile_id, details_json, created_at
+        ) VALUES(?, ?, 'proposal_rebased', ?, ?, ?)
+      `).run(
+        randomUUID(),
+        context.projectId,
+        profile.profileId,
+        canonicalJson({ fromProposalId: proposalId, toProposalId: rebasedId }),
+        timestamp,
+      );
+      return {
+        ...proposalResult({ ...row, proposal_id: rebasedId, status: "pending", base_profile_id: profile.profileId }),
+        rebasedFrom: proposalId,
+        baseRevisionId: policy.revisionId,
+      };
     });
   } finally {
     ownedStore?.close();

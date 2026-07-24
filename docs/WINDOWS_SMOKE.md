@@ -1,6 +1,6 @@
 # Native Windows 11 smoke test
 
-This is the blocking manual Windows gate for `v0.3.1`. Run it in native Windows
+This is the blocking manual Windows gate for `v0.4.0`. Run it in native Windows
 11 with the Codex agent using PowerShell, not inside WSL2. WSL2 is a separate
 non-blocking smoke target.
 
@@ -13,7 +13,7 @@ Suggested handoff prompt:
 请完整读取 docs/WINDOWS_SMOKE.md，并在原生 Windows 11 + PowerShell 环境中按顺序执行。
 你负责检查前置条件、安装、hook 信任、route → bounded subagent → verification →
 outcome、隐私断言、升级/卸载/重装和 AGENTS marker。遇到 Stop conditions 中任一情况
-立即停止并按模板返回 FAIL。不要创建或推送 v0.3.1 tag，也不要调用 clear_project_data。
+立即停止并按模板返回 FAIL。不要创建或推送 v0.4.0 tag，也不要调用 clear_project_data。
 ```
 
 ## Pass criteria
@@ -64,7 +64,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/v031-luna-delegate-fix"
+$CandidateRef = "codex/v040-scoring-evolution"
 $SmokeRoot = Join-Path $env:TEMP ("Adaptive Router Windows 冒烟 " + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $SmokeRoot "source checkout"
 $Project = Join-Path $SmokeRoot "测试 project with spaces"
@@ -193,7 +193,9 @@ node --test test/normalize-lines.test.mjs
 
 After verification, call record_outcome exactly once for the delegated route.
 Use the returned verificationGate as gate, the actual escalation count, the
-actual retry count, userCorrection=false unless I corrected the result, and:
+actual retry count, a retryBreakdown with reasoning/environment/information/tooling
+counters that sum exactly to retries, userCorrection=false unless I corrected
+the result, and:
 - status=passed and failureType=null when the test passes;
 - otherwise status=failed with the factual enumerated failureType.
 
@@ -285,7 +287,23 @@ The route must return `continue` with `ROUTER_DISABLED`. Restore normal behavior
 router: auto session
 ```
 
-## 8. Exercise upgrade, uninstall, and wrappers
+## 8. Exercise scoring-evolution visibility
+
+In the same temporary project, ask Codex to call `get_learning_status`, then
+call `shadow_route_stage` for a risk-sensitive review using the active scoring
+definition. Confirm:
+
+- database version 3 is healthy and the active scoring profile is versioned;
+- learning status contains only redacted aggregates and enum/numeric fields;
+- shadow output reports `shadow: true` and `sideEffects: false`;
+- route, outcome, proposal, and learning-cursor counts do not change;
+- the completed smoke outcome includes all four `retryBreakdown` counters and
+  their sum equals `retries`.
+
+The automated suite covers destructive re-anchor, proposal rebase, and hard
+safety auto-rollback. Do not mutate the smoke project's active profile.
+
+## 9. Exercise upgrade, uninstall, and wrappers
 
 Exit the smoke task, then run the native lifecycle:
 
@@ -336,6 +354,13 @@ codex plugin marketplace list
 codex plugin list
 ```
 
+Confirm the wrapper output distinguishes the one-time v0.3.x → v0.4.0
+fresh-task transition from later compatible v0.4.x+ implementation updates.
+The automated `runtime-hot-upgrade.test.mjs` must have demonstrated one
+long-lived MCP process, concurrent old Hook shells, damaged-candidate
+quarantine, active-runtime rollback, and a path-free pointer. Hook JSON, skill,
+MCP-schema, or storage-contract changes remain explicit new-task boundaries.
+
 Start Codex again from a second temporary project without sending
 `router: global on` again:
 
@@ -352,7 +377,7 @@ Trust the current hook hash if Codex asks after reinstall, then send
 has its own automatic mode and root-model baseline. This confirms persistence
 across reinstall/restart and isolation of task-specific manual state.
 
-## 9. Report template
+## 10. Report template
 
 Return this completed template to the release maintainer:
 
@@ -366,6 +391,7 @@ Git version:
 Candidate ref:
 Candidate commit SHA:
 Native install: PASS | FAIL
+Compatible runtime hot-upgrade/rollback suite: PASS | FAIL
 UserPromptSubmit hook trusted/exercised: PASS | FAIL
 Stop hook trusted/exercised: PASS | FAIL
 Global automatic opt-in persisted across project/restart: PASS | FAIL
@@ -389,6 +415,9 @@ Manual-root blocked delegation: PASS | FAIL
 Effort-only visibility limitation acknowledged: PASS | FAIL
 Negative control prompt changed state: YES | NO
 Negative control route reason code:
+Learning status/database v3: PASS | FAIL
+Shadow scoring had zero lifecycle side effects: PASS | FAIL
+Typed retry breakdown: PASS | FAIL
 Native upgrade/uninstall: PASS | FAIL
 Wrapper install/upgrade/uninstall/reinstall: PASS | FAIL
 AGENTS marker inserted once and removed cleanly: PASS | FAIL

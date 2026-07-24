@@ -59,7 +59,7 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
     const responses = result.stdout.trim().split(/\r?\n/).map(JSON.parse);
     assert.equal(responses.length, 9);
     assert.equal(responses[0].error.code, -32700);
-    assert.equal(responses[1].result.serverInfo.version, "0.3.1");
+    assert.equal(responses[1].result.serverInfo.version, "0.4.0");
     const tools = responses[2].result.tools;
     assert.deepEqual(tools.map((tool) => tool.name), [
       "route_stage",
@@ -71,6 +71,10 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
       "approve_policy_proposal",
       "reject_policy_proposal",
       "rollback_policy",
+      "rebase_policy_proposal",
+      "get_learning_status",
+      "reanchor_scoring_profile",
+      "shadow_route_stage",
       "configure_router",
       "resolve_host_model_intent",
       "diagnose_router",

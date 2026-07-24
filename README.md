@@ -63,6 +63,21 @@ codex plugin marketplace remove adaptive-model-router
 
 Wrapper equivalents are `./install.sh upgrade`, `./install.sh uninstall`, `.\install.ps1 -Action Upgrade`, and `.\install.ps1 -Action Uninstall`.
 
+v0.4.0 introduces a stable launch shell for compatible runtime upgrades.
+After a v0.4.x-or-newer package is installed, an already-open task can pick up
+the newer Hook and MCP implementation on its next invocation without changing
+the root model or reopening the task. The pinned shell first checks the
+candidate's shell, tool, and storage contracts, runs isolated health probes,
+and atomically activates it; a failed candidate is quarantined and the previous
+runtime remains active.
+
+The v0.3.x to v0.4.0 transition still requires one new task because the v0.3
+shell did not contain this loader and its MCP contract was already fixed at
+task startup. Future changes to Hook definitions, skill instructions, MCP tool
+schemas, or the storage contract are intentionally treated as incompatible and
+also require Hook review and a new task. Compatible implementation-only
+updates do not.
+
 For Windows-specific setup and failure recovery, see
 [troubleshooting](docs/TROUBLESHOOTING.md). Release maintainers should use the
 [native Windows 11](docs/WINDOWS_SMOKE.md) and
@@ -134,11 +149,23 @@ Learning data is isolated per project in one SQLite database. Git worktrees shar
 
 Policy changes are proposals only:
 
-- `+5` after at least 12 new category outcomes with at least 4 failed, corrected, or retried outcomes;
-- `-5` after at least 20 new category outcomes with no failures, corrections, or retries;
+- `+5` after at least 12 eligible category outcomes across at least 4 task
+  contexts, with at least 4 failed, corrected, or reasoning-retried outcomes;
+- `-5` after at least 20 eligible category outcomes across at least 5 task
+  contexts, with no failures, corrections, or reasoning retries;
 - offsets are limited to `[-15, 15]`.
 
-Approval and rejection both advance the evidence window. Revisions are immutable, and repeated rollback walks backward through their parent chain.
+Explicit overrides, classifier-adjusted and escalated routes, unknown results,
+and environment/information/tooling failures do not anchor online learning.
+Every delegated route stores a prompt-free score snapshot so eligibility is
+auditable after restart.
+
+Approval and rejection both advance the evidence window. Revisions are
+immutable, and repeated rollback walks backward through their parent chain.
+Offline re-anchoring installs a manually confirmed, higher-version immutable
+scoring profile; it never auto-approves category offsets. Shadow scoring does
+not create routes or learning records. A hard risk-floor violation is the only
+automatic rollback trigger.
 
 ## Controls
 
@@ -164,6 +191,10 @@ npm test
 npm run validate
 npm run eval
 ```
+
+After using the Codex plugin cachebuster helper for a local build, run
+`npm run sync-runtime-version` before validation so `runtime.json` matches the
+cache version.
 
 The runtime has no third-party dependencies. Start with the
 [documentation index](docs/README.md), or go directly to
