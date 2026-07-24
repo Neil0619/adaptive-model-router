@@ -110,6 +110,16 @@ function manualRootContext(rootTask, contextId) {
   ].join("\n");
 }
 
+function disabledRoutingContext(rootTask, contextId) {
+  return [
+    "Adaptive Model Router automatic routing is disabled for this session.",
+    `Continue in the root task using ${rootLabel(rootTask)} and do not create an automatically routed subagent.`,
+    "Do not call route_stage for ordinary tasks while this override is active. If the user explicitly invokes the router, respect its ROUTER_DISABLED continue decision.",
+    contextIdInstruction(contextId),
+    "Quoted commands and ordinary discussion do not change router controls. The user can send '路由器：本任务自动' to clear this session override.",
+  ].join("\n");
+}
+
 function pendingChoiceReport(state, locale) {
   if (state.taskMode !== "pending_confirmation" || !state.pendingChange) return "";
   const change = state.pendingChange;
@@ -158,8 +168,12 @@ async function promptHook(input) {
         additionalContext(pendingIntentContext(state, contextId));
         return;
       }
-      if (state.taskMode === "manual_root" || disabled) {
+      if (state.taskMode === "manual_root") {
         additionalContext(manualRootContext(rootTask, contextId));
+        return;
+      }
+      if (disabled) {
+        additionalContext(disabledRoutingContext(rootTask, contextId));
         return;
       }
       additionalContext(automaticRoutingContext(rootTask, contextId));

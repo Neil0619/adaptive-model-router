@@ -689,6 +689,15 @@ test("router off keeps task mode automatic so the disabled override controls the
     assert.equal(runHook("prompt", { ...base, prompt: "router: manual" }, project.home).status, 0);
     assert.equal(runHook("prompt", { ...base, prompt: "router: auto session" }, project.home).status, 0);
     assert.equal(runHook("prompt", { ...base, prompt: "router: off" }, project.home).status, 0);
+    const ordinary = runHook(
+      "prompt",
+      { ...base, prompt: 'Explain why the quoted text "router: on" is not a control command.' },
+      project.home,
+    );
+    assert.equal(ordinary.status, 0, ordinary.stderr);
+    const ordinaryContext = JSON.parse(ordinary.stdout).hookSpecificOutput.additionalContext;
+    assert.match(ordinaryContext, /disabled for this session/i);
+    assert.doesNotMatch(ordinaryContext, /manual_root mode/i);
 
     await withRouterEnvironment(project, async () => {
       const store = new RouterStore();

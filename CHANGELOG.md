@@ -41,6 +41,9 @@ All notable changes to this project are documented here.
   model changes, child controls cannot mutate root-task state, recursive
   `route_stage` calls are forbidden, and the root retains Stop/outcome
   ownership.
+- Session-disabled routing now emits its own root-only context instead of
+  incorrectly presenting the task as `manual_root`; quoted control text
+  remains a no-op and live routes continue to report `ROUTER_DISABLED`.
 - Shadow scoring has no route, outcome, proposal, or cursor side effects.
 - Shadow output includes numeric before/after counts for all protected routing
   and learning tables, and derives its `sideEffects` flag from those counts.
