@@ -33,9 +33,10 @@ and canonical instead of duplicating full runbooks.
 
 ## Release process
 
-`v0.3.0` is released from a reviewed commit. CI must pass on Ubuntu, macOS, and
-Windows. A maintainer runs logged-in macOS and native Windows 11 end-to-end
-smoke tests, creates the signed tag, and lets the release workflow generate the
-source archive, SBOM, checksums, and provenance before advancing protected
-`stable`. Follow [docs/RELEASE.md](docs/RELEASE.md); use
+Each release is cut from a reviewed commit. CI must pass on Ubuntu, macOS, and
+Windows. The package, manifest, and release-workflow versions must remain in
+sync. A maintainer runs logged-in macOS and native Windows 11 end-to-end smoke
+tests, creates the signed tag, and lets the release workflow generate the source
+archive, SBOM, checksums, and provenance before advancing protected `stable`.
+Follow [docs/RELEASE.md](docs/RELEASE.md); use
 [docs/WINDOWS_SMOKE.md](docs/WINDOWS_SMOKE.md) for the Windows handoff.

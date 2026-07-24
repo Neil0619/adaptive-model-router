@@ -46,6 +46,7 @@ const packageJson = await json(join(pluginRoot, "package.json"));
 const runtimeDescriptor = parseRuntimeDescriptor(await json(join(pluginRoot, "runtime.json")));
 const marketplace = await json(join(repoRoot, ".agents", "plugins", "marketplace.json"));
 const hooks = await json(join(pluginRoot, "hooks", "hooks.json"));
+const releaseWorkflow = await readFile(join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
 const skill = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8");
 const skillUi = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "agents", "openai.yaml"), "utf8");
 assert(manifest.version.split("+")[0] === packageJson.version, "manifest base version and package version differ");
@@ -59,6 +60,26 @@ assert(runtimeDescriptor.entrypoints.service === "scripts/lib/service.mjs", "run
 assert(runtimeDescriptor.entrypoints.probe === "scripts/runtime-probe.mjs", "runtime probe entrypoint is invalid");
 assert(Array.isArray(manifest.interface?.defaultPrompt) && manifest.interface.defaultPrompt.length <= 3, "manifest interface.defaultPrompt must contain at most 3 prompts");
 assert(packageJson.version === "0.4.0", "release base version must be 0.4.0");
+const releaseTag = `v${packageJson.version}`;
+const releaseArtifact = `adaptive-model-router-${releaseTag}`;
+const releaseVersions = [...releaseWorkflow.matchAll(/\bv\d+\.\d+\.\d+\b/gu)].map(
+  (match) => match[0],
+);
+assert(releaseVersions.length > 0, "release workflow must pin a semantic release tag");
+assert(
+  releaseVersions.every((version) => version === releaseTag),
+  `release workflow must not reference a version other than ${releaseTag}`,
+);
+assert(
+  releaseWorkflow.includes(`if: github.ref_name == '${releaseTag}'`),
+  `release workflow must be gated to ${releaseTag}`,
+);
+for (const suffix of ["/", ".tar.gz", ".spdx.json"]) {
+  assert(
+    releaseWorkflow.includes(`${releaseArtifact}${suffix}`),
+    `release workflow must reference ${releaseArtifact}${suffix}`,
+  );
+}
 assert(packageJson.private === true, "package must remain private");
 assert(!packageJson.dependencies && !packageJson.devDependencies, "runtime must have no third-party dependencies");
 assert(!Object.hasOwn(manifest, "hooks"), "default hooks/hooks.json discovery should not be duplicated in the manifest");

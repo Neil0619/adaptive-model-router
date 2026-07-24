@@ -36,6 +36,9 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Release validation now binds the GitHub release workflow, archive, SBOM, and
+  provenance artifact names to the package version so stale release tags fail
+  before publication.
 - Compatible runtime probing and pointer activation are now single-flight
   across concurrent old Hook shells. A slow native-Windows process launch can
   no longer make parallel probes quarantine a healthy runtime or fall back to
