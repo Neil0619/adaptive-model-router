@@ -87,3 +87,42 @@ test("storage contract accepts additive future schemas and rejects incompatible 
     await project.cleanup();
   }
 });
+
+test("read-only inspection guards expire and are removed with project data", async () => {
+  const project = await temporaryProject();
+  const database = join(project.home, "router.sqlite3");
+  try {
+    const store = new RouterStore({ path: database });
+    const context = store.context({ cwd: project.root, contextId: "inspection" });
+    store.setInspectionGuard(context, { expiresAt: Date.now() + 60_000 });
+    assert.equal(store.inspectionGuardActive(context), true);
+    assert.equal(
+      Number(store.db.prepare(
+        "SELECT count(*) AS count FROM meta WHERE key LIKE 'inspection_guard:%'",
+      ).get().count),
+      1,
+    );
+
+    store.setInspectionGuard(context, { expiresAt: Date.now() - 1 });
+    assert.equal(store.inspectionGuardActive(context), false);
+    assert.equal(
+      Number(store.db.prepare(
+        "SELECT count(*) AS count FROM meta WHERE key LIKE 'inspection_guard:%'",
+      ).get().count),
+      0,
+    );
+
+    store.setInspectionGuard(context, { expiresAt: Date.now() + 60_000 });
+    store.clearProject(context);
+    assert.equal(store.inspectionGuardActive(context), false);
+    assert.equal(
+      Number(store.db.prepare(
+        "SELECT count(*) AS count FROM meta WHERE key LIKE 'inspection_guard:%'",
+      ).get().count),
+      0,
+    );
+    store.close();
+  } finally {
+    await project.cleanup();
+  }
+});

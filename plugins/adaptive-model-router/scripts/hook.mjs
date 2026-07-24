@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { parseControlPrompt } from "./lib/control.mjs";
+import { parseControlPrompt, parseReadOnlyInspectionPrompt } from "./lib/control.mjs";
 import { writeJsonLine } from "./lib/io.mjs";
 import { formatRouteHistory, formatRouteStatus } from "./lib/presentation.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
@@ -52,10 +52,22 @@ function automaticRoutingContext(rootTask, contextId) {
     "Adaptive Model Router global automatic activation is enabled for this local Codex task.",
     "For every meaningful substantive stage boundary, use the adaptive-model-router skill and call route_stage without requiring the user to mention the skill.",
     "Do not route greetings, simple questions, or messages with no work product merely to create a subagent.",
+    "Read-only router inspection is not a substantive stage. For get_route_status, get_route_history, list_policy_proposals, get_learning_status, diagnose_router, or shadow_route_stage requests, call only the requested inspection tool and never call route_stage merely to precede it.",
     `The active root-task model observed by the hook is ${rootLabel(rootTask)}; its reasoning effort remains visible only in the Codex composer.`,
     "The router must never change the root-task model or label a bounded subagent target as the root model.",
     contextIdInstruction(contextId),
     "After each route, show the unchanged root model, action or bounded target, effort, and routeId. For delegate only, verify the work and record exactly one outcome; continue and ask_user routes have no outcome.",
+  ].join("\n");
+}
+
+function inspectionContext(rootTask, contextId, tools) {
+  return [
+    "Read-only router inspection is active for this turn.",
+    `Call only the requested inspection tool${tools.length === 1 ? "" : "s"}: ${tools.join(", ")}.`,
+    "Do not call route_stage before or after the inspection. A live route is blocked for this inspection turn.",
+    "Do not create a subagent or record an outcome for a shadow preference.",
+    `The active root-task model observed by the hook is ${rootLabel(rootTask)}; it remains unchanged.`,
+    contextIdInstruction(contextId),
   ].join("\n");
 }
 
@@ -99,12 +111,18 @@ async function promptHook(input) {
   const store = new RouterStore();
   try {
     const context = store.context({ cwd: input.cwd || process.cwd(), contextId, authoritative: true });
+    const inspection = control ? null : parseReadOnlyInspectionPrompt(prompt);
+    if (inspection) store.setInspectionGuard(context);
+    else store.clearInspectionGuard(context);
     if (!control) {
       const settings = store.getSettings(context);
       if (settings.autoActivate !== true || settings.enabled !== true) {
         const state = store.hostModelState(context);
         if (state.taskMode === "pending_confirmation") store.cancelPendingHostModelIntent(context);
         store.observeHostModel(context, input.model, { detectChanges: false });
+        if (inspection) {
+          additionalContext(inspectionContext(store.rootTask(context), contextId, inspection.tools));
+        }
         return;
       }
       const resolved = store.resolveOverride(context, null, settings);
@@ -112,6 +130,10 @@ async function promptHook(input) {
       store.observeHostModel(context, input.model, { detectChanges: !disabled });
       const state = store.hostModelState(context);
       const rootTask = store.rootTask(context);
+      if (inspection) {
+        additionalContext(inspectionContext(rootTask, contextId, inspection.tools));
+        return;
+      }
       if (state.taskMode === "pending_confirmation") {
         additionalContext(pendingIntentContext(state, contextId));
         return;

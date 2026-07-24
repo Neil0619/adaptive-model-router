@@ -64,7 +64,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/v040-scoring-evolution"
+$CandidateRef = "codex/v040-shadow-inspection-fix"
 $SmokeRoot = Join-Path $env:TEMP ("Adaptive Router Windows 冒烟 " + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $SmokeRoot "source checkout"
 $Project = Join-Path $SmokeRoot "测试 project with spaces"
@@ -299,6 +299,21 @@ definition. Confirm:
 - route, outcome, proposal, and learning-cursor counts do not change;
 - the completed smoke outcome includes all four `retryBreakdown` counters and
   their sum equals `retries`.
+
+Use this exact prompt for the shadow check:
+
+```text
+This is read-only router inspection, not a substantive work-product stage.
+Call shadow_route_stage exactly once for a risk-sensitive review using the
+active scoring definition and the same current task contextId. Do not call
+route_stage before or after it, do not pass hostCapabilities, and do not create
+a subagent or record an outcome. Then call get_learning_status once more.
+Return only: shadow, sideEffects, preferred family/effort, active profile
+identity/version, and shadow_route_stage's stateCounts before/after object.
+```
+
+Stop immediately if a live route appears, any count changes, or the Stop hook
+requests an outcome for the shadow preference.
 
 The automated suite covers destructive re-anchor, proposal rebase, and hard
 safety auto-rollback. Do not mutate the smoke project's active profile.

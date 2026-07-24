@@ -1,7 +1,8 @@
 # Native macOS smoke test
 
 This is the blocking logged-in macOS gate for `v0.4.0`. Run it in Codex Desktop
-or CLI on native macOS against the frozen `codex/v040-scoring-evolution` ref.
+or CLI on native macOS against the frozen
+`codex/v040-shadow-inspection-fix` ref.
 Do not create or push the release tag from this smoke task.
 
 ## Pass criteria
@@ -25,7 +26,7 @@ Do not create or push the release tag from this smoke task.
 ## 1. Prepare a Unicode project and candidate checkout
 
 ```bash
-CandidateRef="codex/v040-scoring-evolution"
+CandidateRef="codex/v040-shadow-inspection-fix"
 SmokeRoot="$(mktemp -d)/Adaptive Router macOS 冒烟"
 Source="$SmokeRoot/source checkout"
 Project="$SmokeRoot/测试 project with spaces"
@@ -126,6 +127,22 @@ In the same temporary project:
    `retryBreakdown` whose sum equals `retries`.
 4. Rely on `npm test` for destructive profile re-anchor/rebase/automatic
    rollback fixtures; do not mutate the smoke project's active profile.
+
+For step 2, send this exact prompt. This is router inspection, not a live work
+stage:
+
+```text
+This is read-only router inspection, not a substantive work-product stage.
+Call shadow_route_stage exactly once for a risk-sensitive review using the
+active scoring definition and the same current task contextId. Do not call
+route_stage before or after it, do not pass hostCapabilities, and do not create
+a subagent or record an outcome. Then call get_learning_status once more.
+Return only: shadow, sideEffects, preferred family/effort, active profile
+identity/version, and shadow_route_stage's stateCounts before/after object.
+```
+
+Stop immediately if a live route appears, any count changes, or the Stop hook
+requests an outcome for the shadow preference.
 
 ## 6. Exercise lifecycle wrappers and persistence
 

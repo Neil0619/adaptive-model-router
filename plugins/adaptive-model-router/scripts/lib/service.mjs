@@ -152,7 +152,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: "shadow_route_stage",
-    description: "Score one stage against a supplied or active profile without creating a route, outcome, proposal, or learning cursor.",
+    description: "Score one stage against a supplied or active profile and return protected before/after state counts without creating a route, outcome, proposal, or learning cursor.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -281,8 +281,29 @@ function validateScoringDefinition(definition) {
   }
 }
 
+function shadowStateCounts(store, context) {
+  const currentContextCount = (table) => Number(store.db.prepare(`
+    SELECT count(*) AS count FROM ${table}
+    WHERE project_id = ? AND context_key = ?
+  `).get(context.projectId, context.contextKey).count);
+  const currentProjectCount = (table) => Number(store.db.prepare(`
+    SELECT count(*) AS count FROM ${table} WHERE project_id = ?
+  `).get(context.projectId).count);
+  return {
+    routes: currentContextCount("routes"),
+    outcomes: currentContextCount("outcomes"),
+    stopObservations: currentContextCount("stop_observations"),
+    proposals: currentProjectCount("policy_proposals"),
+    learningCursors: currentProjectCount("learning_cursors"),
+    policyRevisions: currentProjectCount("policy_revisions"),
+    scoringProfiles: currentProjectCount("scoring_profiles"),
+    scoreSnapshots: currentContextCount("route_score_snapshots"),
+  };
+}
+
 function shadowRoute(store, args, cwd) {
   const context = store.context({ cwd, contextId: args.contextId, create: false });
+  const before = shadowStateCounts(store, context);
   const policy = store.peekPolicy(context);
   const active = store.peekScoringProfile(context);
   const definition = args.definition || active.definition;
@@ -302,9 +323,11 @@ function shadowRoute(store, args, cwd) {
     && !scored.signals.risk
     && !scored.signals.security
     && !scored.signals.migration;
+  const after = shadowStateCounts(store, context);
   return {
     shadow: true,
-    sideEffects: false,
+    sideEffects: Object.keys(before).some((key) => before[key] !== after[key]),
+    stateCounts: { before, after },
     profileVersion: Number(definition.profileVersion || active.profileVersion),
     category: scored.category,
     baseScore: scored.baseScore,

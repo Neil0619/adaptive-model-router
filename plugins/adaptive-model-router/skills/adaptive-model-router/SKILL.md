@@ -69,6 +69,15 @@ The hook may observe the active root-model slug, but never its reasoning effort.
 
 Learning is project-local. A proposal never changes policy until the user explicitly calls `approve_policy_proposal`. Rejection advances the evidence window; rollback walks backward through immutable revisions. `get_learning_status` is read-only. `shadow_route_stage` must remain free of route/outcome/proposal/cursor writes. Rebase and offline scoring-profile re-anchor require an explicit user instruction; re-anchor also requires the exact confirmation. Do not approve, reject, rebase, re-anchor, roll back, import legacy settings, or clear project data without an explicit user instruction. The only automatic learning mutation beyond proposal creation is a hard risk-floor rollback.
 
+Read-only router inspection is not a substantive stage boundary. When the user
+requests `get_route_status`, `get_route_history`, `list_policy_proposals`,
+`get_learning_status`, `diagnose_router`, or `shadow_route_stage`, call only
+the requested inspection tool and do not call `route_stage` merely to precede
+it. In particular, call `shadow_route_stage` directly, do not create a
+subagent or outcome for its preference, and do not pass `hostCapabilities`;
+shadow scoring returns a preferred family/effort rather than a live bounded
+target.
+
 The auxiliary classifier receives only a redacted short summary, phase, and boolean signals. If it is disabled, local-only, timed out, or circuit-broken, use the deterministic route.
 
 Use `get_route_status` when the user asks which model is in use. Explain that the

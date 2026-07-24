@@ -1,5 +1,19 @@
 import { EFFORT_ORDER } from "./constants.mjs";
 
+export const READ_ONLY_INSPECTION_TOOLS = Object.freeze([
+  "get_route_status",
+  "get_route_history",
+  "list_policy_proposals",
+  "get_learning_status",
+  "diagnose_router",
+  "shadow_route_stage",
+]);
+
+const READ_ONLY_TOOL_PATTERN = new RegExp(
+  `(?:^|[^A-Za-z0-9_])(${READ_ONLY_INSPECTION_TOOLS.join("|")})(?=$|[^A-Za-z0-9_])`,
+  "gu",
+);
+
 const SCOPE_MAP = {
   once: "once",
   session: "session",
@@ -62,4 +76,19 @@ export function parseControl(text) {
 export function parseControlPrompt(prompt) {
   const text = controlText(String(prompt || ""));
   return text == null ? null : parseControl(text);
+}
+
+export function parseReadOnlyInspectionPrompt(prompt) {
+  const text = String(prompt || "").trimStart();
+  if (!text || /^(?:```|~~~|>)/u.test(text)) return null;
+  const tools = [...text.matchAll(READ_ONLY_TOOL_PATTERN)].map((match) => match[1]);
+  if (!tools.length) return null;
+  const declaresInspection =
+    /^this is (?:a )?read-only router inspection\b/iu.test(text)
+    || /^这是(?:一次)?只读路由器检查/u.test(text);
+  const directlyRequestsInspection =
+    /^(?:please\s+)?(?:call|invoke|run|use|get|show|inspect)\b/iu.test(text)
+    || /^(?:请)?(?:调用|运行|使用|查看|获取|显示|检查)/u.test(text);
+  if (!declaresInspection && !directlyRequestsInspection) return null;
+  return { tools: [...new Set(tools)] };
 }

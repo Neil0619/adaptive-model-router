@@ -225,6 +225,18 @@ function escalationPlan(previous, evidence, desired) {
 
 async function routeWithStore(input, options, store) {
   validateRouteInput(input);
+  const inspectionContext = store.context({
+    cwd: options.cwd || process.cwd(),
+    contextId: input.contextId,
+    create: false,
+  });
+  if (store.inspectionGuardActive(inspectionContext)) {
+    const error = new Error(
+      "route_stage is unavailable during an explicit read-only router inspection; call only the requested inspection tool",
+    );
+    error.code = "INVALID_INPUT";
+    throw error;
+  }
   const context = store.context({ cwd: options.cwd || process.cwd(), contextId: input.contextId });
   const settings = store.getSettings(context);
   const hostState = store.hostModelState(context);

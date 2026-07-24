@@ -5,9 +5,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { RouterStore } from "../scripts/lib/database.mjs";
-import { parseControlPrompt } from "../scripts/lib/control.mjs";
+import { parseControlPrompt, parseReadOnlyInspectionPrompt } from "../scripts/lib/control.mjs";
 import { recordOutcome } from "../scripts/lib/learning.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
+import { callRouterTool } from "../scripts/lib/service.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -64,6 +65,35 @@ test("only exact complete control prefixes and known commands parse", () => {
     "router: history two",
     "router: history 5 extra",
   ]) assert.equal(parseControlPrompt(prompt), null, prompt);
+});
+
+test("only explicit direct read-only inspection requests activate the inspection guard", () => {
+  assert.deepEqual(
+    parseReadOnlyInspectionPrompt(
+      "This is read-only router inspection, not a substantive work-product stage.\n"
+      + "Call shadow_route_stage exactly once, then call get_learning_status.",
+    ),
+    { tools: ["shadow_route_stage", "get_learning_status"] },
+  );
+  assert.deepEqual(
+    parseReadOnlyInspectionPrompt("请调用 shadow_route_stage，并查看 get_learning_status。"),
+    { tools: ["shadow_route_stage", "get_learning_status"] },
+  );
+  assert.deepEqual(
+    parseReadOnlyInspectionPrompt("Call list_policy_proposals for the current project."),
+    { tools: ["list_policy_proposals"] },
+  );
+  for (const prompt of [
+    "Discuss whether to call shadow_route_stage.",
+    "Do not call shadow_route_stage.",
+    "Please do not call shadow_route_stage.",
+    "> Call shadow_route_stage.",
+    "```\nCall shadow_route_stage.\n```",
+    "Implement shadow_route_stage and add tests.",
+    "Fix shadow_route_stage because it writes a route.",
+    "The docs say: Call shadow_route_stage.",
+    "不要调用 shadow_route_stage。",
+  ]) assert.equal(parseReadOnlyInspectionPrompt(prompt), null, prompt);
 });
 
 test("global automatic activation is opt-in, crosses projects, and detects later root-model changes", async () => {
@@ -204,6 +234,216 @@ test("global automatic activation is opt-in, crosses projects, and detects later
       assert.equal(store.hostModelState(context).taskMode, "automatic");
       assert.equal(store.getSettings(context).autoActivate, false);
       assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM host_model_changes WHERE status = 'cancelled'").get().count), 1);
+      store.close();
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("automatic routing treats shadow scoring as read-only and leaves Stop lifecycle untouched", async () => {
+  const project = await temporaryProject("adaptive shadow hook ");
+  try {
+    const base = {
+      cwd: project.root,
+      session_id: "shadow-hook-session",
+      model: "gpt-5.6-sol",
+    };
+    assert.equal(
+      runHook("prompt", { ...base, prompt: "router: global on" }, project.home).status,
+      0,
+    );
+    const prompt = "Call shadow_route_stage exactly once for a risk-sensitive review.";
+    const submitted = runHook("prompt", { ...base, prompt }, project.home);
+    assert.equal(submitted.status, 0, submitted.stderr);
+    const context = JSON.parse(submitted.stdout).hookSpecificOutput.additionalContext;
+    assert.match(context, /Read-only router inspection/);
+    assert.match(context, /Do not call route_stage before or after the inspection/);
+    assert.doesNotMatch(context, new RegExp(prompt));
+
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      const counts = () => Object.fromEntries(
+        [
+          "routes",
+          "outcomes",
+          "stop_observations",
+          "learning_cursors",
+          "policy_proposals",
+          "policy_revisions",
+          "scoring_profiles",
+          "route_score_snapshots",
+          "learning_events",
+        ].map((table) => [
+          table,
+          Number(store.db.prepare(`SELECT count(*) AS count FROM ${table}`).get().count),
+        ]),
+      );
+      const before = counts();
+      let firstError;
+      await assert.rejects(
+        callRouterTool("route_stage", routeInput({
+          contextId: base.session_id,
+          goal: "Score a risk-sensitive public contract review.",
+          phase: "review",
+          evidence: { workProduct: true, review: true, highRisk: true },
+        }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } }),
+        (error) => {
+          firstError = error;
+          return /read-only router inspection/i.test(error.message);
+        },
+      );
+      assert.doesNotMatch(firstError.message, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      assert.doesNotMatch(firstError.message, new RegExp(base.session_id));
+      await assert.rejects(
+        callRouterTool("route_stage", routeInput({
+          contextId: base.session_id,
+          goal: "Try the live route a second time.",
+          phase: "review",
+          evidence: { workProduct: true, review: true, highRisk: true },
+        }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } }),
+        /read-only router inspection/i,
+      );
+      assert.deepEqual(counts(), before);
+      const shadow = await callRouterTool("shadow_route_stage", {
+        contextId: base.session_id,
+        goal: "Review a risk-sensitive public contract.",
+        phase: "review",
+        evidence: { workProduct: true, review: true, highRisk: true },
+      }, { store, cwd: project.root });
+      assert.equal(shadow.shadow, true);
+      assert.equal(shadow.sideEffects, false);
+      assert.deepEqual(shadow.stateCounts.before, shadow.stateCounts.after);
+      assert.deepEqual(counts(), before);
+      const meta = JSON.stringify(store.db.prepare("SELECT key, value FROM meta").all());
+      assert.doesNotMatch(meta, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      assert.doesNotMatch(meta, new RegExp(base.session_id));
+      assert.doesNotMatch(meta, new RegExp(prompt));
+      store.close();
+    });
+
+    const stopped = runHook("stop", {
+      ...base,
+      stop_hook_active: false,
+    }, project.home);
+    assert.equal(stopped.status, 0, stopped.stderr);
+    assert.equal(stopped.stdout, "");
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      assert.equal(
+        Number(store.db.prepare("SELECT count(*) AS count FROM stop_observations").get().count),
+        0,
+      );
+      store.close();
+    });
+
+    const nextPrompt = runHook("prompt", {
+      ...base,
+      prompt: "Answer a simple question with no work product.",
+    }, project.home);
+    assert.equal(nextPrompt.status, 0, nextPrompt.stderr);
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      const route = await callRouterTool("route_stage", routeInput({
+        contextId: base.session_id,
+        goal: "Answer a simple question.",
+        phase: "answer",
+        evidence: { workProduct: false },
+      }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } });
+      assert.equal(route.action, "continue");
+      assert.equal(store.inspectionGuardActive(
+        store.context({ cwd: project.root, contextId: base.session_id }),
+      ), false);
+      store.close();
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("proposal listing is guarded as read-only inspection", async () => {
+  const project = await temporaryProject("adaptive proposal inspection ");
+  try {
+    const base = {
+      cwd: project.root,
+      session_id: "proposal-inspection",
+      model: "gpt-5.6-sol",
+    };
+    assert.equal(
+      runHook("prompt", { ...base, prompt: "router: global on" }, project.home).status,
+      0,
+    );
+    const submitted = runHook("prompt", {
+      ...base,
+      prompt: "Call list_policy_proposals for the current project.",
+    }, project.home);
+    assert.equal(submitted.status, 0, submitted.stderr);
+    const context = JSON.parse(submitted.stdout).hookSpecificOutput.additionalContext;
+    assert.match(context, /Read-only router inspection/);
+    assert.match(context, /list_policy_proposals/);
+    assert.doesNotMatch(context, /global automatic activation is enabled/);
+
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      await assert.rejects(
+        callRouterTool("route_stage", routeInput({
+          contextId: base.session_id,
+          goal: "Do not create a live route before listing proposals.",
+        }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } }),
+        /read-only router inspection/i,
+      );
+      const proposals = await callRouterTool("list_policy_proposals", {
+        contextId: base.session_id,
+      }, { store, cwd: project.root });
+      assert.deepEqual(proposals, []);
+      assert.equal(
+        Number(store.db.prepare("SELECT count(*) AS count FROM routes").get().count),
+        0,
+      );
+      store.close();
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("concurrent inspection hooks create one guard and never permit a live route", async () => {
+  const project = await temporaryProject("adaptive inspection concurrent ");
+  try {
+    const base = {
+      cwd: project.root,
+      session_id: "parallel-inspection",
+      model: "gpt-5.6-sol",
+    };
+    assert.equal(
+      runHook("prompt", { ...base, prompt: "router: global on" }, project.home).status,
+      0,
+    );
+    const prompts = await Promise.all(Array.from({ length: 20 }, () => runHookAsync("prompt", {
+      ...base,
+      prompt: "Call shadow_route_stage exactly once for a read-only review.",
+    }, project.home)));
+    assert.equal(prompts.every((result) => result.status === 0), true);
+
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      assert.equal(
+        Number(store.db.prepare(
+          "SELECT count(*) AS count FROM meta WHERE key LIKE 'inspection_guard:%'",
+        ).get().count),
+        1,
+      );
+      await assert.rejects(
+        callRouterTool("route_stage", routeInput({
+          contextId: base.session_id,
+          goal: "Attempt a live route after concurrent inspection hooks.",
+        }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } }),
+        /read-only router inspection/i,
+      );
+      assert.equal(
+        Number(store.db.prepare("SELECT count(*) AS count FROM routes").get().count),
+        0,
+      );
       store.close();
     });
   } finally {

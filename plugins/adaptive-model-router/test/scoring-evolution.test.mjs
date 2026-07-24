@@ -125,6 +125,17 @@ test("shadow scoring is deterministic and creates no route, outcome, proposal, o
       }, { store, cwd: project.root });
       assert.equal(result.shadow, true);
       assert.equal(result.sideEffects, false);
+      assert.deepEqual(result.stateCounts.before, result.stateCounts.after);
+      assert.deepEqual(result.stateCounts.before, {
+        routes: 0,
+        outcomes: 0,
+        stopObservations: 0,
+        proposals: 0,
+        learningCursors: 0,
+        policyRevisions: 0,
+        scoringProfiles: 0,
+        scoreSnapshots: 0,
+      });
       assert.deepEqual(result.preferred, { action: "delegate", family: "sol", effort: "max" });
       const after = {
         projects: Number(store.db.prepare("SELECT count(*) AS count FROM projects").get().count),

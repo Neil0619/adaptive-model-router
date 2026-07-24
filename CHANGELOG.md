@@ -37,6 +37,13 @@ All notable changes to this project are documented here.
 ### Changed
 
 - Shadow scoring has no route, outcome, proposal, or cursor side effects.
+- Shadow output includes numeric before/after counts for all protected routing
+  and learning tables, and derives its `sideEffects` flag from those counts.
+- Explicit read-only router-inspection turns now suppress the generic automatic
+  routing instruction and use a short-lived context guard that rejects an
+  accidental live `route_stage` call before it can persist a route. This
+  covers status, history, proposal listing, learning status, diagnostics, and
+  shadow scoring.
 - Proposal status now reports distinct-context, failure, correction, and
   reasoning-retry counts. Rebase keeps the proposal delta while advancing the
   old evidence cursor.
