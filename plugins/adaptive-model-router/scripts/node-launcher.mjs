@@ -44,6 +44,14 @@ function childEnvironment() {
   return env;
 }
 
+function runtimeSelectionFailureCategory(error) {
+  if (error?.message === "runtime pointer is busy") return "pointer_busy";
+  if (["EACCES", "EBUSY", "EEXIST", "ENOENT", "EPERM"].includes(error?.code)) {
+    return `pointer_${error.code.toLowerCase()}`;
+  }
+  return "selection_failed";
+}
+
 if (!target) {
   process.stderr.write(failure);
   emitDiagnostic({ component: "launcher", stage, category: "missing_target", startedAt });
@@ -107,11 +115,13 @@ try {
   } else if (launchEnv.ADAPTIVE_ROUTER_RUNTIME_TRACE === "1") {
     process.stderr.write("Adaptive Model Router runtime=unmapped\n");
   }
-} catch {
+} catch (error) {
   // A damaged optional hot-runtime candidate must not block the pinned shell.
   resolvedTarget = target;
   if (launchEnv.ADAPTIVE_ROUTER_RUNTIME_TRACE === "1") {
-    process.stderr.write("Adaptive Model Router runtime=pinned\n");
+    process.stderr.write(
+      `Adaptive Model Router runtime=pinned category=${runtimeSelectionFailureCategory(error)}\n`,
+    );
   }
 }
 

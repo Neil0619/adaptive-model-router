@@ -1,14 +1,12 @@
 import { randomBytes } from "node:crypto";
 import {
-  closeSync,
   existsSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   statSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -204,6 +202,15 @@ function atomicWritePointer(value, env = process.env) {
   return true;
 }
 
+function removePointerLock(lockPath) {
+  rmSync(lockPath, {
+    recursive: true,
+    force: true,
+    maxRetries: 20,
+    retryDelay: 10,
+  });
+}
+
 function withPointerLock(env, action, timeoutMs = POINTER_LOCK_TIMEOUT_MS) {
   const path = pointerPath(env);
   if (!path) return action();
@@ -211,15 +218,16 @@ function withPointerLock(env, action, timeoutMs = POINTER_LOCK_TIMEOUT_MS) {
   const lockPath = join(directory, ".active.lock");
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const deadline = Date.now() + timeoutMs;
-  let descriptor;
-  while (descriptor === undefined) {
+  let acquired = false;
+  while (!acquired) {
     try {
-      descriptor = openSync(lockPath, "wx", 0o600);
+      mkdirSync(lockPath, { mode: 0o700 });
+      acquired = true;
     } catch (error) {
       if (error?.code !== "EEXIST") throw error;
       try {
         if (Date.now() - statSync(lockPath).mtimeMs > POINTER_STALE_LOCK_MS) {
-          unlinkSync(lockPath);
+          removePointerLock(lockPath);
           continue;
         }
       } catch (staleError) {
@@ -232,12 +240,7 @@ function withPointerLock(env, action, timeoutMs = POINTER_LOCK_TIMEOUT_MS) {
   try {
     return action();
   } finally {
-    closeSync(descriptor);
-    try {
-      unlinkSync(lockPath);
-    } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
-    }
+    removePointerLock(lockPath);
   }
 }
 
