@@ -75,10 +75,11 @@ assert(skill.includes("root-task model is unchanged and host-managed"), "skill m
 assert(skill.includes("global automatic activation"), "skill must document opt-in automatic activation");
 assert(skill.includes("`resolve_host_model_intent`"), "skill must document host-model intent resolution");
 assert(skill.includes("`get_route_history`"), "skill must expose the route history workflow");
+assert(skill.includes("already a bounded subagent"), "skill must prevent recursive subagent routing");
 assert(skillUi.includes("$adaptive-model-router"), "skill default prompt must explicitly invoke $adaptive-model-router");
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "get_route_history"), "MCP must expose get_route_history");
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "resolve_host_model_intent"), "MCP must expose host-model intent resolution");
-for (const event of ["UserPromptSubmit", "Stop"]) {
+for (const event of ["SubagentStart", "UserPromptSubmit", "Stop"]) {
   const command = hooks.hooks?.[event]?.[0]?.hooks?.[0];
   assert(typeof command?.commandWindows === "string", `${event} must define commandWindows`);
   assert(command.commandWindows.includes("process.env.PLUGIN_ROOT"), `${event} Windows command must read PLUGIN_ROOT inside Node`);

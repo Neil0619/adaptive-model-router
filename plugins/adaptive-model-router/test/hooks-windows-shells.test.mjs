@@ -24,6 +24,17 @@ test("exact Windows hook commands run through cmd.exe and Windows PowerShell", {
     const config = JSON.parse(await readFile(join(pluginRoot, "hooks", "hooks.json"), "utf8"));
     const cases = [
       {
+        event: "SubagentStart",
+        input: {
+          cwd: projectCwd,
+          session_id: "shell-subagent",
+          turn_id: "shell-subagent-turn",
+          agent_id: "shell-agent",
+          agent_type: "worker",
+          model: "gpt-5.6-terra",
+        },
+      },
+      {
         event: "UserPromptSubmit",
         input: { cwd: projectCwd, session_id: "shell-prompt", model: "gpt-5.6-sol", prompt: "Inspect Unicode 中文 paths." },
       },

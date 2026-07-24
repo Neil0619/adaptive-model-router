@@ -22,11 +22,13 @@ The smoke passes only when all of the following succeed:
 
 - installation from the frozen reviewed candidate ref with the two native
   Codex commands while published `stable` remains on v0.3.0;
-- review and trust of both plugin-bundled command hooks;
+- review and trust of all three plugin-bundled command hooks;
 - one persisted global automatic-routing opt-in and an ordinary substantive
   task that does not name the skill or repeat a trigger phrase;
 - one substantive `delegate` route and exactly one bounded subagent using the
   returned model and effort;
+- bounded-subagent isolation: no recursive route, root-model intent event,
+  control mutation, or child-owned outcome;
 - host capabilities containing only Sol/Terra never return Luna as the bounded
   target; explicit Luna returns `ask_user` without starting a subagent;
 - root verification followed by one strict final outcome;
@@ -115,9 +117,10 @@ codex
 In the new task:
 
 1. Open `/hooks`.
-2. Review and trust the plugin's `UserPromptSubmit` handler.
-3. Review and trust the plugin's `Stop` handler.
-4. Do not use `--dangerously-bypass-hook-trust`.
+2. Review and trust the plugin's `SubagentStart` handler.
+3. Review and trust the plugin's `UserPromptSubmit` handler.
+4. Review and trust the plugin's `Stop` handler.
+5. Do not use `--dangerously-bypass-hook-trust`.
 
 If the plugin or hooks are not visible, restart the ChatGPT desktop app and
 start another new task. If they remain unavailable, stop and report the failure.
@@ -187,6 +190,12 @@ scope above. Do not create overlapping writers.
 If route_stage returns continue or ask_user, do not force delegation. Stop and
 report the complete redacted route result because the smoke gate did not reach
 the required bounded-subagent path.
+
+The child must receive the bounded-subagent isolation instruction and execute
+only the assigned stage. If it calls `route_stage`, asks whether the Terra/Sol
+child model is a manual root-model change, mutates a router control, or owns
+`record_outcome`, stop and report a failure. The parent root task alone
+verifies the result and records the route outcome.
 
 The root task must review and integrate the delegated work, then run:
 node --test test/normalize-lines.test.mjs
@@ -408,6 +417,7 @@ Candidate commit SHA:
 Native install: PASS | FAIL
 Compatible runtime hot-upgrade/rollback suite: PASS | FAIL
 UserPromptSubmit hook trusted/exercised: PASS | FAIL
+SubagentStart hook trusted/exercised: PASS | FAIL
 Stop hook trusted/exercised: PASS | FAIL
 Global automatic opt-in persisted across project/restart: PASS | FAIL
 First model observation created no pending event: PASS | FAIL

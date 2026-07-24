@@ -78,7 +78,8 @@ Run the complete route lifecycle once on macOS and once on native Windows 11:
 
 1. Install from the frozen candidate ref with the two native Codex commands;
    published `stable` remains on v0.3.1 until all smoke evidence passes.
-2. Review and trust the plugin's `UserPromptSubmit` and `Stop` handlers.
+2. Review and trust the plugin's `SubagentStart`, `UserPromptSubmit`, and
+   `Stop` handlers.
 3. Send `router: global on` once, restart into a new project/task, and confirm
    the setting persists without repeating the command.
 4. Submit an ordinary substantive task that does not name the skill or include

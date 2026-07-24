@@ -7,6 +7,13 @@ description: Choose whether a substantive Codex task stage should continue local
 
 Use the router at a meaningful stage boundary, not before every message. It does not change the root task model. It can recommend one bounded subagent model and reasoning effort while the root remains the orchestrator. A trusted plugin hook may automatically activate this workflow globally, so a user does not need to mention the skill on every substantive task.
 
+This routing workflow belongs to the root task only. If the current agent is
+already a bounded subagent, execute only the parent's assigned scope and return
+the result. Do not call `route_stage` or `shadow_route_stage`, change router
+controls or root-model intent, spawn another routed subagent, or call
+`record_outcome`; the parent root task owns routing, verification, and outcome
+recording.
+
 ## Route a stage
 
 1. Call `route_stage` with:

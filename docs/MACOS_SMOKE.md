@@ -11,6 +11,9 @@ Do not create or push the release tag from this smoke task.
 - Global automatic activation persists across a new project/task.
 - An ordinary substantive prompt, without a skill trigger phrase, produces one
   `delegate` route, one bounded subagent, root verification, and one outcome.
+- The bounded subagent receives the isolation context, completes only its
+  assigned scope, and never creates a pending root-model event or recursively
+  calls `route_stage`.
 - A Sol/Terra-only bounded capability never returns Luna; an explicit Luna
   override asks the user without starting a subagent.
 - The Codex model selector remains the root model while Subagents shows the
@@ -69,7 +72,8 @@ codex plugin add adaptive-model-router@adaptive-model-router
 ```
 
 Open `$Project` in Codex, start a new task, review `/hooks`, and trust the
-current `UserPromptSubmit` and `Stop` definitions. Never bypass Hook trust.
+current `SubagentStart`, `UserPromptSubmit`, and `Stop` definitions. Never
+bypass Hook trust.
 
 Send `router: global on` once, then `router: status`. Confirm global automatic
 activation is on, task mode is automatic, and the first observed model only
@@ -85,7 +89,9 @@ The result must include one `delegate` route, exactly one bounded subagent using
 the returned model and `reasoning_effort`, successful root verification, and
 exactly one strict `record_outcome`. Confirm the Codex model selector still
 shows the root task during delegation; inspect the Subagents view for the
-bounded target.
+bounded target. The subagent must execute only its assigned scope and return to
+the root without calling `route_stage`, asking for a manual/automatic decision,
+or creating a host-model change event.
 
 Run `router: status` and `router: history 10`. Each route must distinguish its
 root-model snapshot from its bounded target. Run `diagnose_router` with the same

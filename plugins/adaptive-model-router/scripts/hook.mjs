@@ -26,9 +26,9 @@ function readInput() {
   });
 }
 
-function additionalContext(message) {
+function additionalContext(message, hookEventName = "UserPromptSubmit") {
   writeJsonLine(process.stdout, {
-    hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: message },
+    hookSpecificOutput: { hookEventName, additionalContext: message },
   });
 }
 
@@ -45,6 +45,22 @@ function rootLabel(rootTask) {
 
 function contextIdInstruction(contextId) {
   return `Use ${JSON.stringify(contextId)} as the contextId argument for every Adaptive Model Router MCP call in the current task and never substitute cwd/project paths.`;
+}
+
+function isBoundedSubagent(input) {
+  return [input.agent_id, input.agent_type].some(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
+}
+
+function boundedSubagentContext() {
+  return [
+    "Adaptive Model Router: this agent is already a bounded subagent selected by its parent root task.",
+    "Execute only the bounded work assigned by the parent and return the result to that parent.",
+    "Never call route_stage, shadow_route_stage, resolve_host_model_intent, configure_router, learning-policy tools, or spawn another routed subagent.",
+    "Do not interpret this subagent model as the root-task model and do not change router controls or root-model intent state.",
+    "The parent root task owns route reporting, verification, record_outcome, and the routed-stage Stop lifecycle.",
+  ].join("\n");
 }
 
 function automaticRoutingContext(rootTask, contextId) {
@@ -103,6 +119,10 @@ function pendingChoiceReport(state, locale) {
 }
 
 async function promptHook(input) {
+  if (isBoundedSubagent(input)) {
+    additionalContext(boundedSubagentContext());
+    return;
+  }
   const prompt = String(input.prompt || "");
   const control = parseControlPrompt(prompt);
   const locale = prompt.startsWith("路由器：") ? "zh" : "en";
@@ -226,6 +246,7 @@ async function promptHook(input) {
 }
 
 async function stopHook(input) {
+  if (isBoundedSubagent(input)) return;
   const contextId = String(input.session_id || input.turn_id || "");
   if (!contextId) return;
   const store = new RouterStore();
@@ -243,6 +264,10 @@ async function stopHook(input) {
   }
 }
 
+function subagentStartHook() {
+  additionalContext(boundedSubagentContext(), "SubagentStart");
+}
+
 const startedAt = Date.now();
 let stage = "runtime";
 
@@ -258,6 +283,9 @@ try {
   } else if (process.argv[2] === "stop") {
     stage = "stop";
     await stopHook(input);
+  } else if (process.argv[2] === "subagent-start") {
+    stage = "subagent_start";
+    subagentStartHook();
   }
 } catch (error) {
   process.stderr.write("Adaptive Model Router hook failed safely.\n");

@@ -63,6 +63,12 @@ model-visible routing instruction plus minimized root-model state. It does not
 copy the user's task text. A pending model-intent reminder contains validated
 model slugs and an opaque change ID, never the prompt or reasoning effort.
 
+For bounded subagents, `SubagentStart` and subagent-marked prompt hooks emit
+only a fixed isolation instruction. It contains no prompt, model slug, agent
+identifier, agent type, path, or transcript location. Those hooks do not write
+root-model observations, control state, route rows, outcomes, or Stop
+observations.
+
 `get_route_history` and the `router: history` / `路由器：历史` reports use only
 the already-minimized route and outcome rows. They expose route timestamps,
 model/effort targets, transitions, reason codes, and outcomes for the current

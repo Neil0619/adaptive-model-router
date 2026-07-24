@@ -20,8 +20,8 @@ codex plugin add adaptive-model-router@adaptive-model-router
 ```
 
 安装后请启动一个新任务，打开 `/hooks`，分别审阅并信任插件提供的
-`UserPromptSubmit` 和 `Stop` 命令处理器。如果 ChatGPT 桌面端仍显示旧的
-插件状态，请重启应用并再创建一个新任务。
+`SubagentStart`、`UserPromptSubmit` 和 `Stop` 命令处理器。如果 ChatGPT
+桌面端仍显示旧的插件状态，请重启应用并再创建一个新任务。
 
 自动路由需要明确开启。在这个新任务中单独发送一次以下命令，即可为共享同一插件
 数据的所有本地 Codex 项目开启默认自动路由：
@@ -83,6 +83,11 @@ Windows 环境问题参见[故障排查](docs/TROUBLESHOOTING.md)。发布维护
 全局自动开启后，受信任的 `UserPromptSubmit` hook 会为普通任务加入一小段工作流
 上下文。Codex 会在实质性阶段自动使用路由器，不再要求每次写
 `$adaptive-model-router`；问候和不产生工作产物的简单问题仍由根任务直接处理。
+
+根任务创建 bounded subagent 后，`SubagentStart` 和子代理自己的 prompt hook
+会把自动路由指令替换成固定的隔离指令。子代理只执行父任务分配的阶段：不观察根
+模型意图、不修改路由控制、不再次调用 `route_stage`，也不负责 route outcome。
+验证和 `record_outcome` 始终由根任务完成。
 
 `route_stage` 只返回三种动作：
 

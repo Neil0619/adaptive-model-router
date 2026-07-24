@@ -20,9 +20,9 @@ codex plugin add adaptive-model-router@adaptive-model-router
 ```
 
 After installation, start a new task. Open `/hooks`, review the plugin-bundled
-`UserPromptSubmit` and `Stop` command handlers, and trust their current
-definitions. If the ChatGPT desktop app still shows stale plugin state, restart
-the app and start another new task.
+`SubagentStart`, `UserPromptSubmit`, and `Stop` command handlers, and trust
+their current definitions. If the ChatGPT desktop app still shows stale plugin
+state, restart the app and start another new task.
 
 Automatic routing is opt-in. In that new task, send this standalone control
 once to enable it for all local Codex projects sharing the same plugin data:
@@ -91,6 +91,12 @@ adds a small workflow instruction to ordinary prompts. Codex then uses the
 router at substantive stage boundaries without requiring a
 `$adaptive-model-router` mention. Greetings and simple no-work-product prompts
 still stay in the root task without creating a subagent.
+
+Once the root creates a bounded subagent, `SubagentStart` and the subagent's
+prompt hook replace that automatic instruction with a fixed isolation
+instruction. The child executes only its assigned stage: it does not observe
+root-model intent, change router controls, call `route_stage` again, or own the
+route outcome. Verification and `record_outcome` remain in the root task.
 
 `route_stage` returns one contract:
 

@@ -285,6 +285,140 @@ test("global automatic activation is opt-in, crosses projects, and detects later
   }
 });
 
+test("bounded subagent hooks never recurse into routing or mutate root-task state", async () => {
+  const project = await temporaryProject("adaptive bounded subagent 隔离 ");
+  try {
+    const root = {
+      cwd: project.root,
+      session_id: "parent-session",
+      model: "gpt-5.6-luna",
+    };
+    assert.equal(
+      runHook("prompt", { ...root, prompt: "router: global on" }, project.home).status,
+      0,
+    );
+    assert.equal(
+      runHook("prompt", { ...root, prompt: "Implement the parent stage." }, project.home).status,
+      0,
+    );
+
+    const child = {
+      ...root,
+      model: "gpt-5.6-terra",
+    };
+    const submitted = runHook("prompt", {
+      ...child,
+      agent_id: "agent-secret-identifier",
+      prompt: "Implement only the delegated bounded stage.",
+    }, project.home);
+    assert.equal(submitted.status, 0, submitted.stderr);
+    const submittedOutput = JSON.parse(submitted.stdout);
+    assert.equal(
+      submittedOutput.hookSpecificOutput.hookEventName,
+      "UserPromptSubmit",
+    );
+    const boundedContext = submittedOutput.hookSpecificOutput.additionalContext;
+    assert.match(boundedContext, /already a bounded subagent/i);
+    assert.match(boundedContext, /never call route_stage/i);
+    assert.doesNotMatch(boundedContext, /global automatic activation is enabled/i);
+    assert.doesNotMatch(boundedContext, /unresolved active root-model change/i);
+    assert.doesNotMatch(
+      boundedContext,
+      /agent-secret-identifier|worker-secret-type|gpt-5\.6-terra|Implement only/,
+    );
+
+    const started = runHook("subagent-start", {
+      ...child,
+      agent_id: "agent-secret-identifier",
+      agent_type: "worker-secret-type",
+      hook_event_name: "SubagentStart",
+      turn_id: "child-turn",
+    }, project.home);
+    assert.equal(started.status, 0, started.stderr);
+    const startedOutput = JSON.parse(started.stdout);
+    assert.equal(
+      startedOutput.hookSpecificOutput.hookEventName,
+      "SubagentStart",
+    );
+    assert.match(startedOutput.hookSpecificOutput.additionalContext, /already a bounded subagent/i);
+    assert.doesNotMatch(
+      startedOutput.hookSpecificOutput.additionalContext,
+      /agent-secret-identifier|worker-secret-type|gpt-5\.6-terra/,
+    );
+
+    const ignoredControl = runHook("prompt", {
+      ...child,
+      agent_type: "worker-secret-type",
+      prompt: "router: manual",
+    }, project.home);
+    assert.equal(ignoredControl.status, 0, ignoredControl.stderr);
+    assert.match(ignoredControl.stdout, /already a bounded subagent/i);
+    assert.doesNotMatch(ignoredControl.stdout, /manual-root mode/i);
+
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      try {
+        const context = store.context({
+          cwd: project.root,
+          contextId: root.session_id,
+          authoritative: true,
+        });
+        const state = store.hostModelState(context);
+        assert.equal(state.taskMode, "automatic");
+        assert.equal(state.currentModel, "gpt-5.6-luna");
+        assert.equal(state.pendingChange, null);
+        assert.equal(
+          Number(store.db.prepare("SELECT count(*) AS count FROM host_model_changes").get().count),
+          0,
+        );
+        assert.equal(store.inspectionGuardActive(context), false);
+        const route = await routeStage(routeInput({
+          contextId: root.session_id,
+          override: { model: "gpt-5.6-terra", effort: "low" },
+        }), { catalog: CATALOG, cwd: project.root, store });
+        assert.equal(route.action, "delegate");
+      } finally {
+        store.close();
+      }
+    });
+
+    const stopped = runHook("stop", {
+      ...child,
+      agent_id: "agent-secret-identifier",
+      hook_event_name: "Stop",
+      stop_hook_active: false,
+    }, project.home);
+    assert.equal(stopped.status, 0, stopped.stderr);
+    assert.equal(stopped.stdout, "");
+
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      try {
+        assert.equal(
+          Number(store.db.prepare("SELECT count(*) AS count FROM stop_observations").get().count),
+          0,
+        );
+        assert.equal(
+          Number(store.db.prepare("SELECT count(*) AS count FROM outcomes").get().count),
+          0,
+        );
+      } finally {
+        store.close();
+      }
+    });
+
+    const resumedRoot = runHook("prompt", {
+      ...root,
+      prompt: "Verify the delegated result in the root task.",
+    }, project.home);
+    assert.equal(resumedRoot.status, 0, resumedRoot.stderr);
+    assert.match(resumedRoot.stdout, /global automatic activation is enabled/);
+    assert.doesNotMatch(resumedRoot.stdout, /unresolved active root-model change/);
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("automatic routing treats shadow scoring as read-only and leaves Stop lifecycle untouched", async () => {
   const project = await temporaryProject("adaptive shadow hook ");
   try {

@@ -36,6 +36,11 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Bounded subagents are isolated at both `SubagentStart` and
+  subagent-marked `UserPromptSubmit`: child models are never observed as root
+  model changes, child controls cannot mutate root-task state, recursive
+  `route_stage` calls are forbidden, and the root retains Stop/outcome
+  ownership.
 - Shadow scoring has no route, outcome, proposal, or cursor side effects.
 - Shadow output includes numeric before/after counts for all protected routing
   and learning tables, and derives its `sideEffects` flag from those counts.
