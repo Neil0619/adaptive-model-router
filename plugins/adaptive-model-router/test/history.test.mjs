@@ -31,6 +31,7 @@ test("history shows timestamped model transitions, outcomes, filters, and the ro
         gate: first.verificationGate,
         failureType: null,
         retries: 0,
+        retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
         escalations: 0,
         userCorrection: false,
       }, { store, cwd: project.root });
@@ -49,6 +50,7 @@ test("history shows timestamped model transitions, outcomes, filters, and the ro
         gate: changed.verificationGate,
         failureType: "reasoning",
         retries: 1,
+        retryBreakdown: { reasoning: 1, environment: 0, information: 0, tooling: 0 },
         escalations: 0,
         userCorrection: true,
       }, { store, cwd: project.root });
@@ -179,6 +181,7 @@ test("status currentStage distinguishes pending delegation, completed work, and 
         gate: delegated.verificationGate,
         failureType: null,
         retries: 0,
+        retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
         escalations: 0,
         userCorrection: false,
       }, { store, cwd: project.root });

@@ -66,7 +66,7 @@ Windows 环境问题参见[故障排查](docs/TROUBLESHOOTING.md)。发布维护
 [原生 Windows 11](docs/WINDOWS_SMOKE.md)和
 [原生 macOS](docs/MACOS_SMOKE.md)冒烟手册，不要根据 README 临时拼装发布测试。
 在 Windows 上打开仓库后，可以直接让 Codex“完整读取该手册、逐项执行、按模板回传，
-但不要创建或推送 `v0.3.1` tag”。
+但不要创建或推送 `v0.4.0` tag”。
 
 ## 路由规则
 
@@ -124,11 +124,20 @@ Sol High 改为 Sol Max 这类 effort 变化无法被 Hook 检测。
 
 策略永不自动批准：
 
-- 同类别至少 12 个新结果，且失败、纠正或重试的结果不少于 4 个，提议 `+5`；
-- 同类别至少 20 个新结果，且没有失败、纠正和重试，提议 `-5`；
+- 同类别至少 12 个合格结果、来自至少 4 个不同任务 context，且失败、纠正或
+  reasoning retry 的结果不少于 4 个，提议 `+5`；
+- 同类别至少 20 个合格结果、来自至少 5 个不同任务 context，且没有失败、纠正
+  和 reasoning retry，提议 `-5`；
 - offset 始终限制在 `[-15, 15]`。
 
-批准和拒绝都会推进证据窗口；revision 不可变，连续 rollback 只沿父 revision 向后。
+显式 override、分类器调整、升级后的 route、unknown 结果，以及 environment、
+information、tooling failure 不参与在线锚定。每条委派会保存不含 prompt 的脱敏
+评分快照，重启后仍可审计证据是否合格。
+
+批准和拒绝都会推进证据窗口；revision 不可变，连续 rollback 只沿父 revision
+向后。离线重锚必须显式确认并安装更高版本的不可变评分 profile，不会自动批准
+类别 offset。Shadow 评分不创建 route 或学习记录。只有违反风险底线时才自动回滚
+评分 profile。
 
 辅助分类器默认开启，但只接收不超过 2,000 字的脱敏摘要、阶段和布尔信号；不会收到任意 evidence、源码附件、路径或环境变量。超时、熔断和 local-only 模式都会确定性降级。
 

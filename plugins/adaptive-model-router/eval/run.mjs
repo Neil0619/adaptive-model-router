@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { parseControlPrompt } from "../scripts/lib/control.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
+import { desiredRoute } from "../scripts/lib/scorer.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const dataset = JSON.parse(await readFile(join(root, "routes.json"), "utf8"));
@@ -36,6 +37,16 @@ function family(model) {
   return model?.endsWith("-sol") ? "sol" : model?.endsWith("-terra") ? "terra" : model?.endsWith("-luna") ? "luna" : null;
 }
 
+function expectedScoreBand(score, hardSignalCount) {
+  if (score <= 25) return { family: "luna", effort: "low" };
+  if (score <= 45) return { family: "terra", effort: "low" };
+  if (score <= 60) return { family: "terra", effort: "medium" };
+  if (score <= 80) return { family: "sol", effort: "medium" };
+  if (score <= 92) return { family: "sol", effort: "high" };
+  if (score <= 97 || hardSignalCount < 2) return { family: "sol", effort: "xhigh" };
+  return { family: "sol", effort: "max" };
+}
+
 try {
   let agreements = 0;
   let riskTotal = 0;
@@ -58,14 +69,45 @@ try {
       if (result.action === "delegate" && family(result.target?.model) === "sol" && effort) riskRecalled += 1;
     }
   }
-  const agreement = agreements / dataset.routes.length;
+  let scoreBandAgreements = 0;
+  const scoreBandCases = [];
+  for (let score = 0; score <= 100; score += 1) {
+    for (const hardSignalCount of [0, 2]) {
+      const expected = expectedScoreBand(score, hardSignalCount);
+      const actual = desiredRoute({
+        score,
+        hardSignalCount,
+        category: "general",
+        signals: {
+          mechanical: false,
+          implementation: false,
+          review: false,
+          risk: false,
+          security: false,
+          migration: false,
+        },
+      });
+      const matches = actual.family === expected.family && actual.effort === expected.effort;
+      if (matches) scoreBandAgreements += 1;
+      else mismatches.push({
+        id: `score-${score}-hard-${hardSignalCount}`,
+        family: actual.family,
+        effort: actual.effort,
+      });
+      scoreBandCases.push({ score, hardSignalCount });
+    }
+  }
+  const totalCases = dataset.routes.length + scoreBandCases.length;
+  const agreement = (agreements + scoreBandAgreements) / totalCases;
   const riskRecall = riskTotal === 0 ? 1 : riskRecalled / riskTotal;
   const negativeControlMutations = dataset.controls
     .filter((item) => !item.changesState && parseControlPrompt(item.prompt) !== null).length;
   const positiveControlMisses = dataset.controls
     .filter((item) => item.changesState && parseControlPrompt(item.prompt) === null).length;
   const result = {
-    cases: dataset.routes.length,
+    cases: totalCases,
+    bilingualRouteCases: dataset.routes.length,
+    scoreBandCases: scoreBandCases.length,
     routeAgreement: Number(agreement.toFixed(3)),
     riskFloorRecall: Number(riskRecall.toFixed(3)),
     negativeControlMutations,

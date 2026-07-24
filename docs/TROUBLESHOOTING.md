@@ -211,8 +211,9 @@ ADAPTIVE_ROUTER_LOCAL_ONLY=1
 
 `record_outcome` accepts delegated route IDs only. Use the same `contextId` as
 the route, the exact verification-gate enum, an allowed status, and consistent
-failure fields. Repeating an identical outcome is safe; changing an already
-recorded final outcome is rejected.
+failure fields. `retryBreakdown` must contain all four failure-type counters and
+sum exactly to `retries`. Repeating an identical outcome is safe; changing an
+already recorded final outcome is rejected.
 
 ## Data cleanup
 

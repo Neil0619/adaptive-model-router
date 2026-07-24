@@ -138,6 +138,12 @@ Records the one final result for a delegated route:
   "gate": "targeted-tests",
   "failureType": null,
   "retries": 0,
+  "retryBreakdown": {
+    "reasoning": 0,
+    "environment": 0,
+    "information": 0,
+    "tooling": 0
+  },
   "escalations": 0,
   "userCorrection": false
 }
@@ -146,7 +152,8 @@ Records the one final result for a delegated route:
 Allowed statuses are `passed`, `failed`, and `unknown`. Allowed failure types
 are `reasoning`, `environment`, `information`, `tooling`, or `null`. Identical
 duplicate outcomes are idempotent; conflicting duplicates fail. `unknown`
-outcomes do not participate in learning.
+outcomes do not participate in learning. `retryBreakdown` is required and must
+sum exactly to `retries`.
 
 The Stop hook reminds once when a delegated route lacks an outcome. If the task
 continues and stops again without one, the hook records `unknown`.
@@ -165,10 +172,36 @@ continues and stops again without one, the hook records `unknown`.
 | `approve_policy_proposal` | Create an immutable policy revision from a proposal. | Yes; explicit user approval required |
 | `reject_policy_proposal` | Reject a proposal and advance its evidence window. | Yes; explicit user instruction required |
 | `rollback_policy` | Move backward to the current revision's immutable parent. | Yes; explicit user instruction required |
+| `rebase_policy_proposal` | Rebase a pending/stale offset proposal onto the current policy/profile while preserving its delta and advancing the old cursor. | Yes; explicit user instruction required |
+| `get_learning_status` | Return current-project scoring profile, approved offsets, evidence eligibility, proposals, and safety events. | No |
+| `shadow_route_stage` | Deterministically score a stage against the active or supplied profile without writing a route, outcome, proposal, or cursor. | No |
+| `reanchor_scoring_profile` | Install a higher-version immutable offline profile and stale pending proposals. | Yes; exact `REANCHOR_SCORING_PROFILE` confirmation required |
 | `clear_project_data` | Delete only the current project's router rows. | Yes; requires exact `CLEAR_PROJECT_DATA` confirmation |
 
 Policy proposals are never approved automatically. Rejection and rollback are
 also deliberate user actions; an agent must not infer them from routine work.
+
+Online proposals only use routes with a v3 score snapshot. Explicit overrides,
+classifier adjustments, escalated/tooling-retry routes, unknown outcomes, and
+environment/information/tooling failures are excluded. A `+5` proposal needs
+12 eligible outcomes across 4 contexts and 4 affected outcomes. A `-5`
+proposal needs 20 clean outcomes across 5 contexts. Offline profile re-anchors
+preserve approved category offsets. The sole automatic rollback is a hard
+risk/security/migration floor violation.
+
+`reanchor_scoring_profile` accepts only the named integer weights and ordered
+thresholds from the documented deterministic profile. Its `profileVersion`
+must be greater than the active version. On success it creates an immutable
+child profile, preserves the current approved category offsets, marks pending
+proposals stale, and advances their cursors. It never derives a profile from
+live prompts or outcomes.
+
+`shadow_route_stage` accepts the normal goal/phase/evidence fields plus an
+optional closed scoring definition. It returns only the category, numeric
+scores, hard-signal count, preferred action/family/effort, and verification
+gate. It does not create even an initial project, profile, policy, route,
+outcome, proposal, or learning cursor. Use it before an explicitly confirmed
+offline re-anchor.
 
 `get_route_history` accepts optional `limit` (`1..100`, default `20`) and
 `action` (`all`, `delegate`, `continue`, or `ask_user`). Each newest-first item
@@ -247,8 +280,10 @@ node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-
 node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs history --context example --limit 20 --action delegate
 node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs catalog
 node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs proposals --context example
+node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs learning --context example
 node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs approve PROPOSAL_ID --context example
 node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs reject PROPOSAL_ID --context example
+node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs rebase PROPOSAL_ID --context example
 node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs rollback --context example
 node /path/to/adaptive-model-router/plugins/adaptive-model-router/scripts/codex-route.mjs import-legacy --confirm IMPORT_LEGACY_SETTINGS_POLICY --context example
 ```

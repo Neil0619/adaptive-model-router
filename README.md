@@ -134,11 +134,23 @@ Learning data is isolated per project in one SQLite database. Git worktrees shar
 
 Policy changes are proposals only:
 
-- `+5` after at least 12 new category outcomes with at least 4 failed, corrected, or retried outcomes;
-- `-5` after at least 20 new category outcomes with no failures, corrections, or retries;
+- `+5` after at least 12 eligible category outcomes across at least 4 task
+  contexts, with at least 4 failed, corrected, or reasoning-retried outcomes;
+- `-5` after at least 20 eligible category outcomes across at least 5 task
+  contexts, with no failures, corrections, or reasoning retries;
 - offsets are limited to `[-15, 15]`.
 
-Approval and rejection both advance the evidence window. Revisions are immutable, and repeated rollback walks backward through their parent chain.
+Explicit overrides, classifier-adjusted and escalated routes, unknown results,
+and environment/information/tooling failures do not anchor online learning.
+Every delegated route stores a prompt-free score snapshot so eligibility is
+auditable after restart.
+
+Approval and rejection both advance the evidence window. Revisions are
+immutable, and repeated rollback walks backward through their parent chain.
+Offline re-anchoring installs a manually confirmed, higher-version immutable
+scoring profile; it never auto-approves category offsets. Shadow scoring does
+not create routes or learning records. A hard risk-floor violation is the only
+automatic rollback trigger.
 
 ## Controls
 

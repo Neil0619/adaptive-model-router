@@ -245,6 +245,7 @@ async function routeWithStore(input, options, store) {
   }
 
   const policy = store.ensurePolicy(context);
+  const scoringProfile = store.ensureScoringProfile(context);
 
   const initialOverride = store.resolveOverride(context, input.override || null, settings);
   if (!settings.enabled || initialOverride.override?.mode === "disabled") {
@@ -271,8 +272,15 @@ async function routeWithStore(input, options, store) {
     return publicRoute(route);
   }
 
-  let scored = scoreTask({ goal: input.goal, phase: input.phase, evidence: input.evidence, policy });
+  let scored = scoreTask({
+    goal: input.goal,
+    phase: input.phase,
+    evidence: input.evidence,
+    policy,
+    profile: scoringProfile.definition,
+  });
   let classifier = { state: "not_needed", result: null, reasonCode: null };
+  let classifierAdjustment = 0;
   const targetFullyLocked = Boolean(initialOverride.override?.model && initialOverride.override?.effort);
   if (scored.borderline && !targetFullyLocked) {
     classifier = await classifyBorderline({
@@ -287,9 +295,10 @@ async function routeWithStore(input, options, store) {
       now: options.now,
     });
     if (classifier.result) {
+      classifierAdjustment = classifier.result.complexityAdjustment;
       scored = {
         ...scored,
-        score: clamp(scored.score + classifier.result.complexityAdjustment, 0, 100),
+        score: clamp(scored.score + classifierAdjustment, 0, 100),
         confidence: Math.max(scored.confidence, classifier.result.confidence),
       };
     }
@@ -297,7 +306,7 @@ async function routeWithStore(input, options, store) {
   if (
     !initialOverride.override
     && !previous
-    && scored.score <= 25
+    && scored.score <= scoringProfile.definition.thresholds.rootMax
     && Number(input.evidence.batchSize || 0) <= 1
     && !scored.signals.implementation
     && !scored.signals.review
@@ -461,6 +470,25 @@ async function routeWithStore(input, options, store) {
     route.target = { model: selected.model, effort: selected.effort };
     route.family = selected.family;
     route.previousRouteId = input.previousRouteId || null;
+    const exclusionCodes = [
+      resolved.source ? "OVERRIDE_APPLIED" : null,
+      classifier.state === "used" ? "CLASSIFIER_ADJUSTED" : null,
+      escalation.status.count > 0 ? "ESCALATED_ROUTE" : null,
+      toolingRetry ? "TOOLING_RETRY" : null,
+    ].filter(Boolean);
+    route.scoringSnapshot = {
+      profileId: scoringProfile.profileId,
+      baseScore: scored.baseScore,
+      finalScore: scored.score,
+      signals: scored.signals,
+      policyOffset: scored.policyOffset,
+      classifierAdjustment,
+      hardSignalCount: scored.hardSignalCount,
+      desiredFamily: desired.family,
+      desiredEffort: desired.effort,
+      eligibleLearning: exclusionCodes.length === 0,
+      exclusionCodes,
+    };
     const committed = store.commitRoute(context, route, resolved.onceId);
     if (committed.committed) return publicRoute(route);
   }

@@ -43,16 +43,16 @@ test("50 processes concurrently migrate an empty SQLite database", async () => {
   try {
     const results = await Promise.all(Array.from({ length: 50 }, (_, index) => runWorker(project, "migrate", `migration-${index}`)));
     assert.equal(results.length, 50);
-    assert.ok(results.every((result) => result.version === 2 && result.health === "ok"));
+    assert.ok(results.every((result) => result.version === 3 && result.health === "ok"));
     const store = new RouterStore({ path: join(project.home, "router.sqlite3") });
-    assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 2);
+    assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 3);
     store.close();
   } finally {
     await project.cleanup();
   }
 });
 
-test("50 processes claim once, write routes/outcomes/proposal, and approve exactly once without lost updates", async () => {
+test("concurrent routes claim once exactly once and distinct contexts generate one approved proposal", async () => {
   const project = await temporaryProject("adaptive concurrency data ");
   const previousHome = process.env.ADAPTIVE_ROUTER_HOME;
   process.env.ADAPTIVE_ROUTER_HOME = project.home;
@@ -71,12 +71,21 @@ test("50 processes claim once, write routes/outcomes/proposal, and approve exact
     assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM routes").get().count), 50);
     assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM outcomes").get().count), 50);
     assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM overrides WHERE scope = 'once'").get().count), 0);
-    const proposals = listPolicyProposals({ contextId: "shared" }, { store, cwd: project.root });
+    assert.equal(listPolicyProposals({ contextId: "shared" }, { store, cwd: project.root }).length, 0);
+    store.clearOverrides(store.context({ cwd: project.root, contextId: "shared" }), "session");
+    store.close();
+
+    await Promise.all(Array.from({ length: 12 }, (_, index) => (
+      runWorker(project, "route-outcome", `learning-${index}`, index)
+    )));
+    const proposalStore = new RouterStore();
+    const proposals = listPolicyProposals({ contextId: "learning-0" }, { store: proposalStore, cwd: project.root });
     assert.equal(proposals.length, 1);
     assert.equal(proposals[0].delta, 5);
     assert.ok(proposals[0].eligibleCount >= 12);
     assert.ok(proposals[0].affectedCount >= 4);
-    store.close();
+    assert.ok(proposals[0].contextCount >= 4);
+    proposalStore.close();
 
     const approvals = await Promise.all(Array.from({ length: 50 }, () => runWorker(project, "approve", "shared", proposals[0].proposalId)));
     assert.equal(approvals.filter((result) => result.idempotent === false).length, 1);

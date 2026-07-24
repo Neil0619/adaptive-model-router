@@ -34,6 +34,7 @@ if (operation === "migrate") {
     gate: route.verificationGate,
     failureType: status === "failed" ? "reasoning" : null,
     retries: index === 0 ? 1 : 0,
+    retryBreakdown: { reasoning: index === 0 ? 1 : 0, environment: 0, information: 0, tooling: 0 },
     escalations: route.escalation.count,
     userCorrection: false,
   }, { cwd });

@@ -26,6 +26,7 @@ test("writer timeout makes route fail open, outcome fail explicitly, and storage
         gate: initial.verificationGate,
         failureType: null,
         retries: 0,
+        retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
         escalations: initial.escalation.count,
         userCorrection: false,
       }, { store: contender, cwd: project.root }), /locked|busy/i);
@@ -39,6 +40,7 @@ test("writer timeout makes route fail open, outcome fail explicitly, and storage
       gate: initial.verificationGate,
       failureType: null,
       retries: 0,
+      retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
       escalations: initial.escalation.count,
       userCorrection: false,
     }, { store: contender, cwd: project.root });

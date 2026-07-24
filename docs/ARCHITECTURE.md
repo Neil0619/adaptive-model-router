@@ -35,8 +35,14 @@ flowchart LR
 - `scripts/node-launcher.mjs` starts under the Node executable resolved by Codex, discovers a qualifying Node 24.15+ runtime when necessary, and preserves stdio, arguments, environment, and exit status across the handoff.
 - `scripts/mcp-server.mjs` exposes strict, closed JSON schemas and emits only JSON-RPC on stdout.
 - `scripts/lib/router.mjs` applies deterministic scoring, override priority, catalog capability checks, and monotonic escalation.
+- `scripts/lib/scorer.mjs` evaluates an immutable scoring-profile definition;
+  approved project category offsets remain a separate bounded layer.
 - `scripts/lib/app-server.mjs` owns one short-lived classifier app-server process with a single total deadline and early-notification buffering.
-- `scripts/lib/database.mjs` owns SQLite migrations, short `BEGIN IMMEDIATE` transactions, exactly-once claims, and project/context isolation.
+- `scripts/lib/database.mjs` owns SQLite migrations, immutable scoring profiles
+  and snapshots, short `BEGIN IMMEDIATE` transactions, exactly-once claims, and
+  project/context isolation.
+- `scripts/lib/learning.mjs` validates typed retry outcomes, filters eligible
+  snapshots, and manages approval-gated immutable policy revisions.
 - `scripts/hook.mjs` handles exact control prefixes, the global automatic
   opt-in, root-model observation, fixed model-visible context, visible
   status/history reports, and the two-pass Stop outcome reminder.
@@ -84,9 +90,37 @@ that reasoning effort remains host-only, and that the router did not change the
 root model. The Codex model selector therefore continues to describe the root
 task, never the bounded-stage target.
 
-SQLite `user_version` 2 adds task root-model state, model-change events, and the
-root snapshot on each route while preserving version 1 routes, outcomes,
-policy revisions, proposals, and learning cursors.
+SQLite `user_version` 3 preserves the v2 task/root-model tables and adds:
+
+- immutable per-project scoring profiles with parent links;
+- a prompt-free score snapshot keyed one-to-one with every scored delegated
+  route;
+- typed reasoning/environment/information/tooling retry counts;
+- distinct-context and affected-result proposal statistics;
+- redacted profile re-anchor, proposal rebase, and safety rollback events.
+
+Migration falls through transactionally from v1 to v2 to v3. Pre-v3 routes
+without score snapshots remain visible in history but are ineligible for new
+learning windows.
+
+## Scoring evolution
+
+Online learning remains deliberately narrow: it proposes only category offsets
+within `[-15, 15]`. Routes with overrides, classifier adjustments, escalation,
+tooling retry, or unknown/non-reasoning outcomes are quarantined. Evidence must
+span distinct task contexts so one repeated session cannot anchor policy.
+
+Offline re-anchoring installs a higher-version profile only after explicit
+confirmation. The profile is immutable, links to its predecessor, preserves
+approved category offsets, marks pending proposals stale, and advances their
+evidence cursors. Shadow scoring runs the same deterministic scorer but writes
+no route, outcome, proposal, or cursor.
+
+After a final outcome, the database checks the persisted boolean snapshot
+against the non-negotiable risk floor. A risk/security/migration stage below
+Sol high is a hard invariant violation and rolls an active offline profile back
+to its parent. Ordinary failures, agreement drift, or weak statistical signals
+never trigger automatic rollback.
 
 ## Concurrency
 

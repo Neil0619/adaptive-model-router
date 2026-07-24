@@ -17,7 +17,7 @@ test("installed hook and MCP share state and observed context without inherited 
     "cache",
     "test-marketplace",
     "adaptive-model-router",
-    "0.3.1",
+    "0.4.0",
   );
   const pluginData = join(codexHome, "plugins", "data", "test-marketplace-adaptive-model-router");
   const staleMcpCwd = join(project.root, "stale MCP cwd");

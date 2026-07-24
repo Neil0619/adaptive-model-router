@@ -33,6 +33,7 @@ test("SQLite files and redacted status contain no prompt, source, absolute path,
         gate: route.verificationGate,
         failureType: null,
         retries: 0,
+        retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
         escalations: route.escalation.count,
         userCorrection: false,
       }, { store, cwd: project.root });
@@ -40,6 +41,7 @@ test("SQLite files and redacted status contain no prompt, source, absolute path,
       const publicState = JSON.stringify({
         status: store.status(context),
         history: store.routeHistory(context),
+        learning: store.learningStatus(context),
         diagnose: store.diagnose(context),
       });
       for (const forbidden of [goal, source, project.root, contextId, secret]) assert.equal(publicState.includes(forbidden), false, forbidden);
@@ -86,6 +88,8 @@ test("status is current-context only and clear_project_data requires confirmatio
       assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM routes").get().count), 3);
       await callRouterTool("clear_project_data", { contextId: "context-a", confirm: "CLEAR_PROJECT_DATA" }, { store, cwd: project.root });
       assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM routes").get().count), 1);
+      assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM route_score_snapshots").get().count), 1);
+      assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM scoring_profiles").get().count), 1);
       assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM host_model_state").get().count), 1);
       assert.equal(store.db.prepare("SELECT value FROM meta WHERE key = 'local_salt'").get().value, salt);
       store.close();

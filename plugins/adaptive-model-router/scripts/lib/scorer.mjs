@@ -1,4 +1,4 @@
-import { CATEGORIES, EFFORT_ORDER } from "./constants.mjs";
+import { CATEGORIES, DEFAULT_SCORING_PROFILE, EFFORT_ORDER } from "./constants.mjs";
 import { clamp, includesAny, normalizeText } from "./io.mjs";
 
 const PATTERNS = {
@@ -38,7 +38,17 @@ export function isTrivialTask(goal, evidence = {}) {
   return TRIVIAL.test(text) || SIMPLE_QUESTION.test(text);
 }
 
-export function scoreTask({ goal, phase = "", evidence = {}, policy = {} }) {
+function scoringProfile(profile = {}) {
+  return {
+    profileVersion: Number(profile.profileVersion || DEFAULT_SCORING_PROFILE.profileVersion),
+    weights: { ...DEFAULT_SCORING_PROFILE.weights, ...(profile.weights || {}) },
+    thresholds: { ...DEFAULT_SCORING_PROFILE.thresholds, ...(profile.thresholds || {}) },
+  };
+}
+
+export function scoreTask({ goal, phase = "", evidence = {}, policy = {}, profile = {} }) {
+  const activeProfile = scoringProfile(profile);
+  const { weights, thresholds } = activeProfile;
   const text = `${phase} ${normalizeText(goal)}`;
   const category = inferCategory(goal, phase);
   const generalRisk = evidence.highRisk === true || includesAny(text, PATTERNS.risk);
@@ -60,22 +70,31 @@ export function scoreTask({ goal, phase = "", evidence = {}, policy = {} }) {
     implementation: includesAny(text, PATTERNS.implementation),
     documentation: includesAny(text, PATTERNS.documentation),
   };
-  let score = 40;
-  if (signals.ambiguity) score += 18;
-  if (signals.risk) score += 25;
-  if (signals.security || signals.migration) score += 10;
-  if (signals.crossCutting) score += 15;
-  if (!signals.verification && (signals.implementation || signals.risk)) score += 8;
-  if (signals.review) score += 10;
-  if (signals.mechanical) score -= evidence.batchSize > 1 ? 28 : 20;
-  if (signals.clear) score -= 10;
-  if (signals.verification && signals.clear) score -= 5;
-  if (signals.exploration && !signals.risk) score -= 8;
-  if (text.length > 2_000) score += 8;
+  let score = weights.base;
+  if (signals.ambiguity) score += weights.ambiguity;
+  if (signals.risk) score += weights.risk;
+  if (signals.security || signals.migration) score += weights.safety;
+  if (signals.crossCutting) score += weights.crossCutting;
+  if (!signals.verification && (signals.implementation || signals.risk)) score += weights.missingVerification;
+  if (signals.review) score += weights.review;
+  if (signals.mechanical) score += evidence.batchSize > 1 ? weights.mechanicalBatch : weights.mechanicalSingle;
+  if (signals.clear) score += weights.requirementsSettled;
+  if (signals.verification && signals.clear) score += weights.settledWithVerification;
+  if (signals.exploration && !signals.risk) score += weights.nonRiskExploration;
+  if (text.length > 2_000) score += weights.longSummary;
+  const baseScore = clamp(score, 0, 100);
   const offset = Number(policy.categoryOffsets?.[category] || 0);
   score = clamp(score + offset, 0, 100);
   const matched = Object.values(signals).filter(Boolean).length;
-  const distance = Math.min(...[25, 45, 60, 80, 92, 97].map((boundary) => Math.abs(score - boundary)));
+  const boundaries = [
+    thresholds.rootMax,
+    thresholds.terraLowMax,
+    thresholds.terraMediumMax,
+    thresholds.solMediumMax,
+    thresholds.solHighMax,
+    thresholds.solXhighMax,
+  ];
+  const distance = Math.min(...boundaries.map((boundary) => Math.abs(score - boundary)));
   const confidence = clamp(0.55 + matched * 0.035 + distance / 100, 0.55, 0.96);
   const substantive = evidence.workProduct === true || text.length >= 80 || signals.implementation || signals.review || signals.exploration || evidence.batchSize > 1;
   const borderline = substantive && (distance <= 6 || (matched <= 1 && score >= 30 && score <= 80));
@@ -88,6 +107,7 @@ export function scoreTask({ goal, phase = "", evidence = {}, policy = {} }) {
   ].filter(Boolean).length;
   return {
     score,
+    baseScore,
     confidence,
     borderline,
     substantive,
@@ -95,18 +115,21 @@ export function scoreTask({ goal, phase = "", evidence = {}, policy = {} }) {
     signals,
     hardSignalCount,
     policyOffset: offset,
+    profileVersion: activeProfile.profileVersion,
+    thresholds,
   };
 }
 
 export function desiredRoute(scored, evidence = {}) {
   let family;
   let effort;
-  if (scored.score <= 25) [family, effort] = ["luna", "low"];
-  else if (scored.score <= 45) [family, effort] = ["terra", "low"];
-  else if (scored.score <= 60) [family, effort] = ["terra", "medium"];
-  else if (scored.score <= 80) [family, effort] = ["sol", "medium"];
-  else if (scored.score <= 92) [family, effort] = ["sol", "high"];
-  else if (scored.score <= 97 || scored.hardSignalCount < 2) [family, effort] = ["sol", "xhigh"];
+  const thresholds = { ...DEFAULT_SCORING_PROFILE.thresholds, ...(scored.thresholds || {}) };
+  if (scored.score <= thresholds.rootMax) [family, effort] = ["luna", "low"];
+  else if (scored.score <= thresholds.terraLowMax) [family, effort] = ["terra", "low"];
+  else if (scored.score <= thresholds.terraMediumMax) [family, effort] = ["terra", "medium"];
+  else if (scored.score <= thresholds.solMediumMax) [family, effort] = ["sol", "medium"];
+  else if (scored.score <= thresholds.solHighMax) [family, effort] = ["sol", "high"];
+  else if (scored.score <= thresholds.solXhighMax || scored.hardSignalCount < thresholds.solMaxHardSignals) [family, effort] = ["sol", "xhigh"];
   else [family, effort] = ["sol", "max"];
   if (scored.signals.mechanical && evidence.batchSize > 1 && !scored.signals.risk) [family, effort] = ["luna", "low"];
   if (scored.signals.implementation && family === "luna") [family, effort] = ["terra", "low"];
@@ -133,7 +156,8 @@ export function deterministicReasonCodes(scored, { learned = false } = {}) {
   if (scored.signals.exploration) codes.push("EXPLORATION_STAGE");
   if (scored.signals.review) codes.push("REVIEW_STAGE");
   if (scored.signals.verification) codes.push("STRONG_VERIFICATION");
-  if (scored.score >= 98 && scored.hardSignalCount >= 2) codes.push("MAX_EFFORT_GATE");
+  const thresholds = { ...DEFAULT_SCORING_PROFILE.thresholds, ...(scored.thresholds || {}) };
+  if (scored.score >= thresholds.solMaxMin && scored.hardSignalCount >= thresholds.solMaxHardSignals) codes.push("MAX_EFFORT_GATE");
   if (learned) codes.push("LEARNED_POLICY");
   if (!codes.length) codes.push("DEFAULT_POLICY");
   return [...new Set(codes)];

@@ -1,18 +1,49 @@
-import { EFFORT_ORDER } from "./constants.mjs";
+import { DEFAULT_SCORING_PROFILE, EFFORT_ORDER } from "./constants.mjs";
 import { OUTCOME_INPUT_SCHEMA, ROUTE_INPUT_SCHEMA } from "./contracts.mjs";
 import { RouterStore } from "./database.mjs";
 import {
   approvePolicyProposal,
   listPolicyProposals,
   recordOutcome,
+  rebasePolicyProposal,
   rejectPolicyProposal,
   rollbackPolicy,
 } from "./learning.mjs";
 import { routeStage } from "./router.mjs";
 import { assertSchema } from "./schema.mjs";
+import { desiredRoute, scoreTask } from "./scorer.mjs";
 
 const CONTEXT = { type: "string", minLength: 1, maxLength: 256 };
 const PROPOSAL = { type: "string", minLength: 1, maxLength: 128 };
+const SCORING_PROFILE_DEFINITION = {
+  type: "object",
+  additionalProperties: false,
+  required: ["weights", "thresholds"],
+  properties: {
+    weights: {
+      type: "object",
+      additionalProperties: false,
+      required: Object.keys(DEFAULT_SCORING_PROFILE.weights),
+      properties: Object.fromEntries(
+        Object.keys(DEFAULT_SCORING_PROFILE.weights).map((key) => [
+          key,
+          { type: "integer", minimum: -50, maximum: 100 },
+        ]),
+      ),
+    },
+    thresholds: {
+      type: "object",
+      additionalProperties: false,
+      required: Object.keys(DEFAULT_SCORING_PROFILE.thresholds),
+      properties: Object.fromEntries(
+        Object.keys(DEFAULT_SCORING_PROFILE.thresholds).map((key) => [
+          key,
+          { type: "integer", minimum: 0, maximum: 100 },
+        ]),
+      ),
+    },
+  },
+};
 
 export const TOOL_DEFINITIONS = [
   {
@@ -88,6 +119,51 @@ export const TOOL_DEFINITIONS = [
     description: "Move the current project policy back to its immutable parent revision.",
     inputSchema: {
       type: "object", additionalProperties: false, required: ["contextId"], properties: { contextId: CONTEXT },
+    },
+  },
+  {
+    name: "rebase_policy_proposal",
+    description: "Rebase one pending or stale offset proposal onto the current immutable policy and scoring profile without changing its evidence delta.",
+    inputSchema: {
+      type: "object", additionalProperties: false, required: ["contextId", "proposalId"], properties: { contextId: CONTEXT, proposalId: PROPOSAL },
+    },
+  },
+  {
+    name: "get_learning_status",
+    description: "Show the current project's redacted scoring profile, policy revision, evidence eligibility, proposals, and learning safety events.",
+    inputSchema: {
+      type: "object", additionalProperties: false, required: ["contextId"], properties: { contextId: CONTEXT },
+    },
+  },
+  {
+    name: "reanchor_scoring_profile",
+    description: "Activate one manually supplied, higher-version immutable offline scoring profile after exact confirmation.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["contextId", "profileVersion", "definition", "confirm"],
+      properties: {
+        contextId: CONTEXT,
+        profileVersion: { type: "integer", minimum: 2, maximum: 1000000 },
+        definition: SCORING_PROFILE_DEFINITION,
+        confirm: { type: "string", enum: ["REANCHOR_SCORING_PROFILE"] },
+      },
+    },
+  },
+  {
+    name: "shadow_route_stage",
+    description: "Score one stage against a supplied or active profile without creating a route, outcome, proposal, or learning cursor.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["goal", "phase", "evidence", "contextId"],
+      properties: {
+        goal: ROUTE_INPUT_SCHEMA.properties.goal,
+        phase: ROUTE_INPUT_SCHEMA.properties.phase,
+        evidence: ROUTE_INPUT_SCHEMA.properties.evidence,
+        contextId: CONTEXT,
+        definition: SCORING_PROFILE_DEFINITION,
+      },
     },
   },
   {
@@ -186,6 +262,62 @@ function setOverride(store, args, cwd) {
   return cleared;
 }
 
+function validateScoringDefinition(definition) {
+  const thresholds = definition.thresholds;
+  const ordered = [
+    thresholds.rootMax,
+    thresholds.terraLowMax,
+    thresholds.terraMediumMax,
+    thresholds.solMediumMax,
+    thresholds.solHighMax,
+    thresholds.solXhighMax,
+    thresholds.solMaxMin,
+  ];
+  if (ordered.some((value, index) => index > 0 && value <= ordered[index - 1])) {
+    throw new Error("scoring profile thresholds must be strictly increasing");
+  }
+  if (thresholds.solMaxHardSignals < 2 || thresholds.solMaxHardSignals > 5) {
+    throw new Error("solMaxHardSignals must be from 2 to 5");
+  }
+}
+
+function shadowRoute(store, args, cwd) {
+  const context = store.context({ cwd, contextId: args.contextId, create: false });
+  const policy = store.peekPolicy(context);
+  const active = store.peekScoringProfile(context);
+  const definition = args.definition || active.definition;
+  validateScoringDefinition(definition);
+  const scored = scoreTask({
+    goal: args.goal,
+    phase: args.phase,
+    evidence: args.evidence,
+    policy,
+    profile: definition,
+  });
+  const preferred = desiredRoute(scored, args.evidence);
+  const lowRoot = scored.score <= definition.thresholds.rootMax
+    && Number(args.evidence.batchSize || 0) <= 1
+    && !scored.signals.implementation
+    && !scored.signals.review
+    && !scored.signals.risk
+    && !scored.signals.security
+    && !scored.signals.migration;
+  return {
+    shadow: true,
+    sideEffects: false,
+    profileVersion: Number(definition.profileVersion || active.profileVersion),
+    category: scored.category,
+    baseScore: scored.baseScore,
+    finalScore: scored.score,
+    policyOffset: scored.policyOffset,
+    hardSignalCount: scored.hardSignalCount,
+    preferred: lowRoot
+      ? { action: "continue" }
+      : { action: "delegate", family: preferred.family, effort: preferred.effort },
+    verificationGate: preferred.verificationGate,
+  };
+}
+
 export async function callRouterTool(name, args, { store, cwd = process.cwd(), routeOptions = {} } = {}) {
   const definition = TOOLS.get(name);
   if (!definition) throw new Error(`unknown tool: ${name}`);
@@ -204,6 +336,13 @@ export async function callRouterTool(name, args, { store, cwd = process.cwd(), r
   if (name === "approve_policy_proposal") return approvePolicyProposal(args, { store, cwd });
   if (name === "reject_policy_proposal") return rejectPolicyProposal(args, { store, cwd });
   if (name === "rollback_policy") return rollbackPolicy(args, { store, cwd });
+  if (name === "rebase_policy_proposal") return rebasePolicyProposal(args, { store, cwd });
+  if (name === "get_learning_status") return store.learningStatus(contextFor(store, args, cwd));
+  if (name === "reanchor_scoring_profile") {
+    validateScoringDefinition(args.definition);
+    return store.reanchorScoringProfile(contextFor(store, args, cwd), args);
+  }
+  if (name === "shadow_route_stage") return shadowRoute(store, args, cwd);
   if (name === "configure_router") return configure(store, args, cwd);
   if (name === "resolve_host_model_intent") {
     return store.resolveHostModelIntent(contextFor(store, args, cwd), args);

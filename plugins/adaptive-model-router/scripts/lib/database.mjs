@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import {
   DATABASE_VERSION,
   DEFAULT_OFFSETS,
+  DEFAULT_SCORING_PROFILE,
   DEFAULT_SETTINGS,
   EFFORT_ORDER,
   HOST_MODEL_INTENT_DECISIONS,
@@ -291,6 +292,75 @@ export class RouterStore {
           );
         `);
       }
+      if (current <= 2) {
+        const hostColumns = this.db.prepare("PRAGMA table_info(host_model_state)").all();
+        if (hostColumns.length && !hostColumns.some((column) => column.name === "model_visible")) {
+          this.db.exec("ALTER TABLE host_model_state ADD COLUMN model_visible INTEGER NOT NULL DEFAULT 0 CHECK (model_visible IN (0, 1))");
+          this.db.exec("UPDATE host_model_state SET model_visible = CASE WHEN current_model IS NULL THEN 0 ELSE 1 END");
+        }
+        this.db.exec(`
+          ALTER TABLE outcomes ADD COLUMN retry_reasoning INTEGER NOT NULL DEFAULT 0 CHECK (retry_reasoning >= 0);
+          ALTER TABLE outcomes ADD COLUMN retry_environment INTEGER NOT NULL DEFAULT 0 CHECK (retry_environment >= 0);
+          ALTER TABLE outcomes ADD COLUMN retry_information INTEGER NOT NULL DEFAULT 0 CHECK (retry_information >= 0);
+          ALTER TABLE outcomes ADD COLUMN retry_tooling INTEGER NOT NULL DEFAULT 0 CHECK (retry_tooling >= 0);
+          ALTER TABLE policy_proposals ADD COLUMN context_count INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE policy_proposals ADD COLUMN failure_count INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE policy_proposals ADD COLUMN correction_count INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE policy_proposals ADD COLUMN reasoning_retry_count INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE policy_proposals ADD COLUMN base_profile_id TEXT;
+          ALTER TABLE policy_proposals ADD COLUMN kind TEXT NOT NULL DEFAULT 'offset'
+            CHECK (kind IN ('offset', 'rebase'));
+          CREATE TABLE IF NOT EXISTS scoring_profiles (
+            profile_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            parent_profile_id TEXT,
+            profile_version INTEGER NOT NULL CHECK (profile_version > 0),
+            definition_json TEXT NOT NULL,
+            source TEXT NOT NULL CHECK (source IN ('baseline', 'offline_reanchor')),
+            outcome_seq INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            UNIQUE (project_id, profile_version)
+          );
+          CREATE TABLE IF NOT EXISTS project_scoring_profile (
+            project_id TEXT PRIMARY KEY,
+            active_profile_id TEXT NOT NULL REFERENCES scoring_profiles(profile_id),
+            last_safe_profile_id TEXT REFERENCES scoring_profiles(profile_id),
+            updated_at TEXT NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS route_score_snapshots (
+            route_id TEXT PRIMARY KEY REFERENCES routes(route_id) ON DELETE CASCADE,
+            project_id TEXT NOT NULL,
+            context_key TEXT NOT NULL,
+            profile_id TEXT NOT NULL REFERENCES scoring_profiles(profile_id),
+            base_score INTEGER NOT NULL CHECK (base_score BETWEEN 0 AND 100),
+            final_score INTEGER NOT NULL CHECK (final_score BETWEEN 0 AND 100),
+            category TEXT NOT NULL,
+            signals_json TEXT NOT NULL,
+            policy_offset INTEGER NOT NULL,
+            classifier_adjustment INTEGER NOT NULL,
+            hard_signal_count INTEGER NOT NULL CHECK (hard_signal_count >= 0),
+            desired_family TEXT NOT NULL,
+            desired_effort TEXT NOT NULL,
+            eligible_learning INTEGER NOT NULL CHECK (eligible_learning IN (0, 1)),
+            exclusion_codes_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS route_score_learning
+            ON route_score_snapshots(project_id, category, eligible_learning);
+          CREATE TABLE IF NOT EXISTS learning_events (
+            event_id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            event_type TEXT NOT NULL CHECK (event_type IN (
+              'profile_reanchored', 'proposal_rebased', 'safety_auto_rollback'
+            )),
+            profile_id TEXT,
+            details_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS learning_events_project
+            ON learning_events(project_id, created_at DESC);
+        `);
+      }
       this.db.exec(`PRAGMA user_version = ${DATABASE_VERSION}`);
     });
   }
@@ -307,7 +377,7 @@ export class RouterStore {
     });
   }
 
-  context({ cwd = process.cwd(), contextId, authoritative = false }) {
+  context({ cwd = process.cwd(), contextId, authoritative = false, create = true }) {
     if (typeof contextId !== "string" || !contextId.trim()) throw new Error("contextId is required");
     const normalizedContextId = contextId.normalize("NFC");
     if (!authoritative) {
@@ -327,7 +397,9 @@ export class RouterStore {
     }
     const projectId = opaqueId(this.salt, "project", material);
     const contextKey = opaqueId(this.salt, "context", `${projectId}\0${normalizedContextId}`);
-    this.db.prepare("INSERT OR IGNORE INTO projects(project_id, created_at) VALUES(?, ?)").run(projectId, nowIso());
+    if (create) {
+      this.db.prepare("INSERT OR IGNORE INTO projects(project_id, created_at) VALUES(?, ?)").run(projectId, nowIso());
+    }
     return { projectId, contextKey };
   }
 
@@ -667,6 +739,34 @@ export class RouterStore {
         route.previousRouteId || null,
         nowIso(),
       );
+      if (route.scoringSnapshot) {
+        const snapshot = route.scoringSnapshot;
+        this.db.prepare(`
+          INSERT INTO route_score_snapshots(
+            route_id, project_id, context_key, profile_id, base_score, final_score,
+            category, signals_json, policy_offset, classifier_adjustment,
+            hard_signal_count, desired_family, desired_effort, eligible_learning,
+            exclusion_codes_json, created_at
+          ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          route.routeId,
+          context.projectId,
+          context.contextKey,
+          snapshot.profileId,
+          snapshot.baseScore,
+          snapshot.finalScore,
+          route.category,
+          canonicalJson(snapshot.signals),
+          snapshot.policyOffset,
+          snapshot.classifierAdjustment,
+          snapshot.hardSignalCount,
+          snapshot.desiredFamily,
+          snapshot.desiredEffort,
+          snapshot.eligibleLearning ? 1 : 0,
+          canonicalJson(snapshot.exclusionCodes),
+          nowIso(),
+        );
+      }
       return { committed: true, retry: false };
     });
   }
@@ -707,6 +807,10 @@ export class RouterStore {
         o.gate AS outcome_gate,
         o.failure_type AS outcome_failure_type,
         o.retries AS outcome_retries,
+        o.retry_reasoning AS outcome_retry_reasoning,
+        o.retry_environment AS outcome_retry_environment,
+        o.retry_information AS outcome_retry_information,
+        o.retry_tooling AS outcome_retry_tooling,
         o.escalations AS outcome_escalations,
         o.user_correction AS outcome_user_correction,
         o.recorded_at AS outcome_recorded_at
@@ -764,6 +868,12 @@ export class RouterStore {
           gate: row.outcome_gate,
           failureType: row.outcome_failure_type || null,
           retries: Number(row.outcome_retries || 0),
+          retryBreakdown: {
+            reasoning: Number(row.outcome_retry_reasoning || 0),
+            environment: Number(row.outcome_retry_environment || 0),
+            information: Number(row.outcome_retry_information || 0),
+            tooling: Number(row.outcome_retry_tooling || 0),
+          },
           escalations: Number(row.outcome_escalations || 0),
           userCorrection: row.outcome_user_correction === 1,
           recordedAt: row.outcome_recorded_at,
@@ -787,14 +897,30 @@ export class RouterStore {
       gate: outcome.gate,
       failureType: outcome.failureType ?? null,
       retries: outcome.retries,
+      retryBreakdown: outcome.retryBreakdown,
       escalations: outcome.escalations,
       userCorrection: outcome.userCorrection,
     };
     const hash = payloadHash(normalized);
     return this.transaction(() => {
-      const existing = this.db.prepare("SELECT payload_hash FROM outcomes WHERE route_id = ?").get(route.route_id);
+      const existing = this.db.prepare(`
+        SELECT status, gate, failure_type, retries, retry_reasoning,
+               retry_environment, retry_information, retry_tooling,
+               escalations, user_correction, payload_hash
+        FROM outcomes WHERE route_id = ?
+      `).get(route.route_id);
       if (existing) {
-        if (existing.payload_hash !== hash) {
+        const fieldsMatch = existing.status === normalized.status
+          && existing.gate === normalized.gate
+          && (existing.failure_type || null) === normalized.failureType
+          && Number(existing.retries) === normalized.retries
+          && Number(existing.retry_reasoning) === normalized.retryBreakdown.reasoning
+          && Number(existing.retry_environment) === normalized.retryBreakdown.environment
+          && Number(existing.retry_information) === normalized.retryBreakdown.information
+          && Number(existing.retry_tooling) === normalized.retryBreakdown.tooling
+          && Number(existing.escalations) === normalized.escalations
+          && (existing.user_correction === 1) === normalized.userCorrection;
+        if (existing.payload_hash !== hash && !fieldsMatch) {
           const error = new Error("routeId already has a conflicting final outcome");
           error.code = "OUTCOME_CONFLICT";
           throw error;
@@ -804,8 +930,9 @@ export class RouterStore {
       const result = this.db.prepare(`
         INSERT INTO outcomes(
           route_id, project_id, context_key, category, status, gate, failure_type,
-          retries, escalations, user_correction, payload_hash, recorded_at
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          retries, retry_reasoning, retry_environment, retry_information, retry_tooling,
+          escalations, user_correction, payload_hash, recorded_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         route.route_id,
         context.projectId,
@@ -815,6 +942,10 @@ export class RouterStore {
         normalized.gate,
         normalized.failureType,
         normalized.retries,
+        normalized.retryBreakdown.reasoning,
+        normalized.retryBreakdown.environment,
+        normalized.retryBreakdown.information,
+        normalized.retryBreakdown.tooling,
         normalized.escalations,
         normalized.userCorrection ? 1 : 0,
         hash,
@@ -848,6 +979,7 @@ export class RouterStore {
           gate: route.verification_gate,
           failureType: null,
           retries: 0,
+          retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
           escalations: route.escalation_count,
           userCorrection: false,
         };
@@ -876,6 +1008,344 @@ export class RouterStore {
     });
   }
 
+  ensureScoringProfile(context) {
+    return this.transaction(() => {
+      let current = this.db.prepare(`
+        SELECT
+          s.active_profile_id,
+          s.last_safe_profile_id,
+          p.parent_profile_id,
+          p.profile_version,
+          p.definition_json,
+          p.source,
+          p.outcome_seq,
+          p.created_at
+        FROM project_scoring_profile s
+        JOIN scoring_profiles p ON p.profile_id = s.active_profile_id
+        WHERE s.project_id = ?
+      `).get(context.projectId);
+      if (!current) {
+        const profileId = randomUUID();
+        const timestamp = nowIso();
+        this.db.prepare(`
+          INSERT INTO scoring_profiles(
+            profile_id, project_id, parent_profile_id, profile_version,
+            definition_json, source, outcome_seq, created_at
+          ) VALUES(?, ?, NULL, ?, ?, 'baseline', 0, ?)
+        `).run(
+          profileId,
+          context.projectId,
+          DEFAULT_SCORING_PROFILE.profileVersion,
+          canonicalJson(DEFAULT_SCORING_PROFILE),
+          timestamp,
+        );
+        this.db.prepare(`
+          INSERT INTO project_scoring_profile(
+            project_id, active_profile_id, last_safe_profile_id, updated_at
+          ) VALUES(?, ?, NULL, ?)
+        `).run(context.projectId, profileId, timestamp);
+        current = {
+          active_profile_id: profileId,
+          last_safe_profile_id: null,
+          parent_profile_id: null,
+          profile_version: DEFAULT_SCORING_PROFILE.profileVersion,
+          definition_json: canonicalJson(DEFAULT_SCORING_PROFILE),
+          source: "baseline",
+          outcome_seq: 0,
+          created_at: timestamp,
+        };
+      }
+      const parsedDefinition = parseJson(current.definition_json, DEFAULT_SCORING_PROFILE);
+      return {
+        profileId: current.active_profile_id,
+        parentProfileId: current.parent_profile_id || null,
+        lastSafeProfileId: current.last_safe_profile_id || null,
+        profileVersion: Number(current.profile_version),
+        definition: {
+          weights: { ...DEFAULT_SCORING_PROFILE.weights, ...(parsedDefinition.weights || {}) },
+          thresholds: { ...DEFAULT_SCORING_PROFILE.thresholds, ...(parsedDefinition.thresholds || {}) },
+        },
+        source: current.source,
+        outcomeSeq: Number(current.outcome_seq || 0),
+        createdAt: current.created_at,
+      };
+    });
+  }
+
+  peekScoringProfile(context) {
+    const current = this.db.prepare(`
+      SELECT
+        s.active_profile_id,
+        s.last_safe_profile_id,
+        p.parent_profile_id,
+        p.profile_version,
+        p.definition_json,
+        p.source,
+        p.outcome_seq,
+        p.created_at
+      FROM project_scoring_profile s
+      JOIN scoring_profiles p ON p.profile_id = s.active_profile_id
+      WHERE s.project_id = ?
+    `).get(context.projectId);
+    if (!current) {
+      return {
+        profileId: null,
+        parentProfileId: null,
+        lastSafeProfileId: null,
+        profileVersion: DEFAULT_SCORING_PROFILE.profileVersion,
+        definition: {
+          weights: { ...DEFAULT_SCORING_PROFILE.weights },
+          thresholds: { ...DEFAULT_SCORING_PROFILE.thresholds },
+        },
+        source: "baseline",
+        outcomeSeq: 0,
+        createdAt: null,
+      };
+    }
+    const parsedDefinition = parseJson(current.definition_json, DEFAULT_SCORING_PROFILE);
+    return {
+      profileId: current.active_profile_id,
+      parentProfileId: current.parent_profile_id || null,
+      lastSafeProfileId: current.last_safe_profile_id || null,
+      profileVersion: Number(current.profile_version),
+      definition: {
+        weights: { ...DEFAULT_SCORING_PROFILE.weights, ...(parsedDefinition.weights || {}) },
+        thresholds: { ...DEFAULT_SCORING_PROFILE.thresholds, ...(parsedDefinition.thresholds || {}) },
+      },
+      source: current.source,
+      outcomeSeq: Number(current.outcome_seq || 0),
+      createdAt: current.created_at,
+    };
+  }
+
+  reanchorScoringProfile(context, { profileVersion, definition }) {
+    const active = this.ensureScoringProfile(context);
+    if (!Number.isInteger(profileVersion) || profileVersion <= active.profileVersion) {
+      throw new Error("profileVersion must be greater than the active scoring profile version");
+    }
+    return this.transaction(() => {
+      const current = this.db.prepare(`
+        SELECT s.active_profile_id, p.profile_version
+        FROM project_scoring_profile s
+        JOIN scoring_profiles p ON p.profile_id = s.active_profile_id
+        WHERE s.project_id = ?
+      `).get(context.projectId);
+      if (!current || current.active_profile_id !== active.profileId) {
+        throw new Error("active scoring profile changed; retry the reanchor");
+      }
+      if (Number(current.profile_version) >= profileVersion) {
+        throw new Error("profileVersion must be greater than the active scoring profile version");
+      }
+      const timestamp = nowIso();
+      const profileId = randomUUID();
+      const outcomeSeq = Number(this.db.prepare(`
+        SELECT coalesce(max(seq), 0) AS seq FROM outcomes WHERE project_id = ?
+      `).get(context.projectId).seq || 0);
+      this.db.prepare(`
+        INSERT INTO scoring_profiles(
+          profile_id, project_id, parent_profile_id, profile_version,
+          definition_json, source, outcome_seq, created_at
+        ) VALUES(?, ?, ?, ?, ?, 'offline_reanchor', ?, ?)
+      `).run(
+        profileId,
+        context.projectId,
+        active.profileId,
+        profileVersion,
+        canonicalJson({ ...definition, profileVersion }),
+        outcomeSeq,
+        timestamp,
+      );
+      const pending = this.db.prepare(`
+        SELECT category, end_seq FROM policy_proposals
+        WHERE project_id = ? AND status = 'pending'
+      `).all(context.projectId);
+      for (const proposal of pending) {
+        this.db.prepare(`
+          INSERT INTO learning_cursors(project_id, category, last_outcome_seq)
+          VALUES(?, ?, ?)
+          ON CONFLICT(project_id, category) DO UPDATE SET
+            last_outcome_seq = max(last_outcome_seq, excluded.last_outcome_seq)
+        `).run(context.projectId, proposal.category, Number(proposal.end_seq));
+      }
+      this.db.prepare(`
+        UPDATE policy_proposals SET status = 'stale', decided_at = ?
+        WHERE project_id = ? AND status = 'pending'
+      `).run(timestamp, context.projectId);
+      this.db.prepare(`
+        UPDATE project_scoring_profile
+        SET active_profile_id = ?, last_safe_profile_id = ?, updated_at = ?
+        WHERE project_id = ?
+      `).run(profileId, active.profileId, timestamp, context.projectId);
+      this.db.prepare(`
+        INSERT INTO learning_events(
+          event_id, project_id, event_type, profile_id, details_json, created_at
+        ) VALUES(?, ?, 'profile_reanchored', ?, ?, ?)
+      `).run(
+        randomUUID(),
+        context.projectId,
+        profileId,
+        canonicalJson({ fromVersion: active.profileVersion, toVersion: profileVersion }),
+        timestamp,
+      );
+      return {
+        profileId,
+        parentProfileId: active.profileId,
+        profileVersion,
+        source: "offline_reanchor",
+        staleProposals: pending.length,
+      };
+    });
+  }
+
+  enforceScoringSafety(context, route) {
+    return this.transaction(() => {
+      const snapshot = this.db.prepare(`
+        SELECT profile_id, signals_json
+        FROM route_score_snapshots
+        WHERE route_id = ? AND project_id = ? AND context_key = ?
+      `).get(route.route_id, context.projectId, context.contextKey);
+      if (!snapshot) return { checked: false, rolledBack: false };
+      const signals = parseJson(snapshot.signals_json, {});
+      const safetySensitive = signals.risk === true || signals.security === true || signals.migration === true;
+      const effortStrongEnough = EFFORT_ORDER.indexOf(route.effort) >= EFFORT_ORDER.indexOf("high");
+      const targetSafe = !safetySensitive || (route.family === "sol" && effortStrongEnough);
+      if (targetSafe) return { checked: true, rolledBack: false };
+      const state = this.db.prepare(`
+        SELECT active_profile_id FROM project_scoring_profile WHERE project_id = ?
+      `).get(context.projectId);
+      const profile = this.db.prepare(`
+        SELECT parent_profile_id, profile_version FROM scoring_profiles
+        WHERE profile_id = ? AND project_id = ?
+      `).get(snapshot.profile_id, context.projectId);
+      if (!profile?.parent_profile_id || state?.active_profile_id !== snapshot.profile_id) {
+        return { checked: true, rolledBack: false, violation: true };
+      }
+      const timestamp = nowIso();
+      this.db.prepare(`
+        UPDATE project_scoring_profile
+        SET active_profile_id = ?, last_safe_profile_id = NULL, updated_at = ?
+        WHERE project_id = ?
+      `).run(profile.parent_profile_id, timestamp, context.projectId);
+      const categoryWindows = this.db.prepare(`
+        SELECT category, max(seq) AS end_seq
+        FROM outcomes
+        WHERE project_id = ?
+        GROUP BY category
+      `).all(context.projectId);
+      for (const window of categoryWindows) {
+        this.db.prepare(`
+          INSERT INTO learning_cursors(project_id, category, last_outcome_seq)
+          VALUES(?, ?, ?)
+          ON CONFLICT(project_id, category) DO UPDATE SET
+            last_outcome_seq = max(last_outcome_seq, excluded.last_outcome_seq)
+        `).run(context.projectId, window.category, Number(window.end_seq || 0));
+      }
+      this.db.prepare(`
+        INSERT INTO learning_events(
+          event_id, project_id, event_type, profile_id, details_json, created_at
+        ) VALUES(?, ?, 'safety_auto_rollback', ?, ?, ?)
+      `).run(
+        randomUUID(),
+        context.projectId,
+        snapshot.profile_id,
+        canonicalJson({ violated: "risk_floor", fromVersion: Number(profile.profile_version) }),
+        timestamp,
+      );
+      return {
+        checked: true,
+        rolledBack: true,
+        violation: true,
+        fromProfileId: snapshot.profile_id,
+        toProfileId: profile.parent_profile_id,
+      };
+    });
+  }
+
+  learningStatus(context) {
+    const profile = this.ensureScoringProfile(context);
+    const policy = this.ensurePolicy(context);
+    const outcomes = this.db.prepare(`
+      SELECT
+        count(*) AS total,
+        coalesce(sum(CASE WHEN s.route_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS snapshotted,
+        coalesce(sum(CASE
+          WHEN s.eligible_learning = 1
+            AND o.status != 'unknown'
+            AND (o.failure_type IS NULL OR o.failure_type = 'reasoning')
+            AND o.retry_environment = 0
+            AND o.retry_information = 0
+            AND o.retry_tooling = 0
+          THEN 1 ELSE 0 END), 0) AS route_eligible
+      FROM outcomes o
+      LEFT JOIN route_score_snapshots s ON s.route_id = o.route_id
+      WHERE o.project_id = ?
+    `).get(context.projectId);
+    const exclusions = this.db.prepare(`
+      SELECT exclusion_codes_json, count(*) AS count
+      FROM route_score_snapshots
+      WHERE project_id = ? AND eligible_learning = 0
+      GROUP BY exclusion_codes_json
+      ORDER BY count(*) DESC, exclusion_codes_json
+    `).all(context.projectId).map((row) => ({
+      reasonCodes: parseJson(row.exclusion_codes_json, []),
+      count: Number(row.count),
+    }));
+    const proposals = this.db.prepare(`
+      SELECT proposal_id, category, delta, status, eligible_count, affected_count,
+             context_count, failure_count, correction_count, reasoning_retry_count,
+             base_revision_id, base_profile_id, kind, created_at
+      FROM policy_proposals
+      WHERE project_id = ?
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 20
+    `).all(context.projectId).map((row) => ({
+      proposalId: row.proposal_id,
+      category: row.category,
+      delta: Number(row.delta),
+      status: row.status,
+      eligibleCount: Number(row.eligible_count),
+      affectedCount: Number(row.affected_count),
+      contextCount: Number(row.context_count),
+      failureCount: Number(row.failure_count),
+      correctionCount: Number(row.correction_count),
+      reasoningRetryCount: Number(row.reasoning_retry_count),
+      baseRevisionId: row.base_revision_id,
+      baseProfileId: row.base_profile_id || null,
+      kind: row.kind || "offset",
+      createdAt: row.created_at,
+    }));
+    const events = this.db.prepare(`
+      SELECT event_type, profile_id, details_json, created_at
+      FROM learning_events
+      WHERE project_id = ?
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT 20
+    `).all(context.projectId).map((row) => ({
+      type: row.event_type,
+      profileId: row.profile_id || null,
+      details: parseJson(row.details_json, {}),
+      createdAt: row.created_at,
+    }));
+    return {
+      routerVersion: ROUTER_VERSION,
+      projectKey: context.projectId.slice(0, 12),
+      scope: "current_project",
+      scoringProfile: profile,
+      policy: {
+        revisionId: policy.revisionId,
+        categoryOffsets: policy.categoryOffsets,
+      },
+      evidence: {
+        outcomes: Number(outcomes.total || 0),
+        snapshotted: Number(outcomes.snapshotted || 0),
+        routeEligible: Number(outcomes.route_eligible || 0),
+        exclusions,
+      },
+      proposals,
+      events,
+    };
+  }
+
   ensurePolicy(context) {
     return this.transaction(() => {
       let current = this.db.prepare(`
@@ -900,6 +1370,28 @@ export class RouterStore {
         outcomeSeq: Number(current.outcome_seq || 0),
       };
     });
+  }
+
+  peekPolicy(context) {
+    const current = this.db.prepare(`
+      SELECT p.active_revision_id, r.parent_revision_id, r.offsets_json, r.outcome_seq
+      FROM project_policy p JOIN policy_revisions r ON r.revision_id = p.active_revision_id
+      WHERE p.project_id = ?
+    `).get(context.projectId);
+    if (!current) {
+      return {
+        revisionId: null,
+        parentRevisionId: null,
+        categoryOffsets: { ...DEFAULT_OFFSETS },
+        outcomeSeq: 0,
+      };
+    }
+    return {
+      revisionId: current.active_revision_id,
+      parentRevisionId: current.parent_revision_id,
+      categoryOffsets: { ...DEFAULT_OFFSETS, ...parseJson(current.offsets_json, {}) },
+      outcomeSeq: Number(current.outcome_seq || 0),
+    };
   }
 
   classifierHealth(context) {
@@ -1004,6 +1496,14 @@ export class RouterStore {
             : { state: "root", target: null, since: latest.outcome?.recordedAt || latest.createdAt },
       settings,
       policy: { revisionId: policy.revisionId, categoryOffsets: policy.categoryOffsets },
+      scoringProfile: (() => {
+        const profile = this.ensureScoringProfile(context);
+        return {
+          profileId: profile.profileId,
+          profileVersion: profile.profileVersion,
+          source: profile.source,
+        };
+      })(),
       latestRoute: latestStatus,
       pendingOutcomes,
       pendingProposals,
@@ -1032,11 +1532,15 @@ export class RouterStore {
       const projectId = context.projectId;
       this.db.prepare("DELETE FROM outcomes WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM stop_observations WHERE project_id = ?").run(projectId);
+      this.db.prepare("DELETE FROM route_score_snapshots WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM routes WHERE project_id = ?").run(projectId);
+      this.db.prepare("DELETE FROM learning_events WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM policy_proposals WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM learning_cursors WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM project_policy WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM policy_revisions WHERE project_id = ?").run(projectId);
+      this.db.prepare("DELETE FROM project_scoring_profile WHERE project_id = ?").run(projectId);
+      this.db.prepare("DELETE FROM scoring_profiles WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM classifier_health WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM legacy_imports WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM host_model_changes WHERE project_id = ?").run(projectId);

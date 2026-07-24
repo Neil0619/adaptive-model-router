@@ -397,6 +397,7 @@ test("Stop hook allows a route that already has a final outcome", async () => {
         gate: route.verificationGate,
         failureType: null,
         retries: 0,
+        retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
         escalations: route.escalation.count,
         userCorrection: false,
       }, { store, cwd: project.root });
