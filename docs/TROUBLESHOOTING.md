@@ -132,6 +132,23 @@ Inspect `reasonCodes`:
 Do not invent a model target after a fail-open result. Diagnose the catalog,
 host capability, settings, or local storage first.
 
+## Luna is recommended but the host rejects it as a subagent
+
+Upgrade to v0.3.1 or newer. v0.3.0 could mistake a root-visible Luna entry for
+bounded-subagent capability. The router now accepts the current host's strict
+`hostCapabilities.delegation` and otherwise conservatively permits only Sol
+and Terra.
+
+Luna may still be valid for the root task or the auxiliary classifier's
+ephemeral app-server. Those facts do not make it a bounded target. With a
+Sol/Terra-only delegate catalog, automatic Luna preferences fall back to Terra;
+an explicit Luna override returns `ask_user`.
+
+If a model declared by the host is nevertheless rejected at startup, record
+the route as `failed/tooling` and reroute once with its `previousRouteId`.
+After a second rejection, continue in the root and inspect the current host
+tool contract instead of retrying indefinitely.
+
 ## No model target or history is visible
 
 Send `router: status` or `路由器：状态`, then `router: history 10` or

@@ -5,7 +5,7 @@ import {
   CLASSIFIER_TIMEOUT_MS,
   PROMPT_SUMMARY_LIMIT,
 } from "./constants.mjs";
-import { selectAutomaticRoute } from "./catalog.mjs";
+import { normalizeCatalog, selectAutomaticRoute } from "./catalog.mjs";
 import { redactPromptSummary } from "./io.mjs";
 import { assertSchema } from "./schema.mjs";
 import { withAppServer } from "./app-server.mjs";
@@ -43,7 +43,6 @@ export async function classifyBorderline({
   goal,
   phase,
   signals,
-  catalog,
   context,
   store,
   settings,
@@ -65,17 +64,20 @@ export async function classifyBorderline({
   if (health.openedUntil > now) {
     return { state: "circuit_open", result: null, reasonCode: "CLASSIFIER_CIRCUIT_OPEN" };
   }
-  const target = selectAutomaticRoute(catalog, "luna", "low");
-  if (!target) return { state: "skipped", result: null, reasonCode: "CLASSIFIER_SKIPPED" };
   const prompt = buildClassifierPrompt({ goal, phase, signals });
   try {
     const result = await appServer(
-      (client, deadlineAt) => client.classify({
-        model: target.model,
-        effort: target.effort,
-        prompt,
-        outputSchema: CLASSIFIER_OUTPUT_SCHEMA,
-      }, deadlineAt),
+      async (client, deadlineAt) => {
+        const classifierCatalog = normalizeCatalog(await client.listModels(deadlineAt));
+        const target = selectAutomaticRoute(classifierCatalog, "luna", "low");
+        if (!target) throw new Error("classifier model unavailable");
+        return client.classify({
+          model: target.model,
+          effort: target.effort,
+          prompt,
+          outputSchema: CLASSIFIER_OUTPUT_SCHEMA,
+        }, deadlineAt);
+      },
       { timeoutMs },
     );
     assertSchema(CLASSIFIER_OUTPUT_SCHEMA, result, "classifier output");

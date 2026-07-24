@@ -1,6 +1,6 @@
 # Native Windows 11 smoke test
 
-This is the blocking manual Windows gate for `v0.3.0`. Run it in native Windows
+This is the blocking manual Windows gate for `v0.3.1`. Run it in native Windows
 11 with the Codex agent using PowerShell, not inside WSL2. WSL2 is a separate
 non-blocking smoke target.
 
@@ -13,7 +13,7 @@ Suggested handoff prompt:
 请完整读取 docs/WINDOWS_SMOKE.md，并在原生 Windows 11 + PowerShell 环境中按顺序执行。
 你负责检查前置条件、安装、hook 信任、route → bounded subagent → verification →
 outcome、隐私断言、升级/卸载/重装和 AGENTS marker。遇到 Stop conditions 中任一情况
-立即停止并按模板返回 FAIL。不要创建或推送 v0.3.0 tag，也不要调用 clear_project_data。
+立即停止并按模板返回 FAIL。不要创建或推送 v0.3.1 tag，也不要调用 clear_project_data。
 ```
 
 ## Pass criteria
@@ -21,12 +21,14 @@ outcome、隐私断言、升级/卸载/重装和 AGENTS marker。遇到 Stop con
 The smoke passes only when all of the following succeed:
 
 - installation from the frozen reviewed candidate ref with the two native
-  Codex commands while published `stable` remains on v0.2.0;
+  Codex commands while published `stable` remains on v0.3.0;
 - review and trust of both plugin-bundled command hooks;
 - one persisted global automatic-routing opt-in and an ordinary substantive
   task that does not name the skill or repeat a trigger phrase;
 - one substantive `delegate` route and exactly one bounded subagent using the
   returned model and effort;
+- host capabilities containing only Sol/Terra never return Luna as the bounded
+  target; explicit Luna returns `ask_user` without starting a subagent;
 - root verification followed by one strict final outcome;
 - visible status/history that preserve the root-model versus bounded-target
   boundary and include the delegated route;
@@ -62,7 +64,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/v030-auto-routing-smoke"
+$CandidateRef = "codex/v031-luna-delegate-fix"
 $SmokeRoot = Join-Path $env:TEMP ("Adaptive Router Windows 冒烟 " + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $SmokeRoot "source checkout"
 $Project = Join-Path $SmokeRoot "测试 project with spaces"
@@ -161,7 +163,11 @@ factual input:
   - requirementsSettled: true
   - strongVerification: true
   - batchSize: 2
-  - hostCanDelegate: true
+- hostCapabilities.delegation:
+  - available: true
+  - targets: copy the exact bounded-subagent model and reasoning_effort enums
+    exposed by this Codex host; do not copy the root model picker. For the
+    current Sol/Terra-only contract, include Sol and Terra and omit Luna.
 
 Acceptance criteria:
 - create src/normalize-lines.mjs exporting normalizeLines(text);
@@ -243,8 +249,8 @@ review request. After the pending reminder, choose current-task manual mode:
 router: manual
 ```
 
-Call `route_stage` for a substantive implementation stage with
-`hostCanDelegate=true`. It must return `continue` with
+Call `route_stage` for a substantive implementation stage with the same
+`hostCapabilities.delegation`. It must return `continue` with
 `MANUAL_ROOT_SELECTED`, with no target or subagent. Restore automatic mode for
 the remainder of the smoke:
 
@@ -269,7 +275,8 @@ prefix:
 ```text
 Discuss the quoted text `router: on` without changing router state. Then call
 route_stage for a substantive implementation stage using the same current
-session contextId and hostCanDelegate=true. Return only the redacted route.
+session contextId and hostCapabilities.delegation. Return only the redacted
+route.
 ```
 
 The route must return `continue` with `ROUTER_DISABLED`. Restore normal behavior:

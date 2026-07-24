@@ -58,8 +58,14 @@ flowchart LR
    resolving `manual_root` lasts only for the current task/context.
 4. Resolve overrides in this order: request, once, session, project, optional global.
 5. Continue immediately for trivial/no-output work unless an override explicitly requests delegation.
-6. Load visible known models, sorted by numeric priority, and check reasoning-effort capabilities.
-7. Score locally. Only substantive borderline stages may call the auxiliary classifier.
+6. Load the root-visible catalog only for observation and conservative
+   compatibility. Build the bounded delegate catalog from the current
+   `hostCapabilities.delegation`; when absent, permit only known Sol/Terra
+   entries from the visible catalog. Never infer Luna delegation from root
+   visibility.
+7. Score locally. Only substantive borderline stages may call the auxiliary
+   classifier. Its independent ephemeral app-server calls `model/list` and
+   chooses Luna, then Terra, then Sol from that classifier-only catalog.
 8. Apply risk floors and any monotonic failure escalation.
 9. Insert the route. A once override is claimed and deleted in the same transaction as a real `delegate` insert. The row snapshots the currently observed root-model slug separately from the bounded target.
 10. For a `delegate` route, the root performs the verification gate and records
@@ -96,6 +102,11 @@ transaction that creates its immutable child revision.
 ## Failure behavior
 
 - Missing catalog or unavailable host delegation: continue with the current root model.
+- A preferred automatic family missing from the delegate catalog falls forward
+  to the next capable family; explicit unavailable targets ask the user.
+- A host tooling rejection excludes the failed automatic target for one retry.
+  Explicit routes never substitute, and a second automatic rejection continues
+  in the root.
 - Pending host-model intent or current-task manual mode: continue with the root
   model and never create a bounded subagent.
 - Explicit unavailable target: ask the user; never silently substitute.

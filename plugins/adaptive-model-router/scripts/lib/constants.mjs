@@ -1,4 +1,4 @@
-export const ROUTER_VERSION = "0.3.0";
+export const ROUTER_VERSION = "0.3.1";
 export const SCHEMA_VERSION = "3.0";
 export const DATABASE_VERSION = 2;
 export const MIN_NODE = [24, 15, 0];
@@ -14,8 +14,8 @@ export const EFFORT_ORDER = [
   "low",
   "medium",
   "high",
-  "max",
   "xhigh",
+  "max",
   "ultra",
 ];
 
@@ -42,6 +42,7 @@ export const VERIFICATION_GATES = ["none", "task-specific", "targeted-tests", "s
 export const REASON_CODES = [
   "TRIVIAL_CONTINUE",
   "NO_WORK_PRODUCT",
+  "LOW_COMPLEXITY_CONTINUE",
   "ROUTER_DISABLED",
   "HOST_DELEGATION_UNAVAILABLE",
   "CATALOG_UNAVAILABLE",
@@ -62,6 +63,8 @@ export const REASON_CODES = [
   "EXPLORATION_STAGE",
   "REVIEW_STAGE",
   "STRONG_VERIFICATION",
+  "MAX_EFFORT_GATE",
+  "ULTRA_PARALLEL_WRITE_RISK",
   "CLASSIFIER_COMPLEXITY_UP",
   "CLASSIFIER_COMPLEXITY_DOWN",
   "CLASSIFIER_SKIPPED",
@@ -74,6 +77,7 @@ export const REASON_CODES = [
   "NON_REASONING_FAILURE",
   "ESCALATION_LIMIT_REACHED",
   "MONOTONIC_ESCALATION_UNAVAILABLE",
+  "TOOLING_TARGET_EXCLUDED",
   "HOST_MODEL_INTENT_PENDING",
   "MANUAL_ROOT_SELECTED",
 ];

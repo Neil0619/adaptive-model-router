@@ -16,6 +16,10 @@ The SQLite database stores:
   opaque change IDs and whether an event is pending, resolved, cancelled, or
   superseded.
 
+Per-call `hostCapabilities` are validated in memory and are not persisted.
+They contain only bounded model slugs and effort enums, never prompts, source,
+paths, or environment values.
+
 The database does **not** store prompts, source code, assistant messages,
 transcripts, environment variables, secrets, original project paths, or root
 reasoning effort. Root-model values must pass a short allowlisted slug format
@@ -37,6 +41,8 @@ The classifier is used only for substantive borderline tasks. At most 2,000 char
 Code blocks, inline code, POSIX and Windows absolute paths, environment assignments, and common secret formats are removed. Raw evidence objects, source attachments, and arbitrary files are never sent. The classifier must return a closed structured schema with enumerated reason codes; free text cannot become a routing instruction.
 
 Each classifier app-server uses an ephemeral thread and a unique temporary SQLite home. The temporary home is removed when the classifier process exits.
+Its classifier-only model catalog comes from that app-server's `model/list`;
+the catalog is not stored and is never treated as bounded-subagent capability.
 
 Set `classifierMode` to `local-only` or `disabled`, or set `ADAPTIVE_ROUTER_LOCAL_ONLY=1`, for zero classifier app-server calls.
 

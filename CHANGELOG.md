@@ -2,6 +2,39 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.1] - Unreleased
+
+### Fixed
+
+- Re-anchored deterministic routing to keep low-complexity, non-batch stages in
+  the root; use Terra for routine bounded work; and reserve stronger Sol effort
+  for review, risk, architecture, and failure-cost signals.
+- Corrected the effort strength order to
+  `high < xhigh < max < ultra`. Static routing can select Max only at score
+  `98..100` with at least two independent hard signals and never selects Ultra;
+  Ultra is reachable only through reasoning-failure escalation or an explicit
+  override.
+- Counted correlated security and migration evidence as one hard-signal
+  dimension for the Max gate. Added explicit public-contract, architecture
+  trade-off, irreversibility, and high-failure-cost evidence fields.
+- Kept environment, information, and tooling failures from increasing effort,
+  and made the two-step reasoning escalation chains monotonic through Max and
+  Ultra before asking the user.
+- Refused Ultra delegation when the caller reports parallel-write risk.
+- Separated root-visible, bounded-delegation, and auxiliary-classifier model
+  catalogs so a root-only Luna model is never returned as a subagent target.
+- Added strict optional `hostCapabilities.delegation` input. Current host
+  models and effort enums are authoritative; older callers conservatively use
+  Sol and Terra only.
+- Automatic Luna preferences now fall back to Terra with
+  `MODEL_FAMILY_FALLBACK`; explicit unavailable Luna overrides ask the user and
+  do not consume a once override.
+- A host tooling rejection records a failed outcome and permits at most one
+  automatic retry with the rejected target excluded. Explicit failures never
+  silently substitute, and a second automatic rejection fails open to root.
+- The auxiliary classifier now discovers its own models from app-server
+  `model/list`, independently of bounded subagent capability.
+
 ## [0.3.0] - 2026-07-21
 
 ### Added

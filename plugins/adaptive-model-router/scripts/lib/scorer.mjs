@@ -1,4 +1,4 @@
-import { CATEGORIES } from "./constants.mjs";
+import { CATEGORIES, EFFORT_ORDER } from "./constants.mjs";
 import { clamp, includesAny, normalizeText } from "./io.mjs";
 
 const PATTERNS = {
@@ -6,6 +6,8 @@ const PATTERNS = {
   risk: [/security|authentication|authorization|payment|migration|concurren|production|public api|database schema|安全|鉴权|认证|授权|支付|迁移|并发|生产|公开.?api|数据库结构/i],
   security: [/security|authentication|authorization|credential|secret|安全|鉴权|认证|授权|凭据|密钥/i],
   migration: [/migration|schema change|data backfill|迁移|表结构|数据回填/i],
+  publicContract: [/public api|shared contract|published interface|公开.?api|公共契约|已发布接口/i],
+  architectureTradeoff: [/architecture trade-?off|architectural decision|system design trade-?off|架构权衡|架构决策|系统设计权衡/i],
   crossCutting: [/multi[- ]module|cross[- ]module|end[- ]to[- ]end|full stack|shared contract|多个模块|跨模块|端到端|全栈|公共契约/i],
   mechanical: [/extract|classif|format|rename|translate|convert|sort|deduplicat|提取|分类|格式化|重命名|翻译|转换|排序|去重/i],
   clear: [/\b(?:exactly|well-scoped|acceptance criteria|specified)\b|按以下|明确|验收标准|只修改|固定格式|照此/i],
@@ -39,11 +41,16 @@ export function isTrivialTask(goal, evidence = {}) {
 export function scoreTask({ goal, phase = "", evidence = {}, policy = {} }) {
   const text = `${phase} ${normalizeText(goal)}`;
   const category = inferCategory(goal, phase);
+  const generalRisk = evidence.highRisk === true || includesAny(text, PATTERNS.risk);
   const signals = {
     ambiguity: evidence.ambiguous === true || includesAny(text, PATTERNS.ambiguity),
-    risk: evidence.highRisk === true || includesAny(text, PATTERNS.risk),
+    risk: generalRisk || evidence.highFailureCost === true || evidence.irreversible === true,
+    highFailureCost: evidence.highFailureCost === true,
+    irreversible: evidence.irreversible === true,
     security: evidence.securitySensitive === true || includesAny(text, PATTERNS.security),
     migration: evidence.migration === true || includesAny(text, PATTERNS.migration),
+    publicContract: evidence.publicContract === true || includesAny(text, PATTERNS.publicContract),
+    architectureTradeoff: evidence.architectureTradeoff === true || includesAny(text, PATTERNS.architectureTradeoff),
     crossCutting: evidence.crossCutting === true || includesAny(text, PATTERNS.crossCutting),
     mechanical: evidence.mechanical === true || includesAny(text, PATTERNS.mechanical),
     clear: evidence.requirementsSettled === true || includesAny(text, PATTERNS.clear),
@@ -68,11 +75,27 @@ export function scoreTask({ goal, phase = "", evidence = {}, policy = {} }) {
   const offset = Number(policy.categoryOffsets?.[category] || 0);
   score = clamp(score + offset, 0, 100);
   const matched = Object.values(signals).filter(Boolean).length;
-  const distance = Math.min(...[25, 55, 75, 90].map((boundary) => Math.abs(score - boundary)));
+  const distance = Math.min(...[25, 45, 60, 80, 92, 97].map((boundary) => Math.abs(score - boundary)));
   const confidence = clamp(0.55 + matched * 0.035 + distance / 100, 0.55, 0.96);
   const substantive = evidence.workProduct === true || text.length >= 80 || signals.implementation || signals.review || signals.exploration || evidence.batchSize > 1;
   const borderline = substantive && (distance <= 6 || (matched <= 1 && score >= 30 && score <= 80));
-  return { score, confidence, borderline, substantive, category: CATEGORIES.includes(category) ? category : "general", signals, policyOffset: offset };
+  const hardSignalCount = [
+    signals.security || signals.migration,
+    evidence.highRisk === true || signals.highFailureCost,
+    signals.crossCutting && signals.publicContract,
+    signals.architectureTradeoff,
+    signals.irreversible,
+  ].filter(Boolean).length;
+  return {
+    score,
+    confidence,
+    borderline,
+    substantive,
+    category: CATEGORIES.includes(category) ? category : "general",
+    signals,
+    hardSignalCount,
+    policyOffset: offset,
+  };
 }
 
 export function desiredRoute(scored, evidence = {}) {
@@ -83,11 +106,15 @@ export function desiredRoute(scored, evidence = {}) {
   else if (scored.score <= 60) [family, effort] = ["terra", "medium"];
   else if (scored.score <= 80) [family, effort] = ["sol", "medium"];
   else if (scored.score <= 92) [family, effort] = ["sol", "high"];
-  else [family, effort] = ["sol", "xhigh"];
+  else if (scored.score <= 97 || scored.hardSignalCount < 2) [family, effort] = ["sol", "xhigh"];
+  else [family, effort] = ["sol", "max"];
   if (scored.signals.mechanical && evidence.batchSize > 1 && !scored.signals.risk) [family, effort] = ["luna", "low"];
   if (scored.signals.implementation && family === "luna") [family, effort] = ["terra", "low"];
   if (scored.category === "review" && family !== "sol") [family, effort] = ["sol", "medium"];
-  if (scored.signals.risk || scored.signals.security || scored.signals.migration) [family, effort] = ["sol", "high"];
+  if (scored.signals.risk || scored.signals.security || scored.signals.migration) {
+    family = "sol";
+    if (EFFORT_ORDER.indexOf(effort) < EFFORT_ORDER.indexOf("high")) effort = "high";
+  }
   let verificationGate = "structured-check";
   if (!evidence.workProduct && scored.category === "general") verificationGate = "task-specific";
   if (scored.signals.implementation) verificationGate = "targeted-tests";
@@ -106,6 +133,7 @@ export function deterministicReasonCodes(scored, { learned = false } = {}) {
   if (scored.signals.exploration) codes.push("EXPLORATION_STAGE");
   if (scored.signals.review) codes.push("REVIEW_STAGE");
   if (scored.signals.verification) codes.push("STRONG_VERIFICATION");
+  if (scored.score >= 98 && scored.hardSignalCount >= 2) codes.push("MAX_EFFORT_GATE");
   if (learned) codes.push("LEARNED_POLICY");
   if (!codes.length) codes.push("DEFAULT_POLICY");
   return [...new Set(codes)];

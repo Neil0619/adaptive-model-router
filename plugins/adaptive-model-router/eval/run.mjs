@@ -20,6 +20,18 @@ const catalog = [
   { slug: "gpt-5.6-luna", visibility: "list", priority: 3, supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] },
 ];
 
+const hostCapabilities = {
+  delegation: {
+    available: true,
+    targets: catalog
+      .filter((entry) => !entry.slug.endsWith("-luna"))
+      .map((entry) => ({
+        model: entry.slug,
+        efforts: entry.supported_reasoning_levels,
+      })),
+  },
+};
+
 function family(model) {
   return model?.endsWith("-sol") ? "sol" : model?.endsWith("-terra") ? "terra" : model?.endsWith("-luna") ? "luna" : null;
 }
@@ -35,6 +47,7 @@ try {
       phase: item.phase,
       evidence: item.evidence,
       contextId: `eval-${item.id}`,
+      hostCapabilities,
     }, { catalog, cwd: temporary });
     const matches = result.action === item.action && (!item.family || family(result.target?.model) === item.family);
     if (matches) agreements += 1;

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getModelCatalog, selectAutomaticRoute, selectExplicitRoute } from "./catalog.mjs";
+import { getModelCatalog, selectAutomaticRoute, selectDelegateCatalog, selectExplicitRoute } from "./catalog.mjs";
 import { classifyBorderline } from "./classifier.mjs";
 import { MAX_ESCALATIONS, SCHEMA_VERSION, EFFORT_ORDER, FAMILY_ORDER } from "./constants.mjs";
 import { ROUTE_INPUT_SCHEMA, ROUTE_OUTPUT_SCHEMA } from "./contracts.mjs";
@@ -117,6 +117,52 @@ function validateRouteInput(input) {
     if (!input.previousRouteId) throw new Error("previousRouteId is required after verification failure");
     if (!input.evidence.failureType) throw new Error("failureType is required after verification failure");
   }
+  const delegation = input.hostCapabilities?.delegation;
+  if (delegation) {
+    if (input.evidence.hostCanDelegate != null && input.evidence.hostCanDelegate !== delegation.available) {
+      const error = new Error("hostCapabilities.delegation.available conflicts with evidence.hostCanDelegate");
+      error.code = "INVALID_INPUT";
+      throw error;
+    }
+    if (!delegation.available && delegation.targets.length) {
+      const error = new Error("hostCapabilities.delegation.targets must be empty when delegation is unavailable");
+      error.code = "INVALID_INPUT";
+      throw error;
+    }
+    const models = new Set();
+    for (const target of delegation.targets) {
+      const normalized = normalizeModelSlug(target.model);
+      if (!normalized || normalized !== target.model) {
+        const error = new Error("hostCapabilities delegation target model has an invalid format");
+        error.code = "INVALID_INPUT";
+        throw error;
+      }
+      if (models.has(normalized) || new Set(target.efforts).size !== target.efforts.length) {
+        const error = new Error("hostCapabilities delegation targets must not duplicate models or efforts");
+        error.code = "INVALID_INPUT";
+        throw error;
+      }
+      models.add(normalized);
+    }
+  }
+}
+
+function routeWasExplicit(route) {
+  let codes = [];
+  try {
+    codes = JSON.parse(route.reason_codes_json || "[]");
+  } catch {
+    return false;
+  }
+  return codes.some((code) => ["EXPLICIT_OVERRIDE", "ONCE_OVERRIDE", "SESSION_OVERRIDE", "PROJECT_OVERRIDE", "GLOBAL_OVERRIDE"].includes(code));
+}
+
+function routeWasToolingRetry(route) {
+  try {
+    return JSON.parse(route.reason_codes_json || "[]").includes("TOOLING_TARGET_EXCLUDED");
+  } catch {
+    return false;
+  }
 }
 
 function escalationPlan(previous, evidence, desired) {
@@ -206,7 +252,8 @@ async function routeWithStore(input, options, store) {
     store.commitRoute(context, route, null);
     return publicRoute(route);
   }
-  if (input.evidence.hostCanDelegate === false) {
+  const delegationCapabilities = input.hostCapabilities?.delegation || null;
+  if (input.evidence.hostCanDelegate === false || delegationCapabilities?.available === false) {
     const route = contextualRoute(store, context, { action: "continue", codes: ["HOST_DELEGATION_UNAVAILABLE"] });
     store.commitRoute(context, route, null);
     return publicRoute(route);
@@ -218,9 +265,8 @@ async function routeWithStore(input, options, store) {
     return publicRoute(route);
   }
 
-  const catalogResult = await getModelCatalog({ provided: options.catalog || null, store });
-  if (!catalogResult.models.length) {
-    const route = contextualRoute(store, context, { action: "continue", codes: ["CATALOG_UNAVAILABLE"] });
+  if (delegationCapabilities?.available && !delegationCapabilities.targets.length) {
+    const route = contextualRoute(store, context, { action: "continue", codes: ["HOST_DELEGATION_UNAVAILABLE"] });
     store.commitRoute(context, route, null);
     return publicRoute(route);
   }
@@ -233,7 +279,6 @@ async function routeWithStore(input, options, store) {
       goal: input.goal,
       phase: input.phase,
       signals: scored.signals,
-      catalog: catalogResult.models,
       context,
       store,
       settings,
@@ -249,8 +294,70 @@ async function routeWithStore(input, options, store) {
       };
     }
   }
+  if (
+    !initialOverride.override
+    && !previous
+    && scored.score <= 25
+    && Number(input.evidence.batchSize || 0) <= 1
+    && !scored.signals.implementation
+    && !scored.signals.review
+    && !scored.signals.risk
+    && !scored.signals.security
+    && !scored.signals.migration
+  ) {
+    const route = contextualRoute(store, context, {
+      action: "continue",
+      category: scored.category,
+      codes: ["LOW_COMPLEXITY_CONTINUE", classifier.reasonCode],
+      classifier: classifier.state,
+    });
+    store.commitRoute(context, route, null);
+    return publicRoute(route);
+  }
+  const catalogResult = await getModelCatalog({ provided: options.catalog || null, store });
+  if (!catalogResult.models.length && !delegationCapabilities?.available) {
+    const route = contextualRoute(store, context, { action: "continue", codes: ["CATALOG_UNAVAILABLE"] });
+    store.commitRoute(context, route, null);
+    return publicRoute(route);
+  }
+  const delegateCatalog = selectDelegateCatalog(catalogResult.models, delegationCapabilities);
+  if (!delegateCatalog.length) {
+    const route = contextualRoute(store, context, {
+      action: "continue",
+      codes: [delegationCapabilities ? "HOST_DELEGATION_UNAVAILABLE" : "CATALOG_UNAVAILABLE"],
+    });
+    store.commitRoute(context, route, null);
+    return publicRoute(route);
+  }
   let desired = desiredRoute(scored, input.evidence);
   const escalation = escalationPlan(previous, input.evidence, desired);
+  const toolingRetry = input.evidence.verificationFailed === true && input.evidence.failureType === "tooling";
+  const previousWasExplicit = toolingRetry && previous && routeWasExplicit(previous);
+  const toolingRetryExhausted = toolingRetry && previous && routeWasToolingRetry(previous);
+  if (previousWasExplicit) {
+    const route = contextualRoute(store, context, {
+      action: "ask_user",
+      category: scored.category,
+      codes: ["EXPLICIT_TARGET_UNAVAILABLE"],
+      classifier: classifier.state,
+      escalation: escalation.status,
+    });
+    route.previousRouteId = input.previousRouteId || null;
+    store.commitRoute(context, route, null);
+    return publicRoute(route);
+  }
+  if (toolingRetryExhausted) {
+    const route = contextualRoute(store, context, {
+      action: "continue",
+      category: scored.category,
+      codes: ["HOST_DELEGATION_UNAVAILABLE"],
+      classifier: classifier.state,
+      escalation: escalation.status,
+    });
+    route.previousRouteId = input.previousRouteId || null;
+    store.commitRoute(context, route, null);
+    return publicRoute(route);
+  }
   if (escalation.askUser) {
     const route = contextualRoute(store, context, {
       action: "ask_user",
@@ -264,6 +371,18 @@ async function routeWithStore(input, options, store) {
     return publicRoute(route);
   }
   desired = escalation.desired;
+  if (desired.effort === "ultra" && input.evidence.parallelWriteRisk === true) {
+    const route = contextualRoute(store, context, {
+      action: "ask_user",
+      category: scored.category,
+      codes: ["ULTRA_PARALLEL_WRITE_RISK", escalation.reasonCode],
+      classifier: classifier.state,
+      escalation: escalation.status,
+    });
+    route.previousRouteId = input.previousRouteId || null;
+    store.commitRoute(context, route, null);
+    return publicRoute(route);
+  }
 
   for (let claimAttempt = 0; claimAttempt < 2; claimAttempt += 1) {
     const resolved = store.resolveOverride(context, input.override || null, settings);
@@ -274,21 +393,34 @@ async function routeWithStore(input, options, store) {
       return publicRoute(route);
     }
     const requestedEffort = override?.effort || desired.effort;
+    if (requestedEffort === "ultra" && input.evidence.parallelWriteRisk === true) {
+      const route = contextualRoute(store, context, {
+        action: "ask_user",
+        category: scored.category,
+        codes: ["ULTRA_PARALLEL_WRITE_RISK", sourceCode(resolved.source)],
+        classifier: classifier.state,
+        escalation: escalation.status,
+      });
+      route.previousRouteId = input.previousRouteId || null;
+      store.commitRoute(context, route, null);
+      return publicRoute(route);
+    }
     let selected;
     if (override?.model) {
-      selected = selectExplicitRoute(catalogResult.models, override.model, requestedEffort, {
+      selected = selectExplicitRoute(delegateCatalog, override.model, requestedEffort, {
         effortWasExplicit: override.effort != null,
         minimumEffort: escalation.minimumEffort,
       });
     } else if (escalation.previousModel && !override?.model) {
-      selected = selectExplicitRoute(catalogResult.models, escalation.previousModel, requestedEffort, {
+      selected = selectExplicitRoute(delegateCatalog, escalation.previousModel, requestedEffort, {
         effortWasExplicit: false,
         minimumEffort: escalation.minimumEffort,
       });
     } else {
-      selected = selectAutomaticRoute(catalogResult.models, desired.family, requestedEffort, {
+      selected = selectAutomaticRoute(delegateCatalog, desired.family, requestedEffort, {
         minimumEffort: escalation.minimumEffort,
         exactEffort: override?.effort != null,
+        excludeModels: toolingRetry && previous?.model ? [previous.model] : [],
       });
     }
     if (override?.effort && selected?.effort !== override.effort) selected = null;
@@ -310,6 +442,7 @@ async function routeWithStore(input, options, store) {
     }
     const learned = Number(policy.categoryOffsets?.[scored.category] || 0) !== 0;
     const codes = [
+      toolingRetry ? "TOOLING_TARGET_EXCLUDED" : null,
       sourceCode(resolved.source),
       escalation.reasonCode,
       classifier.reasonCode,
