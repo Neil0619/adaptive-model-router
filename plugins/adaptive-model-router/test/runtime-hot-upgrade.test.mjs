@@ -29,7 +29,13 @@ async function createRuntime(root, version, { hookMarker = null, brokenProbe = f
   if (hookMarker) {
     const hookPath = join(root, "scripts", "hook.mjs");
     const hook = await readFile(hookPath, "utf8");
-    await writeFile(hookPath, `${hook.replace("#!/usr/bin/env node\n", "#!/usr/bin/env node\nprocess.stderr.write(\"" + hookMarker + "\\n\");\n")}`);
+    await writeFile(
+      hookPath,
+      hook.replace(
+        /^#!\/usr\/bin\/env node\r?\n/u,
+        `#!/usr/bin/env node\nprocess.stderr.write("${hookMarker}\\n");\n`,
+      ),
+    );
   }
   if (brokenProbe) {
     await writeFile(join(root, "scripts", "runtime-probe.mjs"), "#!/usr/bin/env node\nprocess.exit(78);\n");

@@ -101,18 +101,27 @@ export class RouterStore {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path, sqliteOptions(timeout));
     try {
-      chmodSync(path, 0o600);
-    } catch {
-      // Windows ACLs are inherited from the user's Codex data directory.
+      try {
+        chmodSync(path, 0o600);
+      } catch {
+        // Windows ACLs are inherited from the user's Codex data directory.
+      }
+      this.db.exec(`PRAGMA busy_timeout = ${Math.max(1, Math.trunc(timeout))}`);
+      this.db.exec("PRAGMA journal_mode = WAL");
+      this.db.exec("PRAGMA synchronous = NORMAL");
+      this.db.exec("PRAGMA foreign_keys = ON");
+      this.db.exec("PRAGMA trusted_schema = OFF");
+      this.migrate();
+      this.salt = this.getOrCreateSalt();
+      this.identityCache = new Map();
+    } catch (error) {
+      try {
+        this.close();
+      } catch {
+        // Preserve the initialization error that explains why the store is unusable.
+      }
+      throw error;
     }
-    this.db.exec(`PRAGMA busy_timeout = ${Math.max(1, Math.trunc(timeout))}`);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    this.db.exec("PRAGMA synchronous = NORMAL");
-    this.db.exec("PRAGMA foreign_keys = ON");
-    this.db.exec("PRAGMA trusted_schema = OFF");
-    this.migrate();
-    this.salt = this.getOrCreateSalt();
-    this.identityCache = new Map();
   }
 
   close() {
