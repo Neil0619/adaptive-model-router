@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [0.4.0] - Unreleased
+## [0.4.0] - 2026-07-26
 
 ### Added
 
@@ -71,7 +71,10 @@ All notable changes to this project are documented here.
   runtime-only updates do not. Hook, skill, MCP-schema, and storage-contract
   changes remain explicit restart boundaries.
 
-## [0.3.1] - Unreleased
+## [0.3.1] - Included in 0.4.0
+
+This capability fix was merged into v0.4.0 and was not published as a
+separate release.
 
 ### Fixed
 
