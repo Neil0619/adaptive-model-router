@@ -97,6 +97,27 @@ function sqliteOptions(timeout) {
   };
 }
 
+function configureWal(db, timeout) {
+  const retryTimeout = Math.max(1, Math.trunc(timeout));
+  const deadline = Date.now() + retryTimeout;
+  let attempt = 0;
+  while (true) {
+    try {
+      db.exec("PRAGMA journal_mode = WAL");
+      return;
+    } catch (error) {
+      if (!isSqliteBusy(error) || Date.now() >= deadline) throw error;
+      attempt += 1;
+      const remaining = Math.max(1, deadline - Date.now());
+      const delay = Math.min(
+        remaining,
+        Math.min(100, 12 * attempt) + Math.floor(Math.random() * 18),
+      );
+      sleepSync(delay);
+    }
+  }
+}
+
 export class RouterStore {
   constructor({ path = databasePath(), timeout = 5_000 } = {}) {
     this.path = path;
@@ -109,7 +130,9 @@ export class RouterStore {
         // Windows ACLs are inherited from the user's Codex data directory.
       }
       this.db.exec(`PRAGMA busy_timeout = ${Math.max(1, Math.trunc(timeout))}`);
-      this.db.exec("PRAGMA journal_mode = WAL");
+      // Enabling WAL takes an exclusive lock the first time a database is opened.
+      // SQLite's connection timeout does not reliably serialize concurrent PRAGMA calls.
+      configureWal(this.db, timeout);
       this.db.exec("PRAGMA synchronous = NORMAL");
       this.db.exec("PRAGMA foreign_keys = ON");
       this.db.exec("PRAGMA trusted_schema = OFF");
