@@ -125,16 +125,24 @@ In the new task:
 If the plugin or hooks are not visible, restart the ChatGPT desktop app and
 start another new task. If they remain unavailable, stop and report the failure.
 
-Send this exact-prefix control once to opt in for all local projects sharing
-this Codex Home:
+After hook trust is complete and the current turn is idle, the **human
+operator** must send this exact-prefix control as its own user message to opt
+in for all local projects sharing this Codex Home:
 
 ```text
 router: global on
 ```
 
-Then send `router: status`. Confirm that global automatic routing is on, this
-task is automatic, and the first valid host model is only the baseline. There
-must be no model-intent question on this first observation.
+The agent cannot send this control on the operator's behalf, and the opening
+instruction to read this runbook does not execute it. Do not inspect the
+global setting or fail this gate until the trusted `UserPromptSubmit` hook has
+processed the standalone control and its model-visible context confirms that
+the control was applied.
+
+The human operator must then send `router: status` as a separate message.
+Confirm that global automatic routing is on, this task is automatic, and the
+first valid host model is only the baseline. There must be no model-intent
+question on this first observation.
 
 On the CLI surface, send `/statusline`, add the `model` field to the footer,
 then send `/status` and record the active root model. The CLI does not expose
