@@ -148,7 +148,10 @@ On the CLI surface, send `/statusline`, add the `model` field to the footer,
 then send `/status` and record the active root model. The CLI does not expose
 the persistent top model selector used by Codex Desktop; the configured model
 status-line field is the equivalent visible root-model evidence for this
-smoke. Keep it visible during the bounded subagent run.
+smoke. Keep it visible during the bounded subagent run. This is a visual
+cross-check only: do not ask the human operator to retype the slug as a user
+message, and do not expect `/status` or `/statusline` to expose the internal
+task/session identifier.
 
 ## 5. Run the route → subagent → verification → outcome smoke
 
@@ -157,12 +160,14 @@ does not name the skill, use `$adaptive-model-router`, or contain a router
 control prefix:
 
 ```text
-Use the current Codex task/thread/session identifier exposed by the host as
-contextId. It must be the same stable identifier received by the plugin hooks.
-Reuse that exact contextId for every router tool call in this task. Do not
-invent an unrelated timestamp identifier. If the host does not expose a stable
-current-task identifier, stop and report that Stop-hook correlation cannot be
-verified.
+Use only the exact fixed contextId instruction injected by the trusted
+UserPromptSubmit hook for this ordinary task turn. The Hook derives it from
+the host session and makes it model-visible; `/status`, `/statusline`, cwd,
+environment variables, and project paths are not contextId sources. Reuse the
+injected value for every router tool call in this task and never invent or ask
+the human operator to provide one. If this ordinary prompt turn does not
+contain the trusted fixed-contextId instruction, stop and report that the Hook
+context is unavailable.
 
 Follow the fixed model-visible automatic-routing context injected by the
 trusted prompt hook. At the implementation stage, call route_stage with this
@@ -255,7 +260,8 @@ must offer current-task manual mode or keeping automatic routing. Send another
 ordinary prompt without answering; it must reuse the same pending change rather
 than create a second effective event.
 
-Choose keep-automatic with the standalone command:
+The human operator must choose keep-automatic with this standalone user
+message:
 
 ```text
 router: auto session
@@ -267,17 +273,17 @@ created the event.
 
 After the current turn is idle, the human operator must use `/model` a second
 time to choose a different slug once more, verify it with `/status`, and send
-the same review request. After the pending reminder, choose current-task manual
-mode:
+the same review request. After the pending reminder, the human operator must
+choose current-task manual mode with this standalone user message:
 
 ```text
 router: manual
 ```
 
-Call `route_stage` for a substantive implementation stage with the same
-`hostCapabilities.delegation`. It must return `continue` with
+The agent must then call `route_stage` for a substantive implementation stage
+with the same `hostCapabilities.delegation`. It must return `continue` with
 `MANUAL_ROOT_SELECTED`, with no target or subagent. Restore automatic mode for
-the remainder of the smoke:
+the remainder of the smoke by asking the human operator to send:
 
 ```text
 router: auto session
@@ -292,7 +298,8 @@ unverified model claim for the two visible `/model` selections.
 
 ## 7. Verify an ordinary prompt does not act as a control
 
-Disable the router for the current session with an exact control:
+The human operator must disable the router for the current session with this
+standalone exact-prefix user message:
 
 ```text
 router: off
@@ -308,7 +315,8 @@ session contextId and hostCapabilities.delegation. Return only the redacted
 route.
 ```
 
-The route must return `continue` with `ROUTER_DISABLED`. Restore normal behavior:
+The route must return `continue` with `ROUTER_DISABLED`. The human operator
+must restore normal behavior with this standalone user message:
 
 ```text
 router: auto session
