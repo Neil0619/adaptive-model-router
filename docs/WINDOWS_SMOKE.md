@@ -227,9 +227,13 @@ instead.
 
 ## 6. Exercise host-model intent protection
 
-Record the root-model slug shown by `router: status`. In the Codex model
-selector, choose a different model slug, not merely a different effort such as
-Sol Max versus Sol High. Send this ordinary substantive review request:
+Record the root-model slug shown by `router: status`. After the current turn is
+idle, the **human operator** must type `/model` in the Codex CLI, press Enter,
+and choose a different model slug from the popup. Do not ask the agent to invoke
+the slash command on its own: slash commands are host UI controls and are not
+agent tools. Choose a different slug, not merely a different effort such as Sol
+Max versus Sol High. Run `/status` and confirm that the selected slug is active,
+then send this ordinary substantive review request:
 
 ```text
 Review the line-normalization utility and its tests for missing edge cases.
@@ -253,8 +257,10 @@ router: auto session
 routing resumes from the next stage, not retroactively for the request that
 created the event.
 
-Use the model selector to choose a different slug once more and send the same
-review request. After the pending reminder, choose current-task manual mode:
+After the current turn is idle, the human operator must use `/model` a second
+time to choose a different slug once more, verify it with `/status`, and send
+the same review request. After the pending reminder, choose current-task manual
+mode:
 
 ```text
 router: manual
@@ -271,6 +277,10 @@ router: auto session
 
 The hook cannot observe reasoning effort. If only effort is changed, no pending
 event is expected; `router: manual` is the required explicit intent signal.
+If `/model` is absent from the CLI slash-command popup or cannot select a second
+model slug exposed to the signed-in account, stop and report that host capability
+as unavailable. Do not let the agent substitute a config edit, restart, or
+unverified model claim for the two visible `/model` selections.
 
 ## 7. Verify an ordinary prompt does not act as a control
 
