@@ -47,9 +47,9 @@ remain on the default protected `stable` branch.
 ## Hooks are installed but do not run
 
 Plugin installation does not automatically trust command hooks. In Codex, open
-`/hooks`, review the installed definitions, and trust the `UserPromptSubmit` and
-`Stop` handlers. Trust is tied to the definition hash, so changed hooks require
-review again.
+`/hooks`, review the installed definitions, and trust the `SubagentStart`,
+`UserPromptSubmit`, and `Stop` handlers. Trust is tied to the definition hash,
+so changed hooks require review again.
 
 Do not use `--dangerously-bypass-hook-trust` for normal installation or smoke
 testing. Also check that hooks have not been disabled by local or managed Codex
@@ -71,6 +71,16 @@ Hook trust is hash-specific when an upgrade changes the Hook definition.
 Compatible implementation-only runtime updates keep the stable definition and
 do not require renewed trust. Simple questions and stages with no work product
 may still continue in the root task by design.
+
+## A bounded subagent asks whether its model change was manual
+
+This indicates that an old hook treated the child's model as a new root model
+and recursively injected automatic routing. Upgrade to the current v0.4
+candidate, review all three changed hook definitions, and start a fresh task.
+In the fixed version, `SubagentStart` and subagent-marked prompt hooks tell the
+child to execute only its assigned scope. The child must not call
+`route_stage`, change model-intent state, or own `record_outcome`; the root
+task verifies and records the outcome.
 
 ## An existing task still reports the old Router runtime
 

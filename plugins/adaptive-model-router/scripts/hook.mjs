@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { parseControlPrompt } from "./lib/control.mjs";
+import { parseControlPrompt, parseReadOnlyInspectionPrompt } from "./lib/control.mjs";
 import { writeJsonLine } from "./lib/io.mjs";
 import { formatRouteHistory, formatRouteStatus } from "./lib/presentation.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
@@ -26,17 +26,27 @@ function readInput() {
   });
 }
 
-function additionalContext(message) {
+function additionalContext(message, hookEventName = "UserPromptSubmit") {
   writeJsonLine(process.stdout, {
-    hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: message },
+    hookSpecificOutput: { hookEventName, additionalContext: message },
   });
+}
+
+function controlResultContext(message) {
+  additionalContext([
+    "This exact router control has already been applied atomically by the trusted UserPromptSubmit hook.",
+    "Do not call any Adaptive Model Router MCP tool for this control turn, and do not invent or substitute a contextId.",
+    "Report only the hook result below.",
+    "",
+    message,
+  ].join("\n"));
 }
 
 function visibleReport(message, locale) {
   const instruction = locale === "zh"
     ? "请在本次回复中向用户清晰展示以下 Adaptive Model Router 报告；不要声称根任务模型发生了切换。"
     : "Clearly show the following Adaptive Model Router report in this response; do not claim that the root-task model changed.";
-  additionalContext(`${instruction}\n\n${message}`);
+  controlResultContext(`${instruction}\n\n${message}`);
 }
 
 function rootLabel(rootTask) {
@@ -47,15 +57,43 @@ function contextIdInstruction(contextId) {
   return `Use ${JSON.stringify(contextId)} as the contextId argument for every Adaptive Model Router MCP call in the current task and never substitute cwd/project paths.`;
 }
 
+function isBoundedSubagent(input) {
+  return [input.agent_id, input.agent_type].some(
+    (value) => typeof value === "string" && value.trim().length > 0,
+  );
+}
+
+function boundedSubagentContext() {
+  return [
+    "Adaptive Model Router: this agent is already a bounded subagent selected by its parent root task.",
+    "Execute only the bounded work assigned by the parent and return the result to that parent.",
+    "Never call route_stage, shadow_route_stage, resolve_host_model_intent, configure_router, learning-policy tools, or spawn another routed subagent.",
+    "Do not interpret this subagent model as the root-task model and do not change router controls or root-model intent state.",
+    "The parent root task owns route reporting, verification, record_outcome, and the routed-stage Stop lifecycle.",
+  ].join("\n");
+}
+
 function automaticRoutingContext(rootTask, contextId) {
   return [
     "Adaptive Model Router global automatic activation is enabled for this local Codex task.",
     "For every meaningful substantive stage boundary, use the adaptive-model-router skill and call route_stage without requiring the user to mention the skill.",
     "Do not route greetings, simple questions, or messages with no work product merely to create a subagent.",
+    "Read-only router inspection is not a substantive stage. For get_route_status, get_route_history, list_policy_proposals, get_learning_status, diagnose_router, or shadow_route_stage requests, call only the requested inspection tool and never call route_stage merely to precede it.",
     `The active root-task model observed by the hook is ${rootLabel(rootTask)}; its reasoning effort remains visible only in the Codex composer.`,
     "The router must never change the root-task model or label a bounded subagent target as the root model.",
     contextIdInstruction(contextId),
     "After each route, show the unchanged root model, action or bounded target, effort, and routeId. For delegate only, verify the work and record exactly one outcome; continue and ask_user routes have no outcome.",
+  ].join("\n");
+}
+
+function inspectionContext(rootTask, contextId, tools) {
+  return [
+    "Read-only router inspection is active for this turn.",
+    `Call only the requested inspection tool${tools.length === 1 ? "" : "s"}: ${tools.join(", ")}.`,
+    "Do not call route_stage before or after the inspection. A live route is blocked for this inspection turn.",
+    "Do not create a subagent or record an outcome for a shadow preference.",
+    `The active root-task model observed by the hook is ${rootLabel(rootTask)}; it remains unchanged.`,
+    contextIdInstruction(contextId),
   ].join("\n");
 }
 
@@ -82,6 +120,16 @@ function manualRootContext(rootTask, contextId) {
   ].join("\n");
 }
 
+function disabledRoutingContext(rootTask, contextId) {
+  return [
+    "Adaptive Model Router automatic routing is disabled for this session.",
+    `Continue in the root task using ${rootLabel(rootTask)} and do not create an automatically routed subagent.`,
+    "Do not call route_stage for ordinary tasks while this override is active. If the user explicitly invokes the router, respect its ROUTER_DISABLED continue decision.",
+    contextIdInstruction(contextId),
+    "Quoted commands and ordinary discussion do not change router controls. The user can send '路由器：本任务自动' to clear this session override.",
+  ].join("\n");
+}
+
 function pendingChoiceReport(state, locale) {
   if (state.taskMode !== "pending_confirmation" || !state.pendingChange) return "";
   const change = state.pendingChange;
@@ -91,6 +139,10 @@ function pendingChoiceReport(state, locale) {
 }
 
 async function promptHook(input) {
+  if (isBoundedSubagent(input)) {
+    additionalContext(boundedSubagentContext());
+    return;
+  }
   const prompt = String(input.prompt || "");
   const control = parseControlPrompt(prompt);
   const locale = prompt.startsWith("路由器：") ? "zh" : "en";
@@ -99,12 +151,18 @@ async function promptHook(input) {
   const store = new RouterStore();
   try {
     const context = store.context({ cwd: input.cwd || process.cwd(), contextId, authoritative: true });
+    const inspection = control ? null : parseReadOnlyInspectionPrompt(prompt);
+    if (inspection) store.setInspectionGuard(context);
+    else store.clearInspectionGuard(context);
     if (!control) {
       const settings = store.getSettings(context);
       if (settings.autoActivate !== true || settings.enabled !== true) {
         const state = store.hostModelState(context);
         if (state.taskMode === "pending_confirmation") store.cancelPendingHostModelIntent(context);
         store.observeHostModel(context, input.model, { detectChanges: false });
+        if (inspection) {
+          additionalContext(inspectionContext(store.rootTask(context), contextId, inspection.tools));
+        }
         return;
       }
       const resolved = store.resolveOverride(context, null, settings);
@@ -112,12 +170,20 @@ async function promptHook(input) {
       store.observeHostModel(context, input.model, { detectChanges: !disabled });
       const state = store.hostModelState(context);
       const rootTask = store.rootTask(context);
+      if (inspection) {
+        additionalContext(inspectionContext(rootTask, contextId, inspection.tools));
+        return;
+      }
       if (state.taskMode === "pending_confirmation") {
         additionalContext(pendingIntentContext(state, contextId));
         return;
       }
-      if (state.taskMode === "manual_root" || disabled) {
+      if (state.taskMode === "manual_root") {
         additionalContext(manualRootContext(rootTask, contextId));
+        return;
+      }
+      if (disabled) {
+        additionalContext(disabledRoutingContext(rootTask, contextId));
         return;
       }
       additionalContext(automaticRoutingContext(rootTask, contextId));
@@ -146,7 +212,7 @@ async function promptHook(input) {
     if (control.command === "global_enable") {
       store.configure(context, { autoActivate: true }, "global");
       store.observeHostModel(context, input.model, { detectChanges: false });
-      additionalContext("Adaptive Router global automatic activation is enabled. Ordinary substantive tasks will route automatically after this control turn.");
+      controlResultContext("Adaptive Router global automatic activation is enabled. Ordinary substantive tasks will route automatically after this control turn.");
       return;
     }
     if (control.command === "global_disable") {
@@ -155,13 +221,13 @@ async function promptHook(input) {
         store.cancelPendingHostModelIntent(context);
       }
       store.observeHostModel(context, input.model, { detectChanges: false });
-      additionalContext("Adaptive Router global automatic activation is disabled. Explicit skill use remains available.");
+      controlResultContext("Adaptive Router global automatic activation is disabled. Explicit skill use remains available.");
       return;
     }
     if (control.command === "manual") {
       store.observeHostModel(context, input.model, { detectChanges: false });
       store.setTaskMode(context, "manual_root");
-      additionalContext("Adaptive routing is in manual-root mode for this task; do not create a routed subagent.");
+      controlResultContext("Adaptive routing is in manual-root mode for this task; do not create a routed subagent.");
       return;
     }
     if (control.command === "enable") {
@@ -169,20 +235,20 @@ async function promptHook(input) {
       store.clearOverrides(context, "session");
       store.setTaskMode(context, "automatic");
       store.observeHostModel(context, input.model, { detectChanges: false });
-      additionalContext("Adaptive routing is enabled for this project.");
+      controlResultContext("Adaptive routing is enabled for this project.");
       return;
     }
     if (control.command === "disable") {
       store.setOverride(context, { scope: "session", mode: "disabled" });
       store.observeHostModel(context, input.model, { detectChanges: false });
-      additionalContext("Adaptive routing is disabled for this session.");
+      controlResultContext("Adaptive routing is disabled for this session.");
       return;
     }
     if (control.command === "auto") {
       store.clearOverrides(context, control.scope);
       if (["session", "all"].includes(control.scope)) store.setTaskMode(context, "automatic");
       store.observeHostModel(context, input.model, { detectChanges: false });
-      additionalContext(`Adaptive routing override cleared for scope ${control.scope}.`);
+      controlResultContext(`Adaptive routing override cleared for scope ${control.scope}.`);
       return;
     }
     if (control.command === "lock") {
@@ -194,7 +260,7 @@ async function promptHook(input) {
       });
       if (["once", "session"].includes(control.scope)) store.setTaskMode(context, "automatic");
       store.observeHostModel(context, input.model, { detectChanges: false });
-      additionalContext(
+      controlResultContext(
         `Adaptive routing lock set for scope ${control.scope}: model=${control.model}, effort=${control.effort || "automatic"}.`,
       );
     }
@@ -204,6 +270,7 @@ async function promptHook(input) {
 }
 
 async function stopHook(input) {
+  if (isBoundedSubagent(input)) return;
   const contextId = String(input.session_id || input.turn_id || "");
   if (!contextId) return;
   const store = new RouterStore();
@@ -221,6 +288,10 @@ async function stopHook(input) {
   }
 }
 
+function subagentStartHook() {
+  additionalContext(boundedSubagentContext(), "SubagentStart");
+}
+
 const startedAt = Date.now();
 let stage = "runtime";
 
@@ -236,6 +307,9 @@ try {
   } else if (process.argv[2] === "stop") {
     stage = "stop";
     await stopHook(input);
+  } else if (process.argv[2] === "subagent-start") {
+    stage = "subagent_start";
+    subagentStartHook();
   }
 } catch (error) {
   process.stderr.write("Adaptive Model Router hook failed safely.\n");

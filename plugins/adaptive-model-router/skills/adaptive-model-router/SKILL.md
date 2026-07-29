@@ -7,6 +7,13 @@ description: Choose whether a substantive Codex task stage should continue local
 
 Use the router at a meaningful stage boundary, not before every message. It does not change the root task model. It can recommend one bounded subagent model and reasoning effort while the root remains the orchestrator. A trusted plugin hook may automatically activate this workflow globally, so a user does not need to mention the skill on every substantive task.
 
+This routing workflow belongs to the root task only. If the current agent is
+already a bounded subagent, execute only the parent's assigned scope and return
+the result. Do not call `route_stage` or `shadow_route_stage`, change router
+controls or root-model intent, spawn another routed subagent, or call
+`record_outcome`; the parent root task owns routing, verification, and outcome
+recording.
+
 ## Route a stage
 
 1. Call `route_stage` with:
@@ -63,11 +70,30 @@ tool. Only `hostCapabilities.delegation.targets` authorizes a bounded target.
 
 Only prompts beginning exactly with `router:` or `路由器：` are control commands. Quoted text, code blocks, negations, and ordinary discussion do not change router state.
 
+The installed `UserPromptSubmit` hook executes every recognized exact control
+atomically before the model handles that turn. When its additional context says
+that the control was applied, report that result only: do not replay the
+control through `configure_router`, `set_route_override`,
+`resolve_host_model_intent`, or any other MCP tool. Never invent a `contextId`.
+For ordinary stage and inspection MCP calls, use only the exact fixed
+`contextId` injected by the hook. If a control turn has no trusted hook result,
+do not guess a task identifier or claim success; explain that the control could
+not be applied safely and advise the user to re-trust or diagnose the hook.
+
 The global automatic activation setting is opt-in. `router: global on` / `路由器：全局开启` enables it for local Codex tasks sharing this plugin data. `router: global off` / `路由器：全局关闭` stops automatic activation but keeps explicit skill use available. `router: manual` / `路由器：本任务手动` keeps the current task root-only; `router: auto session` / `路由器：本任务自动` resumes automatic routing.
 
 The hook may observe the active root-model slug, but never its reasoning effort. The first observation in a task is a baseline. If a later slug changes, the hook places the task in `pending_confirmation`: keep working in the root, never spawn a subagent, and remind the user to choose manual-root or keep-automatic. A `route_stage` call at a substantive boundary returns `continue` with `HOST_MODEL_INTENT_PENDING`; respect it. Continue root-only on later turns until the user explicitly answers. Then call `resolve_host_model_intent` with the pending `changeId`; never infer a decision from silence or unrelated text. `manual_root` lasts only for the current task and likewise forces `MANUAL_ROOT_SELECTED` plus `continue`.
 
 Learning is project-local. A proposal never changes policy until the user explicitly calls `approve_policy_proposal`. Rejection advances the evidence window; rollback walks backward through immutable revisions. `get_learning_status` is read-only. `shadow_route_stage` must remain free of route/outcome/proposal/cursor writes. Rebase and offline scoring-profile re-anchor require an explicit user instruction; re-anchor also requires the exact confirmation. Do not approve, reject, rebase, re-anchor, roll back, import legacy settings, or clear project data without an explicit user instruction. The only automatic learning mutation beyond proposal creation is a hard risk-floor rollback.
+
+Read-only router inspection is not a substantive stage boundary. When the user
+requests `get_route_status`, `get_route_history`, `list_policy_proposals`,
+`get_learning_status`, `diagnose_router`, or `shadow_route_stage`, call only
+the requested inspection tool and do not call `route_stage` merely to precede
+it. In particular, call `shadow_route_stage` directly, do not create a
+subagent or outcome for its preference, and do not pass `hostCapabilities`;
+shadow scoring returns a preferred family/effort rather than a live bounded
+target.
 
 The auxiliary classifier receives only a redacted short summary, phase, and boolean signals. If it is disabled, local-only, timed out, or circuit-broken, use the deterministic route.
 

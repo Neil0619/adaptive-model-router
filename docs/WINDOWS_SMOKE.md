@@ -22,11 +22,13 @@ The smoke passes only when all of the following succeed:
 
 - installation from the frozen reviewed candidate ref with the two native
   Codex commands while published `stable` remains on v0.3.0;
-- review and trust of both plugin-bundled command hooks;
+- review and trust of all three plugin-bundled command hooks;
 - one persisted global automatic-routing opt-in and an ordinary substantive
   task that does not name the skill or repeat a trigger phrase;
 - one substantive `delegate` route and exactly one bounded subagent using the
   returned model and effort;
+- bounded-subagent isolation: no recursive route, root-model intent event,
+  control mutation, or child-owned outcome;
 - host capabilities containing only Sol/Terra never return Luna as the bounded
   target; explicit Luna returns `ask_user` without starting a subagent;
 - root verification followed by one strict final outcome;
@@ -64,7 +66,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/v040-scoring-evolution"
+$CandidateRef = "codex/v040-shadow-inspection-fix"
 $SmokeRoot = Join-Path $env:TEMP ("Adaptive Router Windows 冒烟 " + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $SmokeRoot "source checkout"
 $Project = Join-Path $SmokeRoot "测试 project with spaces"
@@ -115,29 +117,41 @@ codex
 In the new task:
 
 1. Open `/hooks`.
-2. Review and trust the plugin's `UserPromptSubmit` handler.
-3. Review and trust the plugin's `Stop` handler.
-4. Do not use `--dangerously-bypass-hook-trust`.
+2. Review and trust the plugin's `SubagentStart` handler.
+3. Review and trust the plugin's `UserPromptSubmit` handler.
+4. Review and trust the plugin's `Stop` handler.
+5. Do not use `--dangerously-bypass-hook-trust`.
 
 If the plugin or hooks are not visible, restart the ChatGPT desktop app and
 start another new task. If they remain unavailable, stop and report the failure.
 
-Send this exact-prefix control once to opt in for all local projects sharing
-this Codex Home:
+After hook trust is complete and the current turn is idle, the **human
+operator** must send this exact-prefix control as its own user message to opt
+in for all local projects sharing this Codex Home:
 
 ```text
 router: global on
 ```
 
-Then send `router: status`. Confirm that global automatic routing is on, this
-task is automatic, and the first valid host model is only the baseline. There
-must be no model-intent question on this first observation.
+The agent cannot send this control on the operator's behalf, and the opening
+instruction to read this runbook does not execute it. Do not inspect the
+global setting or fail this gate until the trusted `UserPromptSubmit` hook has
+processed the standalone control and its model-visible context confirms that
+the control was applied.
+
+The human operator must then send `router: status` as a separate message.
+Confirm that global automatic routing is on, this task is automatic, and the
+first valid host model is only the baseline. There must be no model-intent
+question on this first observation.
 
 On the CLI surface, send `/statusline`, add the `model` field to the footer,
 then send `/status` and record the active root model. The CLI does not expose
 the persistent top model selector used by Codex Desktop; the configured model
 status-line field is the equivalent visible root-model evidence for this
-smoke. Keep it visible during the bounded subagent run.
+smoke. Keep it visible during the bounded subagent run. This is a visual
+cross-check only: do not ask the human operator to retype the slug as a user
+message, and do not expect `/status` or `/statusline` to expose the internal
+task/session identifier.
 
 ## 5. Run the route → subagent → verification → outcome smoke
 
@@ -146,12 +160,14 @@ does not name the skill, use `$adaptive-model-router`, or contain a router
 control prefix:
 
 ```text
-Use the current Codex task/thread/session identifier exposed by the host as
-contextId. It must be the same stable identifier received by the plugin hooks.
-Reuse that exact contextId for every router tool call in this task. Do not
-invent an unrelated timestamp identifier. If the host does not expose a stable
-current-task identifier, stop and report that Stop-hook correlation cannot be
-verified.
+Use only the exact fixed contextId instruction injected by the trusted
+UserPromptSubmit hook for this ordinary task turn. The Hook derives it from
+the host session and makes it model-visible; `/status`, `/statusline`, cwd,
+environment variables, and project paths are not contextId sources. Reuse the
+injected value for every router tool call in this task and never invent or ask
+the human operator to provide one. If this ordinary prompt turn does not
+contain the trusted fixed-contextId instruction, stop and report that the Hook
+context is unavailable.
 
 Follow the fixed model-visible automatic-routing context injected by the
 trusted prompt hook. At the implementation stage, call route_stage with this
@@ -188,6 +204,12 @@ If route_stage returns continue or ask_user, do not force delegation. Stop and
 report the complete redacted route result because the smoke gate did not reach
 the required bounded-subagent path.
 
+The child must receive the bounded-subagent isolation instruction and execute
+only the assigned stage. If it calls `route_stage`, asks whether the Terra/Sol
+child model is a manual root-model change, mutates a router control, or owns
+`record_outcome`, stop and report a failure. The parent root task alone
+verifies the result and records the route outcome.
+
 The root task must review and integrate the delegated work, then run:
 node --test test/normalize-lines.test.mjs
 
@@ -218,9 +240,13 @@ instead.
 
 ## 6. Exercise host-model intent protection
 
-Record the root-model slug shown by `router: status`. In the Codex model
-selector, choose a different model slug, not merely a different effort such as
-Sol Max versus Sol High. Send this ordinary substantive review request:
+Record the root-model slug shown by `router: status`. After the current turn is
+idle, the **human operator** must type `/model` in the Codex CLI, press Enter,
+and choose a different model slug from the popup. Do not ask the agent to invoke
+the slash command on its own: slash commands are host UI controls and are not
+agent tools. Choose a different slug, not merely a different effort such as Sol
+Max versus Sol High. Run `/status` and confirm that the selected slug is active,
+then send this ordinary substantive review request:
 
 ```text
 Review the line-normalization utility and its tests for missing edge cases.
@@ -234,7 +260,8 @@ must offer current-task manual mode or keeping automatic routing. Send another
 ordinary prompt without answering; it must reuse the same pending change rather
 than create a second effective event.
 
-Choose keep-automatic with the standalone command:
+The human operator must choose keep-automatic with this standalone user
+message:
 
 ```text
 router: auto session
@@ -244,17 +271,19 @@ router: auto session
 routing resumes from the next stage, not retroactively for the request that
 created the event.
 
-Use the model selector to choose a different slug once more and send the same
-review request. After the pending reminder, choose current-task manual mode:
+After the current turn is idle, the human operator must use `/model` a second
+time to choose a different slug once more, verify it with `/status`, and send
+the same review request. After the pending reminder, the human operator must
+choose current-task manual mode with this standalone user message:
 
 ```text
 router: manual
 ```
 
-Call `route_stage` for a substantive implementation stage with the same
-`hostCapabilities.delegation`. It must return `continue` with
+The agent must then call `route_stage` for a substantive implementation stage
+with the same `hostCapabilities.delegation`. It must return `continue` with
 `MANUAL_ROOT_SELECTED`, with no target or subagent. Restore automatic mode for
-the remainder of the smoke:
+the remainder of the smoke by asking the human operator to send:
 
 ```text
 router: auto session
@@ -262,10 +291,15 @@ router: auto session
 
 The hook cannot observe reasoning effort. If only effort is changed, no pending
 event is expected; `router: manual` is the required explicit intent signal.
+If `/model` is absent from the CLI slash-command popup or cannot select a second
+model slug exposed to the signed-in account, stop and report that host capability
+as unavailable. Do not let the agent substitute a config edit, restart, or
+unverified model claim for the two visible `/model` selections.
 
 ## 7. Verify an ordinary prompt does not act as a control
 
-Disable the router for the current session with an exact control:
+The human operator must disable the router for the current session with this
+standalone exact-prefix user message:
 
 ```text
 router: off
@@ -281,7 +315,8 @@ session contextId and hostCapabilities.delegation. Return only the redacted
 route.
 ```
 
-The route must return `continue` with `ROUTER_DISABLED`. Restore normal behavior:
+The route must return `continue` with `ROUTER_DISABLED`. The human operator
+must restore normal behavior with this standalone user message:
 
 ```text
 router: auto session
@@ -299,6 +334,21 @@ definition. Confirm:
 - route, outcome, proposal, and learning-cursor counts do not change;
 - the completed smoke outcome includes all four `retryBreakdown` counters and
   their sum equals `retries`.
+
+Use this exact prompt for the shadow check:
+
+```text
+This is read-only router inspection, not a substantive work-product stage.
+Call shadow_route_stage exactly once for a risk-sensitive review using the
+active scoring definition and the same current task contextId. Do not call
+route_stage before or after it, do not pass hostCapabilities, and do not create
+a subagent or record an outcome. Then call get_learning_status once more.
+Return only: shadow, sideEffects, preferred family/effort, active profile
+identity/version, and shadow_route_stage's stateCounts before/after object.
+```
+
+Stop immediately if a live route appears, any count changes, or the Stop hook
+requests an outcome for the shadow preference.
 
 The automated suite covers destructive re-anchor, proposal rebase, and hard
 safety auto-rollback. Do not mutate the smoke project's active profile.
@@ -393,6 +443,7 @@ Candidate commit SHA:
 Native install: PASS | FAIL
 Compatible runtime hot-upgrade/rollback suite: PASS | FAIL
 UserPromptSubmit hook trusted/exercised: PASS | FAIL
+SubagentStart hook trusted/exercised: PASS | FAIL
 Stop hook trusted/exercised: PASS | FAIL
 Global automatic opt-in persisted across project/restart: PASS | FAIL
 First model observation created no pending event: PASS | FAIL

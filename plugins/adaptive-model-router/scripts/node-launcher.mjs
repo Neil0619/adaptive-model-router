@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { discoverNodeRuntime } from "./lib/node-discovery.mjs";
 import { emitDiagnostic } from "./lib/diagnostics.mjs";
 import {
+  activateRuntimeTrial,
   markRuntimeFailed,
   markRuntimeHealthy,
   pluginRootFrom,
@@ -43,6 +44,14 @@ function childEnvironment() {
   return env;
 }
 
+function runtimeSelectionFailureCategory(error) {
+  if (error?.message === "runtime pointer is busy") return "pointer_busy";
+  if (["EACCES", "EBUSY", "EEXIST", "ENOENT", "EPERM"].includes(error?.code)) {
+    return `pointer_${error.code.toLowerCase()}`;
+  }
+  return "selection_failed";
+}
+
 if (!target) {
   process.stderr.write(failure);
   emitDiagnostic({ component: "launcher", stage, category: "missing_target", startedAt });
@@ -60,7 +69,6 @@ if (!runtime) {
 const launchEnv = childEnvironment();
 let resolvedTarget = target;
 let selectedResolution = null;
-let attemptedResolution = null;
 try {
   const currentRoot = launchEnv.PLUGIN_ROOT
     ? resolve(launchEnv.PLUGIN_ROOT)
@@ -68,51 +76,52 @@ try {
   let resolution = resolveRuntime(currentRoot, { env: launchEnv });
   const currentHook = runtimeEntrypoint(resolution.current, "hook");
   if (resolve(target) === resolve(currentHook)) {
-    if (resolution.candidate.root !== resolution.current.root) attemptedResolution = resolution;
     if (resolution.provisional) {
-      const contractProbe = spawnSync(runtime.executable, [
-        runtimeEntrypoint(resolution.current, "probe"),
-        resolution.candidate.root,
-      ], {
+      resolution = activateRuntimeTrial(currentRoot, {
         env: launchEnv,
-        encoding: "utf8",
-        windowsHide: true,
-        timeout: RUNTIME_PROBE_TIMEOUT_MS,
+        probe: (trial) => {
+          const contractProbe = spawnSync(runtime.executable, [
+            runtimeEntrypoint(trial.current, "probe"),
+            trial.candidate.root,
+          ], {
+            env: launchEnv,
+            encoding: "utf8",
+            windowsHide: true,
+            timeout: RUNTIME_PROBE_TIMEOUT_MS,
+          });
+          const healthProbe = !contractProbe.error && contractProbe.status === 0
+            ? spawnSync(runtime.executable, [runtimeEntrypoint(trial.candidate, "probe")], {
+              env: launchEnv,
+              encoding: "utf8",
+              windowsHide: true,
+              timeout: RUNTIME_PROBE_TIMEOUT_MS,
+            })
+            : null;
+          return (
+            !contractProbe.error &&
+            contractProbe.status === 0 &&
+            healthProbe &&
+            !healthProbe.error &&
+            healthProbe.status === 0
+          );
+        },
       });
-      const healthProbe = !contractProbe.error && contractProbe.status === 0
-        ? spawnSync(runtime.executable, [runtimeEntrypoint(resolution.candidate, "probe")], {
-          env: launchEnv,
-          encoding: "utf8",
-          windowsHide: true,
-          timeout: RUNTIME_PROBE_TIMEOUT_MS,
-        })
-        : null;
-      const probesPassed =
-        !contractProbe.error &&
-        contractProbe.status === 0 &&
-        healthProbe &&
-        !healthProbe.error &&
-        healthProbe.status === 0;
-      if (!probesPassed) {
-        markRuntimeFailed(resolution, launchEnv);
-        resolution = resolveRuntime(currentRoot, { env: launchEnv, allowTrial: false });
-      }
     }
     resolvedTarget = runtimeEntrypoint(resolution.candidate, "hook");
     selectedResolution = resolution;
-    attemptedResolution = null;
     if (launchEnv.ADAPTIVE_ROUTER_RUNTIME_TRACE === "1") {
       process.stderr.write(`Adaptive Model Router runtime=${resolution.candidate.descriptor.runtimeVersion}\n`);
     }
   } else if (launchEnv.ADAPTIVE_ROUTER_RUNTIME_TRACE === "1") {
     process.stderr.write("Adaptive Model Router runtime=unmapped\n");
   }
-} catch {
+} catch (error) {
   // A damaged optional hot-runtime candidate must not block the pinned shell.
-  if (attemptedResolution) markRuntimeFailed(attemptedResolution, launchEnv);
   resolvedTarget = target;
   if (launchEnv.ADAPTIVE_ROUTER_RUNTIME_TRACE === "1") {
-    process.stderr.write("Adaptive Model Router runtime=pinned\n");
+    process.stderr.write(
+      `Adaptive Model Router runtime=pinned category=${runtimeSelectionFailureCategory(error)}\n`,
+    );
   }
 }
 

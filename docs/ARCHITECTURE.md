@@ -8,7 +8,7 @@ operations and diagnostics CLI, not a global command.
 
 ```mermaid
 flowchart LR
-    Prompt["UserPromptSubmit hook"] --> OptIn["global automatic opt-in"]
+    Prompt["root UserPromptSubmit hook"] --> OptIn["global automatic opt-in"]
     Prompt --> Observe["observe root-model slug"]
     Observe --> Intent["automatic / pending / manual_root"]
     OptIn --> Root["Root Codex task"]
@@ -20,7 +20,9 @@ flowchart LR
     Route --> Continue["continue"]
     Route --> Ask["ask_user"]
     Route --> Delegate["bounded subagent: model + effort"]
-    Delegate --> Verify["Root verification gate"]
+    Delegate --> SubStart["SubagentStart + child prompt hooks"]
+    SubStart --> Isolate["execute assigned scope; no recursive routing"]
+    Isolate --> Verify["Root verification gate"]
     Verify --> Outcome["record_outcome"]
     Outcome --> SQLite
     SQLite --> History["status + route history projection"]
@@ -55,7 +57,8 @@ flowchart LR
   snapshots, and manages approval-gated immutable policy revisions.
 - `scripts/hook.mjs` handles exact control prefixes, the global automatic
   opt-in, root-model observation, fixed model-visible context, visible
-  status/history reports, and the two-pass Stop outcome reminder.
+  status/history reports, bounded-subagent isolation, and the two-pass Stop
+  outcome reminder.
 - `scripts/lib/presentation.mjs` formats user-visible reports while preserving
   the root-model versus bounded-target boundary.
 - `hooks/hooks.json` supplies separate POSIX and `commandWindows` launch commands.
@@ -69,22 +72,27 @@ flowchart LR
    active model slug. The first valid value establishes a baseline. A later
    change creates one pending intent event for the task; no value or an invalid
    value remains host-managed and does not imply manual intent.
-3. If the task is pending confirmation or `manual_root`, return `continue` with
+3. A `SubagentStart` hook and the subagent-marked `UserPromptSubmit` hook inject
+   only a fixed bounded-execution instruction. They do not observe the child
+   model as a root model, parse controls, alter root-task state, or recursively
+   route. Subagent-marked Stop events do not consume the parent's outcome
+   lifecycle.
+4. If the task is pending confirmation or `manual_root`, return `continue` with
    no bounded target. Resolving `keep_automatic` affects the next stage;
    resolving `manual_root` lasts only for the current task/context.
-4. Resolve overrides in this order: request, once, session, project, optional global.
-5. Continue immediately for trivial/no-output work unless an override explicitly requests delegation.
-6. Load the root-visible catalog only for observation and conservative
+5. Resolve overrides in this order: request, once, session, project, optional global.
+6. Continue immediately for trivial/no-output work unless an override explicitly requests delegation.
+7. Load the root-visible catalog only for observation and conservative
    compatibility. Build the bounded delegate catalog from the current
    `hostCapabilities.delegation`; when absent, permit only known Sol/Terra
    entries from the visible catalog. Never infer Luna delegation from root
    visibility.
-7. Score locally. Only substantive borderline stages may call the auxiliary
+8. Score locally. Only substantive borderline stages may call the auxiliary
    classifier. Its independent ephemeral app-server calls `model/list` and
    chooses Luna, then Terra, then Sol from that classifier-only catalog.
-8. Apply risk floors and any monotonic failure escalation.
-9. Insert the route. A once override is claimed and deleted in the same transaction as a real `delegate` insert. The row snapshots the currently observed root-model slug separately from the bounded target.
-10. For a `delegate` route, the root performs the verification gate and records
+9. Apply risk floors and any monotonic failure escalation.
+10. Insert the route. A once override is claimed and deleted in the same transaction as a real `delegate` insert. The row snapshots the currently observed root-model slug separately from the bounded target.
+11. For a `delegate` route, the root performs the verification gate and records
    exactly one outcome. `continue` and `ask_user` routes do not have outcomes.
 
 The route stores the model target and decision metadata, not the prompt or

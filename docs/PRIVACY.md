@@ -18,6 +18,8 @@ The SQLite database stores:
 - redacted learning events for profile re-anchors, proposal rebases, and hard
   safety rollbacks;
 - the global automatic-routing opt-in and the current task mode;
+- a short-lived read-only-inspection guard containing only HMAC project/context
+  identifiers, a format version, and an expiry timestamp;
 - validated hook-observed root-model slugs and model-change event state, including
   opaque change IDs and whether an event is pending, resolved, cancelled, or
   superseded.
@@ -61,6 +63,12 @@ model-visible routing instruction plus minimized root-model state. It does not
 copy the user's task text. A pending model-intent reminder contains validated
 model slugs and an opaque change ID, never the prompt or reasoning effort.
 
+For bounded subagents, `SubagentStart` and subagent-marked prompt hooks emit
+only a fixed isolation instruction. It contains no prompt, model slug, agent
+identifier, agent type, path, or transcript location. Those hooks do not write
+root-model observations, control state, route rows, outcomes, or Stop
+observations.
+
 `get_route_history` and the `router: history` / `路由器：历史` reports use only
 the already-minimized route and outcome rows. They expose route timestamps,
 model/effort targets, transitions, reason codes, and outcomes for the current
@@ -71,9 +79,9 @@ store display text.
 `get_learning_status` is current-project only. It reports scoring-profile
 versions, approved category offsets, aggregate eligibility/exclusion counts,
 proposal statistics, and fixed-enum learning events. `shadow_route_stage`
-returns numeric/enum scoring output and does not create a route, outcome,
-proposal, or cursor. Neither interface returns prompts, evidence payloads,
-source, paths, or environment values.
+returns numeric/enum scoring output plus before/after numeric state counts and
+does not create a route, outcome, proposal, or cursor. Neither interface
+returns prompts, evidence payloads, source, paths, or environment values.
 
 The runtime launcher checks only Node executable versions from the current process, `ADAPTIVE_ROUTER_NODE`, `PATH`, common version-manager directories, and standard install locations. Candidate paths and versions are not stored, sent to a model, or included in errors.
 
@@ -105,7 +113,8 @@ because project identity is derived from that directory.
 
 `clear_project_data` requires the exact confirmation `CLEAR_PROJECT_DATA` and
 removes only the current project's routes, outcomes, learning state, task-mode
-state, scoring profiles/snapshots, and root-model change events. Other projects, the global automatic-routing
+state, scoring profiles/snapshots, read-only-inspection guards, and root-model
+change events. Other projects, the global automatic-routing
 preference, and the local HMAC salt remain intact. Uninstalling the plugin does
 not silently delete learning data.
 

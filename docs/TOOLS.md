@@ -199,9 +199,24 @@ live prompts or outcomes.
 `shadow_route_stage` accepts the normal goal/phase/evidence fields plus an
 optional closed scoring definition. It returns only the category, numeric
 scores, hard-signal count, preferred action/family/effort, and verification
-gate. It does not create even an initial project, profile, policy, route,
-outcome, proposal, or learning cursor. Use it before an explicitly confirmed
-offline re-anchor.
+gate. It also returns before/after numeric counts for current-context routes,
+outcomes, Stop observations, and score snapshots plus current-project
+proposals, cursors, policy revisions, and profiles; `sideEffects` is derived
+from those counts rather than asserted. It does not create even an initial
+project, profile, policy, route, outcome, proposal, or learning cursor. It
+deliberately does not accept
+`hostCapabilities`: the returned family/effort is a scoring preference, not a
+live bounded target. Call it directly without a preceding `route_stage`. Use it
+before an explicitly confirmed offline re-anchor.
+
+An explicit direct request for `get_route_status`, `get_route_history`,
+`list_policy_proposals`, `get_learning_status`, `diagnose_router`, or
+`shadow_route_stage` activates a short-lived, current-context guard. While it
+is active, an accidental `route_stage` call is rejected before project
+initialization, scoring, classification, or route persistence; repeated
+attempts remain blocked. The next submitted prompt clears or replaces the
+guard, and abandoned guards expire automatically. The guard stores only HMAC
+identifiers, a format version, and an expiry timestamp.
 
 `get_route_history` accepts optional `limit` (`1..100`, default `20`) and
 `action` (`all`, `delegate`, `continue`, or `ask_user`). Each newest-first item

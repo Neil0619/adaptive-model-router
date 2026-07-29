@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [0.4.0] - Unreleased
+## [0.4.0] - 2026-07-26
 
 ### Added
 
@@ -36,7 +36,34 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Release validation now binds the GitHub release workflow, archive, SBOM, and
+  provenance artifact names to the package version so stale release tags fail
+  before publication.
+- Compatible runtime probing and pointer activation are now single-flight
+  across concurrent old Hook shells. A slow native-Windows process launch can
+  no longer make parallel probes quarantine a healthy runtime or fall back to
+  the pinned implementation.
+- Bounded subagents are isolated at both `SubagentStart` and
+  subagent-marked `UserPromptSubmit`: child models are never observed as root
+  model changes, child controls cannot mutate root-task state, recursive
+  `route_stage` calls are forbidden, and the root retains Stop/outcome
+  ownership.
+- Session-disabled routing now emits its own root-only context instead of
+  incorrectly presenting the task as `manual_root`; quoted control text
+  remains a no-op and live routes continue to report `ROUTER_DISABLED`.
+- Exact router controls are explicitly hook-owned: model-visible context and
+  Skill instructions forbid duplicate MCP replay and invented context IDs
+  after the trusted `UserPromptSubmit` hook has already applied a control.
 - Shadow scoring has no route, outcome, proposal, or cursor side effects.
+- Shadow output includes numeric before/after counts for all protected routing
+  and learning tables, and derives its `sideEffects` flag from those counts.
+- Explicit read-only router-inspection turns now suppress the generic automatic
+  routing instruction and use a short-lived context guard that rejects an
+  accidental live `route_stage` call before it can persist a route. This
+  covers status, history, proposal listing, learning status, diagnostics, and
+  shadow scoring. Direct inspection requests must name a read-only tool
+  immediately after the request verb, so substantive lifecycle prompts that
+  later ask for status, history, or diagnostics are not misclassified.
 - Proposal status now reports distinct-context, failure, correction, and
   reasoning-retry counts. Rebase keeps the proposal delta while advancing the
   old evidence cursor.
@@ -44,7 +71,10 @@ All notable changes to this project are documented here.
   runtime-only updates do not. Hook, skill, MCP-schema, and storage-contract
   changes remain explicit restart boundaries.
 
-## [0.3.1] - Unreleased
+## [0.3.1] - Included in 0.4.0
+
+This capability fix was merged into v0.4.0 and was not published as a
+separate release.
 
 ### Fixed
 

@@ -1,7 +1,8 @@
 # Native macOS smoke test
 
 This is the blocking logged-in macOS gate for `v0.4.0`. Run it in Codex Desktop
-or CLI on native macOS against the frozen `codex/v040-scoring-evolution` ref.
+or CLI on native macOS against the frozen
+`codex/v040-shadow-inspection-fix` ref.
 Do not create or push the release tag from this smoke task.
 
 ## Pass criteria
@@ -10,6 +11,9 @@ Do not create or push the release tag from this smoke task.
 - Global automatic activation persists across a new project/task.
 - An ordinary substantive prompt, without a skill trigger phrase, produces one
   `delegate` route, one bounded subagent, root verification, and one outcome.
+- The bounded subagent receives the isolation context, completes only its
+  assigned scope, and never creates a pending root-model event or recursively
+  calls `route_stage`.
 - A Sol/Terra-only bounded capability never returns Luna; an explicit Luna
   override asks the user without starting a subagent.
 - The Codex model selector remains the root model while Subagents shows the
@@ -25,7 +29,7 @@ Do not create or push the release tag from this smoke task.
 ## 1. Prepare a Unicode project and candidate checkout
 
 ```bash
-CandidateRef="codex/v040-scoring-evolution"
+CandidateRef="codex/v040-shadow-inspection-fix"
 SmokeRoot="$(mktemp -d)/Adaptive Router macOS 冒烟"
 Source="$SmokeRoot/source checkout"
 Project="$SmokeRoot/测试 project with spaces"
@@ -68,7 +72,8 @@ codex plugin add adaptive-model-router@adaptive-model-router
 ```
 
 Open `$Project` in Codex, start a new task, review `/hooks`, and trust the
-current `UserPromptSubmit` and `Stop` definitions. Never bypass Hook trust.
+current `SubagentStart`, `UserPromptSubmit`, and `Stop` definitions. Never
+bypass Hook trust.
 
 Send `router: global on` once, then `router: status`. Confirm global automatic
 activation is on, task mode is automatic, and the first observed model only
@@ -84,7 +89,9 @@ The result must include one `delegate` route, exactly one bounded subagent using
 the returned model and `reasoning_effort`, successful root verification, and
 exactly one strict `record_outcome`. Confirm the Codex model selector still
 shows the root task during delegation; inspect the Subagents view for the
-bounded target.
+bounded target. The subagent must execute only its assigned scope and return to
+the root without calling `route_stage`, asking for a manual/automatic decision,
+or creating a host-model change event.
 
 Run `router: status` and `router: history 10`. Each route must distinguish its
 root-model snapshot from its bounded target. Run `diagnose_router` with the same
@@ -126,6 +133,22 @@ In the same temporary project:
    `retryBreakdown` whose sum equals `retries`.
 4. Rely on `npm test` for destructive profile re-anchor/rebase/automatic
    rollback fixtures; do not mutate the smoke project's active profile.
+
+For step 2, send this exact prompt. This is router inspection, not a live work
+stage:
+
+```text
+This is read-only router inspection, not a substantive work-product stage.
+Call shadow_route_stage exactly once for a risk-sensitive review using the
+active scoring definition and the same current task contextId. Do not call
+route_stage before or after it, do not pass hostCapabilities, and do not create
+a subagent or record an outcome. Then call get_learning_status once more.
+Return only: shadow, sideEffects, preferred family/effort, active profile
+identity/version, and shadow_route_stage's stateCounts before/after object.
+```
+
+Stop immediately if a live route appears, any count changes, or the Stop hook
+requests an outcome for the shadow preference.
 
 ## 6. Exercise lifecycle wrappers and persistence
 

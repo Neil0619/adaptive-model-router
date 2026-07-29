@@ -5,9 +5,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { RouterStore } from "../scripts/lib/database.mjs";
-import { parseControlPrompt } from "../scripts/lib/control.mjs";
+import { parseControlPrompt, parseReadOnlyInspectionPrompt } from "../scripts/lib/control.mjs";
 import { recordOutcome } from "../scripts/lib/learning.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
+import { callRouterTool } from "../scripts/lib/service.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -64,6 +65,79 @@ test("only exact complete control prefixes and known commands parse", () => {
     "router: history two",
     "router: history 5 extra",
   ]) assert.equal(parseControlPrompt(prompt), null, prompt);
+});
+
+test("only explicit direct read-only inspection requests activate the inspection guard", () => {
+  assert.deepEqual(
+    parseReadOnlyInspectionPrompt(
+      "This is read-only router inspection, not a substantive work-product stage.\n"
+      + "Call shadow_route_stage exactly once, then call get_learning_status.",
+    ),
+    { tools: ["shadow_route_stage", "get_learning_status"] },
+  );
+  assert.deepEqual(
+    parseReadOnlyInspectionPrompt("请调用 shadow_route_stage，并查看 get_learning_status。"),
+    { tools: ["shadow_route_stage", "get_learning_status"] },
+  );
+  assert.deepEqual(
+    parseReadOnlyInspectionPrompt("Call list_policy_proposals for the current project."),
+    { tools: ["list_policy_proposals"] },
+  );
+  assert.deepEqual(
+    parseReadOnlyInspectionPrompt("Use diagnose_router for the current task."),
+    { tools: ["diagnose_router"] },
+  );
+  for (const prompt of [
+    "Discuss whether to call shadow_route_stage.",
+    "Do not call shadow_route_stage.",
+    "Please do not call shadow_route_stage.",
+    "> Call shadow_route_stage.",
+    "```\nCall shadow_route_stage.\n```",
+    "Implement shadow_route_stage and add tests.",
+    "Fix shadow_route_stage because it writes a route.",
+    "The docs say: Call shadow_route_stage.",
+    "不要调用 shadow_route_stage。",
+    "Use the current host task ID as contextId. Call route_stage for implementation, "
+      + "then call get_route_status, get_route_history, and diagnose_router.",
+  ]) assert.equal(parseReadOnlyInspectionPrompt(prompt), null, prompt);
+});
+
+test("a substantive route lifecycle with trailing reports is not isolated as inspection", async () => {
+  const project = await temporaryProject("adaptive inspection negative Unicode 自动 ");
+  try {
+    const base = {
+      cwd: project.root,
+      session_id: "substantive-session",
+      model: "gpt-5.6-luna",
+    };
+    const enabled = runHook("prompt", { ...base, prompt: "router: global on" }, project.home);
+    assert.equal(enabled.status, 0, enabled.stderr);
+    const substantive = runHook("prompt", {
+      ...base,
+      prompt: "Use the current host task ID as contextId. Call route_stage for implementation, "
+        + "then call record_outcome, get_route_status, get_route_history, and diagnose_router.",
+    }, project.home);
+    assert.equal(substantive.status, 0, substantive.stderr);
+    const context = JSON.parse(substantive.stdout).hookSpecificOutput.additionalContext;
+    assert.match(context, /global automatic activation is enabled/);
+    assert.doesNotMatch(context, /Read-only router inspection is active/);
+
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      try {
+        const identity = store.context({
+          cwd: project.root,
+          contextId: base.session_id,
+          authoritative: true,
+        });
+        assert.equal(store.inspectionGuardActive(identity), false);
+      } finally {
+        store.close();
+      }
+    });
+  } finally {
+    project.cleanup();
+  }
 });
 
 test("global automatic activation is opt-in, crosses projects, and detects later root-model changes", async () => {
@@ -211,6 +285,350 @@ test("global automatic activation is opt-in, crosses projects, and detects later
   }
 });
 
+test("bounded subagent hooks never recurse into routing or mutate root-task state", async () => {
+  const project = await temporaryProject("adaptive bounded subagent 隔离 ");
+  try {
+    const root = {
+      cwd: project.root,
+      session_id: "parent-session",
+      model: "gpt-5.6-luna",
+    };
+    assert.equal(
+      runHook("prompt", { ...root, prompt: "router: global on" }, project.home).status,
+      0,
+    );
+    assert.equal(
+      runHook("prompt", { ...root, prompt: "Implement the parent stage." }, project.home).status,
+      0,
+    );
+
+    const child = {
+      ...root,
+      model: "gpt-5.6-terra",
+    };
+    const submitted = runHook("prompt", {
+      ...child,
+      agent_id: "agent-secret-identifier",
+      prompt: "Implement only the delegated bounded stage.",
+    }, project.home);
+    assert.equal(submitted.status, 0, submitted.stderr);
+    const submittedOutput = JSON.parse(submitted.stdout);
+    assert.equal(
+      submittedOutput.hookSpecificOutput.hookEventName,
+      "UserPromptSubmit",
+    );
+    const boundedContext = submittedOutput.hookSpecificOutput.additionalContext;
+    assert.match(boundedContext, /already a bounded subagent/i);
+    assert.match(boundedContext, /never call route_stage/i);
+    assert.doesNotMatch(boundedContext, /global automatic activation is enabled/i);
+    assert.doesNotMatch(boundedContext, /unresolved active root-model change/i);
+    assert.doesNotMatch(
+      boundedContext,
+      /agent-secret-identifier|worker-secret-type|gpt-5\.6-terra|Implement only/,
+    );
+
+    const started = runHook("subagent-start", {
+      ...child,
+      agent_id: "agent-secret-identifier",
+      agent_type: "worker-secret-type",
+      hook_event_name: "SubagentStart",
+      turn_id: "child-turn",
+    }, project.home);
+    assert.equal(started.status, 0, started.stderr);
+    const startedOutput = JSON.parse(started.stdout);
+    assert.equal(
+      startedOutput.hookSpecificOutput.hookEventName,
+      "SubagentStart",
+    );
+    assert.match(startedOutput.hookSpecificOutput.additionalContext, /already a bounded subagent/i);
+    assert.doesNotMatch(
+      startedOutput.hookSpecificOutput.additionalContext,
+      /agent-secret-identifier|worker-secret-type|gpt-5\.6-terra/,
+    );
+
+    const ignoredControl = runHook("prompt", {
+      ...child,
+      agent_type: "worker-secret-type",
+      prompt: "router: manual",
+    }, project.home);
+    assert.equal(ignoredControl.status, 0, ignoredControl.stderr);
+    assert.match(ignoredControl.stdout, /already a bounded subagent/i);
+    assert.doesNotMatch(ignoredControl.stdout, /manual-root mode/i);
+
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      try {
+        const context = store.context({
+          cwd: project.root,
+          contextId: root.session_id,
+          authoritative: true,
+        });
+        const state = store.hostModelState(context);
+        assert.equal(state.taskMode, "automatic");
+        assert.equal(state.currentModel, "gpt-5.6-luna");
+        assert.equal(state.pendingChange, null);
+        assert.equal(
+          Number(store.db.prepare("SELECT count(*) AS count FROM host_model_changes").get().count),
+          0,
+        );
+        assert.equal(store.inspectionGuardActive(context), false);
+        const route = await routeStage(routeInput({
+          contextId: root.session_id,
+          override: { model: "gpt-5.6-terra", effort: "low" },
+        }), { catalog: CATALOG, cwd: project.root, store });
+        assert.equal(route.action, "delegate");
+      } finally {
+        store.close();
+      }
+    });
+
+    const stopped = runHook("stop", {
+      ...child,
+      agent_id: "agent-secret-identifier",
+      hook_event_name: "Stop",
+      stop_hook_active: false,
+    }, project.home);
+    assert.equal(stopped.status, 0, stopped.stderr);
+    assert.equal(stopped.stdout, "");
+
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      try {
+        assert.equal(
+          Number(store.db.prepare("SELECT count(*) AS count FROM stop_observations").get().count),
+          0,
+        );
+        assert.equal(
+          Number(store.db.prepare("SELECT count(*) AS count FROM outcomes").get().count),
+          0,
+        );
+      } finally {
+        store.close();
+      }
+    });
+
+    const resumedRoot = runHook("prompt", {
+      ...root,
+      prompt: "Verify the delegated result in the root task.",
+    }, project.home);
+    assert.equal(resumedRoot.status, 0, resumedRoot.stderr);
+    assert.match(resumedRoot.stdout, /global automatic activation is enabled/);
+    assert.doesNotMatch(resumedRoot.stdout, /unresolved active root-model change/);
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("automatic routing treats shadow scoring as read-only and leaves Stop lifecycle untouched", async () => {
+  const project = await temporaryProject("adaptive shadow hook ");
+  try {
+    const base = {
+      cwd: project.root,
+      session_id: "shadow-hook-session",
+      model: "gpt-5.6-sol",
+    };
+    assert.equal(
+      runHook("prompt", { ...base, prompt: "router: global on" }, project.home).status,
+      0,
+    );
+    const prompt = "Call shadow_route_stage exactly once for a risk-sensitive review.";
+    const submitted = runHook("prompt", { ...base, prompt }, project.home);
+    assert.equal(submitted.status, 0, submitted.stderr);
+    const context = JSON.parse(submitted.stdout).hookSpecificOutput.additionalContext;
+    assert.match(context, /Read-only router inspection/);
+    assert.match(context, /Do not call route_stage before or after the inspection/);
+    assert.doesNotMatch(context, new RegExp(prompt));
+
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      const counts = () => Object.fromEntries(
+        [
+          "routes",
+          "outcomes",
+          "stop_observations",
+          "learning_cursors",
+          "policy_proposals",
+          "policy_revisions",
+          "scoring_profiles",
+          "route_score_snapshots",
+          "learning_events",
+        ].map((table) => [
+          table,
+          Number(store.db.prepare(`SELECT count(*) AS count FROM ${table}`).get().count),
+        ]),
+      );
+      const before = counts();
+      let firstError;
+      await assert.rejects(
+        callRouterTool("route_stage", routeInput({
+          contextId: base.session_id,
+          goal: "Score a risk-sensitive public contract review.",
+          phase: "review",
+          evidence: { workProduct: true, review: true, highRisk: true },
+        }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } }),
+        (error) => {
+          firstError = error;
+          return /read-only router inspection/i.test(error.message);
+        },
+      );
+      assert.doesNotMatch(firstError.message, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      assert.doesNotMatch(firstError.message, new RegExp(base.session_id));
+      await assert.rejects(
+        callRouterTool("route_stage", routeInput({
+          contextId: base.session_id,
+          goal: "Try the live route a second time.",
+          phase: "review",
+          evidence: { workProduct: true, review: true, highRisk: true },
+        }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } }),
+        /read-only router inspection/i,
+      );
+      assert.deepEqual(counts(), before);
+      const shadow = await callRouterTool("shadow_route_stage", {
+        contextId: base.session_id,
+        goal: "Review a risk-sensitive public contract.",
+        phase: "review",
+        evidence: { workProduct: true, review: true, highRisk: true },
+      }, { store, cwd: project.root });
+      assert.equal(shadow.shadow, true);
+      assert.equal(shadow.sideEffects, false);
+      assert.deepEqual(shadow.stateCounts.before, shadow.stateCounts.after);
+      assert.deepEqual(counts(), before);
+      const meta = JSON.stringify(store.db.prepare("SELECT key, value FROM meta").all());
+      assert.doesNotMatch(meta, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      assert.doesNotMatch(meta, new RegExp(base.session_id));
+      assert.doesNotMatch(meta, new RegExp(prompt));
+      store.close();
+    });
+
+    const stopped = runHook("stop", {
+      ...base,
+      stop_hook_active: false,
+    }, project.home);
+    assert.equal(stopped.status, 0, stopped.stderr);
+    assert.equal(stopped.stdout, "");
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      assert.equal(
+        Number(store.db.prepare("SELECT count(*) AS count FROM stop_observations").get().count),
+        0,
+      );
+      store.close();
+    });
+
+    const nextPrompt = runHook("prompt", {
+      ...base,
+      prompt: "Answer a simple question with no work product.",
+    }, project.home);
+    assert.equal(nextPrompt.status, 0, nextPrompt.stderr);
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      const route = await callRouterTool("route_stage", routeInput({
+        contextId: base.session_id,
+        goal: "Answer a simple question.",
+        phase: "answer",
+        evidence: { workProduct: false },
+      }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } });
+      assert.equal(route.action, "continue");
+      assert.equal(store.inspectionGuardActive(
+        store.context({ cwd: project.root, contextId: base.session_id }),
+      ), false);
+      store.close();
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("proposal listing is guarded as read-only inspection", async () => {
+  const project = await temporaryProject("adaptive proposal inspection ");
+  try {
+    const base = {
+      cwd: project.root,
+      session_id: "proposal-inspection",
+      model: "gpt-5.6-sol",
+    };
+    assert.equal(
+      runHook("prompt", { ...base, prompt: "router: global on" }, project.home).status,
+      0,
+    );
+    const submitted = runHook("prompt", {
+      ...base,
+      prompt: "Call list_policy_proposals for the current project.",
+    }, project.home);
+    assert.equal(submitted.status, 0, submitted.stderr);
+    const context = JSON.parse(submitted.stdout).hookSpecificOutput.additionalContext;
+    assert.match(context, /Read-only router inspection/);
+    assert.match(context, /list_policy_proposals/);
+    assert.doesNotMatch(context, /global automatic activation is enabled/);
+
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      await assert.rejects(
+        callRouterTool("route_stage", routeInput({
+          contextId: base.session_id,
+          goal: "Do not create a live route before listing proposals.",
+        }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } }),
+        /read-only router inspection/i,
+      );
+      const proposals = await callRouterTool("list_policy_proposals", {
+        contextId: base.session_id,
+      }, { store, cwd: project.root });
+      assert.deepEqual(proposals, []);
+      assert.equal(
+        Number(store.db.prepare("SELECT count(*) AS count FROM routes").get().count),
+        0,
+      );
+      store.close();
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("concurrent inspection hooks create one guard and never permit a live route", async () => {
+  const project = await temporaryProject("adaptive inspection concurrent ");
+  try {
+    const base = {
+      cwd: project.root,
+      session_id: "parallel-inspection",
+      model: "gpt-5.6-sol",
+    };
+    assert.equal(
+      runHook("prompt", { ...base, prompt: "router: global on" }, project.home).status,
+      0,
+    );
+    const prompts = await Promise.all(Array.from({ length: 20 }, () => runHookAsync("prompt", {
+      ...base,
+      prompt: "Call shadow_route_stage exactly once for a read-only review.",
+    }, project.home)));
+    assert.equal(prompts.every((result) => result.status === 0), true);
+
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      assert.equal(
+        Number(store.db.prepare(
+          "SELECT count(*) AS count FROM meta WHERE key LIKE 'inspection_guard:%'",
+        ).get().count),
+        1,
+      );
+      await assert.rejects(
+        callRouterTool("route_stage", routeInput({
+          contextId: base.session_id,
+          goal: "Attempt a live route after concurrent inspection hooks.",
+        }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } }),
+        /read-only router inspection/i,
+      );
+      assert.equal(
+        Number(store.db.prepare("SELECT count(*) AS count FROM routes").get().count),
+        0,
+      );
+      store.close();
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("concurrent prompt hooks create exactly one pending event for one model change", async () => {
   const project = await temporaryProject("adaptive hook concurrent ");
   try {
@@ -263,6 +681,36 @@ test("prompt hook applies a control idempotently and ignores ordinary discussion
   }
 });
 
+test("hook-owned control turns forbid duplicate MCP calls and invented context IDs", async () => {
+  const project = await temporaryProject("adaptive hook-owned controls 控制 ");
+  try {
+    const base = {
+      cwd: project.root,
+      session_id: "hook-owned-session",
+      model: "gpt-5.6-sol",
+    };
+    for (const prompt of [
+      "router: global on",
+      "router: manual",
+      "router: auto session",
+      "router: lock gpt-5.6-terra low once",
+      "router: off",
+      "router: status",
+      "router: history 1",
+      "router: global off",
+    ]) {
+      const result = runHook("prompt", { ...base, prompt }, project.home);
+      assert.equal(result.status, 0, result.stderr);
+      const context = JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
+      assert.match(context, /already been applied atomically by the trusted UserPromptSubmit hook/i);
+      assert.match(context, /do not call any Adaptive Model Router MCP tool/i);
+      assert.match(context, /do not invent or substitute a contextId/i);
+    }
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("router off keeps task mode automatic so the disabled override controls the route reason", async () => {
   const project = await temporaryProject("adaptive off control 空格 ");
   try {
@@ -271,6 +719,15 @@ test("router off keeps task mode automatic so the disabled override controls the
     assert.equal(runHook("prompt", { ...base, prompt: "router: manual" }, project.home).status, 0);
     assert.equal(runHook("prompt", { ...base, prompt: "router: auto session" }, project.home).status, 0);
     assert.equal(runHook("prompt", { ...base, prompt: "router: off" }, project.home).status, 0);
+    const ordinary = runHook(
+      "prompt",
+      { ...base, prompt: 'Explain why the quoted text "router: on" is not a control command.' },
+      project.home,
+    );
+    assert.equal(ordinary.status, 0, ordinary.stderr);
+    const ordinaryContext = JSON.parse(ordinary.stdout).hookSpecificOutput.additionalContext;
+    assert.match(ordinaryContext, /disabled for this session/i);
+    assert.doesNotMatch(ordinaryContext, /manual_root mode/i);
 
     await withRouterEnvironment(project, async () => {
       const store = new RouterStore();

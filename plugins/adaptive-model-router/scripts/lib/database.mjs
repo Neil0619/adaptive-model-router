@@ -20,6 +20,8 @@ const GLOBAL_PROJECT = "__global__";
 const GLOBAL_CONTEXT = "__global__";
 const DEFAULT_HISTORY_LIMIT = 20;
 const MAX_HISTORY_LIMIT = 100;
+const INSPECTION_GUARD_PREFIX = "inspection_guard:";
+const INSPECTION_GUARD_TTL_MS = 60 * 60 * 1_000;
 const STORAGE_CONTRACT_SCHEMA = Object.freeze({
   meta: ["key", "value"],
   projects: ["project_id", "created_at"],
@@ -95,6 +97,27 @@ function sqliteOptions(timeout) {
   };
 }
 
+function configureWal(db, timeout) {
+  const retryTimeout = Math.max(1, Math.trunc(timeout));
+  const deadline = Date.now() + retryTimeout;
+  let attempt = 0;
+  while (true) {
+    try {
+      db.exec("PRAGMA journal_mode = WAL");
+      return;
+    } catch (error) {
+      if (!isSqliteBusy(error) || Date.now() >= deadline) throw error;
+      attempt += 1;
+      const remaining = Math.max(1, deadline - Date.now());
+      const delay = Math.min(
+        remaining,
+        Math.min(100, 12 * attempt) + Math.floor(Math.random() * 18),
+      );
+      sleepSync(delay);
+    }
+  }
+}
+
 export class RouterStore {
   constructor({ path = databasePath(), timeout = 5_000 } = {}) {
     this.path = path;
@@ -107,7 +130,9 @@ export class RouterStore {
         // Windows ACLs are inherited from the user's Codex data directory.
       }
       this.db.exec(`PRAGMA busy_timeout = ${Math.max(1, Math.trunc(timeout))}`);
-      this.db.exec("PRAGMA journal_mode = WAL");
+      // Enabling WAL takes an exclusive lock the first time a database is opened.
+      // SQLite's connection timeout does not reliably serialize concurrent PRAGMA calls.
+      configureWal(this.db, timeout);
       this.db.exec("PRAGMA synchronous = NORMAL");
       this.db.exec("PRAGMA foreign_keys = ON");
       this.db.exec("PRAGMA trusted_schema = OFF");
@@ -482,6 +507,37 @@ export class RouterStore {
       this.db.prepare("INSERT OR IGNORE INTO projects(project_id, created_at) VALUES(?, ?)").run(projectId, nowIso());
     }
     return { projectId, contextKey };
+  }
+
+  inspectionGuardKey(context) {
+    return `${INSPECTION_GUARD_PREFIX}${context.projectId}:${context.contextKey}`;
+  }
+
+  setInspectionGuard(context, { expiresAt = Date.now() + INSPECTION_GUARD_TTL_MS } = {}) {
+    this.db.prepare(`
+      INSERT INTO meta(key, value) VALUES(?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(
+      this.inspectionGuardKey(context),
+      canonicalJson({ version: 1, expiresAt: Number(expiresAt) }),
+    );
+  }
+
+  clearInspectionGuard(context) {
+    this.db.prepare("DELETE FROM meta WHERE key = ?").run(this.inspectionGuardKey(context));
+  }
+
+  inspectionGuardActive(context, { now = Date.now() } = {}) {
+    const row = this.db.prepare("SELECT value FROM meta WHERE key = ?")
+      .get(this.inspectionGuardKey(context));
+    if (!row) return false;
+    const value = parseJson(row.value, null);
+    const expiresAt = Number(value?.expiresAt);
+    if (value?.version !== 1 || !Number.isFinite(expiresAt) || expiresAt <= now) {
+      this.clearInspectionGuard(context);
+      return false;
+    }
+    return true;
   }
 
   getSettings(context) {
@@ -1614,6 +1670,8 @@ export class RouterStore {
   clearProject(context) {
     return this.transaction(() => {
       const projectId = context.projectId;
+      this.db.prepare("DELETE FROM meta WHERE key LIKE ?")
+        .run(`${INSPECTION_GUARD_PREFIX}${projectId}:%`);
       this.db.prepare("DELETE FROM outcomes WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM stop_observations WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM route_score_snapshots WHERE project_id = ?").run(projectId);

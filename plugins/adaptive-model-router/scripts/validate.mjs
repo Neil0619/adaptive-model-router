@@ -46,6 +46,7 @@ const packageJson = await json(join(pluginRoot, "package.json"));
 const runtimeDescriptor = parseRuntimeDescriptor(await json(join(pluginRoot, "runtime.json")));
 const marketplace = await json(join(repoRoot, ".agents", "plugins", "marketplace.json"));
 const hooks = await json(join(pluginRoot, "hooks", "hooks.json"));
+const releaseWorkflow = await readFile(join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
 const skill = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8");
 const skillUi = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "agents", "openai.yaml"), "utf8");
 assert(manifest.version.split("+")[0] === packageJson.version, "manifest base version and package version differ");
@@ -59,6 +60,26 @@ assert(runtimeDescriptor.entrypoints.service === "scripts/lib/service.mjs", "run
 assert(runtimeDescriptor.entrypoints.probe === "scripts/runtime-probe.mjs", "runtime probe entrypoint is invalid");
 assert(Array.isArray(manifest.interface?.defaultPrompt) && manifest.interface.defaultPrompt.length <= 3, "manifest interface.defaultPrompt must contain at most 3 prompts");
 assert(packageJson.version === "0.4.0", "release base version must be 0.4.0");
+const releaseTag = `v${packageJson.version}`;
+const releaseArtifact = `adaptive-model-router-${releaseTag}`;
+const releaseVersions = [...releaseWorkflow.matchAll(/\bv\d+\.\d+\.\d+\b/gu)].map(
+  (match) => match[0],
+);
+assert(releaseVersions.length > 0, "release workflow must pin a semantic release tag");
+assert(
+  releaseVersions.every((version) => version === releaseTag),
+  `release workflow must not reference a version other than ${releaseTag}`,
+);
+assert(
+  releaseWorkflow.includes(`if: github.ref_name == '${releaseTag}'`),
+  `release workflow must be gated to ${releaseTag}`,
+);
+for (const suffix of ["/", ".tar.gz", ".spdx.json"]) {
+  assert(
+    releaseWorkflow.includes(`${releaseArtifact}${suffix}`),
+    `release workflow must reference ${releaseArtifact}${suffix}`,
+  );
+}
 assert(packageJson.private === true, "package must remain private");
 assert(!packageJson.dependencies && !packageJson.devDependencies, "runtime must have no third-party dependencies");
 assert(!Object.hasOwn(manifest, "hooks"), "default hooks/hooks.json discovery should not be duplicated in the manifest");
@@ -75,10 +96,13 @@ assert(skill.includes("root-task model is unchanged and host-managed"), "skill m
 assert(skill.includes("global automatic activation"), "skill must document opt-in automatic activation");
 assert(skill.includes("`resolve_host_model_intent`"), "skill must document host-model intent resolution");
 assert(skill.includes("`get_route_history`"), "skill must expose the route history workflow");
+assert(skill.includes("already a bounded subagent"), "skill must prevent recursive subagent routing");
+assert(skill.includes("do not replay the"), "skill must prevent hook-owned control replay");
+assert(skill.includes("Never invent a `contextId`"), "skill must forbid invented router context IDs");
 assert(skillUi.includes("$adaptive-model-router"), "skill default prompt must explicitly invoke $adaptive-model-router");
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "get_route_history"), "MCP must expose get_route_history");
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "resolve_host_model_intent"), "MCP must expose host-model intent resolution");
-for (const event of ["UserPromptSubmit", "Stop"]) {
+for (const event of ["SubagentStart", "UserPromptSubmit", "Stop"]) {
   const command = hooks.hooks?.[event]?.[0]?.hooks?.[0];
   assert(typeof command?.commandWindows === "string", `${event} must define commandWindows`);
   assert(command.commandWindows.includes("process.env.PLUGIN_ROOT"), `${event} Windows command must read PLUGIN_ROOT inside Node`);
