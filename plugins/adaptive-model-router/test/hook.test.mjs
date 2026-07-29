@@ -810,31 +810,114 @@ test("status and history controls visibly separate the root model from bounded s
   }
 });
 
-test("Stop hook blocks every replay of the first stop and records unknown only when stop_hook_active is true", async () => {
+test("Stop hook finalizes every pending outcome as unknown without blocking the user reply", async () => {
   const project = await temporaryProject();
   try {
     await withRouterEnvironment(project, async () => {
-      const route = await routeStage(routeInput({ contextId: "stop-session" }), { catalog: CATALOG, cwd: project.root });
-      assert.equal(route.action, "delegate");
-      const input = { cwd: project.root, session_id: "stop-session", turn_id: "turn", stop_hook_active: false, last_assistant_message: "secret output" };
+      const firstRoute = await routeStage(routeInput({ contextId: "stop-session" }), { catalog: CATALOG, cwd: project.root });
+      const secondRoute = await routeStage(routeInput({
+        contextId: "stop-session",
+        goal: "Review the parser implementation and its targeted tests.",
+        phase: "review",
+        evidence: {
+          workProduct: true,
+          requirementsSettled: true,
+          strongVerification: true,
+          review: true,
+        },
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.equal(firstRoute.action, "delegate");
+      assert.equal(secondRoute.action, "delegate");
+      const input = {
+        cwd: project.root,
+        session_id: "stop-session",
+        turn_id: "turn",
+        stop_hook_active: false,
+        last_assistant_message: `sk-stop-secret-value ${project.root}`,
+      };
       const first = runHook("stop", input, project.home);
       const replay = runHook("stop", input, project.home);
       assert.equal(first.status, 0, first.stderr);
-      assert.equal(JSON.parse(first.stdout).decision, "block");
-      assert.equal(JSON.parse(replay.stdout).decision, "block");
+      assert.equal(first.stdout, "");
+      assert.equal(first.stderr, "");
+      assert.equal(replay.status, 0, replay.stderr);
+      assert.equal(replay.stdout, "");
 
       const storeBefore = new RouterStore();
-      assert.equal(Number(storeBefore.db.prepare("SELECT count(*) AS count FROM outcomes").get().count), 0);
-      assert.equal(Number(storeBefore.db.prepare("SELECT count(*) AS count FROM stop_observations").get().count), 1);
+      assert.deepEqual(
+        storeBefore.db.prepare("SELECT route_id, status FROM outcomes ORDER BY route_id").all()
+          .map((row) => ({ ...row })),
+        [
+          { route_id: firstRoute.routeId, status: "unknown" },
+          { route_id: secondRoute.routeId, status: "unknown" },
+        ].sort((left, right) => left.route_id.localeCompare(right.route_id)),
+      );
+      assert.equal(Number(storeBefore.db.prepare("SELECT count(*) AS count FROM stop_observations").get().count), 0);
+      assert.doesNotMatch(
+        JSON.stringify({
+          routes: storeBefore.db.prepare("SELECT * FROM routes").all(),
+          outcomes: storeBefore.db.prepare("SELECT * FROM outcomes").all(),
+          stops: storeBefore.db.prepare("SELECT * FROM stop_observations").all(),
+        }),
+        /sk-stop-secret-value/,
+      );
+      assert.doesNotMatch(
+        JSON.stringify({
+          routes: storeBefore.db.prepare("SELECT * FROM routes").all(),
+          outcomes: storeBefore.db.prepare("SELECT * FROM outcomes").all(),
+          stops: storeBefore.db.prepare("SELECT * FROM stop_observations").all(),
+        }),
+        new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      );
       storeBefore.close();
 
       const second = runHook("stop", { ...input, stop_hook_active: true }, project.home);
       assert.equal(second.status, 0, second.stderr);
       assert.equal(second.stdout, "");
       const storeAfter = new RouterStore();
-      const outcome = storeAfter.db.prepare("SELECT status FROM outcomes WHERE route_id = ?").get(route.routeId);
-      assert.equal(outcome.status, "unknown");
+      assert.equal(Number(storeAfter.db.prepare("SELECT count(*) AS count FROM outcomes").get().count), 2);
       storeAfter.close();
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("Stop hook resolves a legacy reminder while finalizing its pending outcome", async () => {
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      const route = await routeStage(routeInput({ contextId: "legacy-stop-session" }), {
+        catalog: CATALOG,
+        cwd: project.root,
+        store,
+      });
+      const context = store.context({ cwd: project.root, contextId: "legacy-stop-session" });
+      store.db.prepare(`
+        INSERT INTO stop_observations(project_id, context_key, route_id, reminded_at)
+        VALUES(?, ?, ?, ?)
+      `).run(context.projectId, context.contextKey, route.routeId, new Date().toISOString());
+      store.close();
+
+      const stopped = runHook("stop", {
+        cwd: project.root,
+        session_id: "legacy-stop-session",
+        stop_hook_active: false,
+      }, project.home);
+      assert.equal(stopped.status, 0, stopped.stderr);
+      assert.equal(stopped.stdout, "");
+
+      const verified = new RouterStore();
+      assert.equal(
+        verified.db.prepare("SELECT status FROM outcomes WHERE route_id = ?").get(route.routeId).status,
+        "unknown",
+      );
+      assert.notEqual(
+        verified.db.prepare("SELECT resolved_at FROM stop_observations WHERE route_id = ?").get(route.routeId).resolved_at,
+        null,
+      );
+      verified.close();
     });
   } finally {
     await project.cleanup();
@@ -858,10 +941,21 @@ test("Stop hook allows a route that already has a final outcome", async () => {
         escalations: route.escalation.count,
         userCorrection: false,
       }, { store, cwd: project.root });
+      const context = store.context({ cwd: project.root, contextId: "complete" });
+      store.db.prepare(`
+        INSERT INTO stop_observations(project_id, context_key, route_id, reminded_at)
+        VALUES(?, ?, ?, ?)
+      `).run(context.projectId, context.contextKey, route.routeId, new Date().toISOString());
       store.close();
       const stopped = runHook("stop", { cwd: project.root, session_id: "complete", stop_hook_active: false }, project.home);
       assert.equal(stopped.status, 0);
       assert.equal(stopped.stdout, "");
+      const verified = new RouterStore();
+      assert.notEqual(
+        verified.db.prepare("SELECT resolved_at FROM stop_observations WHERE route_id = ?").get(route.routeId).resolved_at,
+        null,
+      );
+      verified.close();
     });
   } finally {
     await project.cleanup();

@@ -232,7 +232,8 @@ outcome result, pending outcome count, database health, classifier state, and
 privacy assertion. Do not return the absolute project path.
 ```
 
-The Stop hook must not report a missing outcome after the successful result.
+The Stop hook must not create outcome-bookkeeping feedback or replace the final
+user-facing reply after the successful result.
 While the bounded subagent runs, confirm visually that the Codex Desktop model
 selector or CLI model status-line field continues to show the root task model.
 Inspect the Codex Subagents view (`/subagents` on CLI) for the bounded target

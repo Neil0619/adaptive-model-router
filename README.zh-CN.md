@@ -104,7 +104,9 @@ Windows 环境问题参见[故障排查](docs/TROUBLESHOOTING.md)。发布维护
 自动路由回退到 Terra 并返回 `MODEL_FAMILY_FALLBACK`；显式指定 Luna 则返回
 `ask_user`，不会静默换模型。
 
-每个委派都有 verification gate，并且最多记录一个严格最终 outcome。Stop hook 首次发现遗漏会提醒；继续后再次停止仍未提交，则记为不参与学习的 `unknown`。
+每个委派都有 verification gate，并且最多记录一个严格最终 outcome。若根任务仍遗漏
+outcome，Stop hook 会静默记为不参与学习的 `unknown` 并正常交付用户回复，不再创建
+打断最终回复的 continuation prompt。
 
 `continue` 和 `ask_user` 路由不接受 outcome。严格输入输出、管理工具以及源码内
 开发 CLI 参见[工具接口](docs/TOOLS.md)。

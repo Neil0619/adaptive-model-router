@@ -247,6 +247,15 @@ For zero classifier app-server calls, configure `classifierMode` as
 ADAPTIVE_ROUTER_LOCAL_ONLY=1
 ```
 
+## Hook feedback asks for `record_outcome`
+
+Updated v0.4 runtimes do not block task completion solely because a delegated
+route lacks an outcome. The Stop hook records `unknown`, excludes that result
+from learning, and lets the user-facing reply finish. If Codex instead inserts a
+`Hook feedback` continuation asking for `record_outcome`, the task is running an
+older plugin runtime. Upgrade the configured marketplace, reinstall the plugin,
+and start a fresh task when the Hook definition changed.
+
 ## Outcome is rejected
 
 `record_outcome` accepts delegated route IDs only. Use the same `contextId` as

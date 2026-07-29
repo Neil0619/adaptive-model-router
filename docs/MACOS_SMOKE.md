@@ -96,7 +96,8 @@ or creating a host-model change event.
 Run `router: status` and `router: history 10`. Each route must distinguish its
 root-model snapshot from its bounded target. Run `diagnose_router` with the same
 host task ID and assert that all projections exclude the prompt, source, secret,
-and absolute project path. The Stop hook must report no missing outcome.
+and absolute project path. The Stop hook must not create outcome-bookkeeping
+feedback or replace the final user-facing reply.
 
 ## 4. Exercise both host-model decisions
 

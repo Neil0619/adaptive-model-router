@@ -57,8 +57,8 @@ flowchart LR
   snapshots, and manages approval-gated immutable policy revisions.
 - `scripts/hook.mjs` handles exact control prefixes, the global automatic
   opt-in, root-model observation, fixed model-visible context, visible
-  status/history reports, bounded-subagent isolation, and the two-pass Stop
-  outcome reminder.
+  status/history reports, bounded-subagent isolation, and non-blocking Stop
+  fallback for missing outcomes.
 - `scripts/lib/presentation.mjs` formats user-visible reports while preserving
   the root-model versus bounded-target boundary.
 - `hooks/hooks.json` supplies separate POSIX and `commandWindows` launch commands.
