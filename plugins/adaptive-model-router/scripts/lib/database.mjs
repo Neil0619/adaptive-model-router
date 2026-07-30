@@ -1092,8 +1092,17 @@ export class RouterStore {
     });
   }
 
-  handleStop(context, stopHookActive) {
+  handleStop(context) {
     return this.transaction(() => {
+      const stoppedAt = nowIso();
+      this.db.prepare(`
+        UPDATE stop_observations
+        SET resolved_at = ?
+        WHERE project_id = ? AND context_key = ? AND resolved_at IS NULL
+          AND EXISTS(
+            SELECT 1 FROM outcomes o WHERE o.route_id = stop_observations.route_id
+          )
+      `).run(stoppedAt, context.projectId, context.contextKey);
       const pending = this.db.prepare(`
         SELECT r.* FROM routes r
         LEFT JOIN outcomes o ON o.route_id = r.route_id
@@ -1101,14 +1110,6 @@ export class RouterStore {
         ORDER BY r.rowid
       `).all(context.projectId, context.contextKey);
       if (!pending.length) return { action: "allow", recordedUnknown: 0 };
-      if (!stopHookActive) {
-        const statement = this.db.prepare(`
-          INSERT OR IGNORE INTO stop_observations(project_id, context_key, route_id, reminded_at)
-          VALUES(?, ?, ?, ?)
-        `);
-        for (const route of pending) statement.run(context.projectId, context.contextKey, route.route_id, nowIso());
-        return { action: "block", pending: pending.length };
-      }
       let recordedUnknown = 0;
       for (const route of pending) {
         const normalized = {
@@ -1133,13 +1134,13 @@ export class RouterStore {
           route.verification_gate,
           route.escalation_count,
           payloadHash(normalized),
-          nowIso(),
+          stoppedAt,
         );
         recordedUnknown += Number(result.changes);
         this.db.prepare(`
           UPDATE stop_observations SET resolved_at = ?
           WHERE project_id = ? AND context_key = ? AND route_id = ?
-        `).run(nowIso(), context.projectId, context.contextKey, route.route_id);
+        `).run(stoppedAt, context.projectId, context.contextKey, route.route_id);
       }
       return { action: "allow", recordedUnknown };
     });

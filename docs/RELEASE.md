@@ -4,20 +4,21 @@ This file is the maintainer release gate. The detailed native Windows procedure
 lives in [WINDOWS_SMOKE.md](WINDOWS_SMOKE.md). Do not create the release tag
 until every blocking item below has fresh evidence for the exact candidate
 commit. The original `codex/v040-scoring-evolution` candidate was invalidated
-by the read-only-inspection Hook fix; the replacement candidate below includes
-the same reviewed v0.4 runtime plus that fix.
+by the read-only-inspection Hook fix. The later shadow-inspection candidate was
+invalidated by the Stop-hook fix; the replacement candidate below includes the
+same reviewed v0.4 runtime plus both fixes.
 
-v0.4.0 is stacked on the v0.3.1 capability fix. Do not freeze or release this
-candidate until v0.3.1 has been reviewed and merged, and the v0.4.0 branch has
-been rebased or recreated on that final main tree without changing its
-reviewed runtime content.
+v0.4.0 includes the reviewed v0.3.1 capability fix, which was merged into the
+v0.4.0 main tree and was not published separately. The published `stable`
+branch therefore remains on v0.3.0 until the v0.4.0 release workflow advances
+it after artifact creation.
 
 ## 1. Freeze the candidate
 
 Keep `stable` on the last published release until the release workflow has
 created the new artifacts. For logged-in smoke testing, freeze a dedicated
 candidate ref at the reviewed commit. For v0.4.0 the handoff ref is
-`codex/v040-shadow-inspection-fix`; do not move it after smoke evidence is
+`codex/v040-stop-hook-fix`; do not move it after smoke evidence is
 collected.
 
 Record the candidate:
@@ -26,16 +27,16 @@ Record the candidate:
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/main
-git rev-parse origin/codex/v040-shadow-inspection-fix
+git rev-parse origin/codex/v040-stop-hook-fix
 git rev-parse origin/stable
 ```
 
 The worktree must be clean. The candidate ref must contain the reviewed tree;
-`stable` may still point to v0.3.1. Before tagging a later `main` merge commit,
+`stable` may still point to v0.3.0. Before tagging a later `main` merge commit,
 verify that the release-relevant trees are byte-identical:
 
 ```bash
-git diff --exit-code origin/main origin/codex/v040-shadow-inspection-fix -- \
+git diff --exit-code origin/main origin/codex/v040-stop-hook-fix -- \
   .agents plugins install.sh install.ps1 .github/workflows/release.yml
 ```
 
@@ -77,7 +78,7 @@ npm run eval
 Run the complete route lifecycle once on macOS and once on native Windows 11:
 
 1. Install from the frozen candidate ref with the two native Codex commands;
-   published `stable` remains on v0.3.1 until all smoke evidence passes.
+   published `stable` remains on v0.3.0 until all smoke evidence passes.
 2. Review and trust the plugin's `SubagentStart`, `UserPromptSubmit`, and
    `Stop` handlers.
 3. Send `router: global on` once, restart into a new project/task, and confirm

@@ -36,6 +36,10 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Missing delegated outcomes no longer make the Stop hook inject a continuation
+  prompt that can displace the user-facing final reply. The hook now records all
+  remaining outcomes as learning-ineligible `unknown` values in one transaction
+  and allows repeated or concurrent Stop events to finish silently.
 - Release validation now binds the GitHub release workflow, archive, SBOM, and
   provenance artifact names to the package version so stale release tags fail
   before publication.

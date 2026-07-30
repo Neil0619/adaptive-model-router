@@ -155,8 +155,10 @@ duplicate outcomes are idempotent; conflicting duplicates fail. `unknown`
 outcomes do not participate in learning. `retryBreakdown` is required and must
 sum exactly to `retries`.
 
-The Stop hook reminds once when a delegated route lacks an outcome. If the task
-continues and stops again without one, the hook records `unknown`.
+The root should record the verified result before stopping. If it still omits an
+outcome, the Stop hook atomically records `unknown` and allows the user-facing
+reply to finish. It never creates a continuation prompt solely for outcome
+bookkeeping. Replayed or concurrent Stop events remain idempotent.
 
 ## Status and controls
 

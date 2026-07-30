@@ -22,6 +22,11 @@ if (args[0] === "--version") { process.stdout.write("codex 1.0.0\\n"); process.e
 if (args.join(" ") === "plugin marketplace list --json") { process.stdout.write(JSON.stringify({marketplaces:state.marketplaces})); process.exit(0); }
 if (args.join(" ") === "plugin list --available --json") { process.stdout.write(JSON.stringify({installed:state.installed,available:state.available})); process.exit(0); }
 state.mutations.push(args);
+if (args[0] === "plugin" && args[1] === "add" && state.failPluginAdd) {
+  save();
+  process.stderr.write("Error: failed to back up plugin cache entry: Access is denied. (os error 5)\\n");
+  process.exit(1);
+}
 if (args[0] === "plugin" && args[1] === "marketplace" && args[2] === "add") {
   const refIndex = args.indexOf("--ref");
   const ref = refIndex >= 0 ? args[refIndex + 1] : null;
@@ -81,6 +86,20 @@ test("runtime boundary accepts 24.15 and rejects 24.14", () => {
   assert.equal(supportsRuntime("24.14.9"), false);
   assert.equal(supportsRuntime("24.15.0"), true);
   assert.equal(supportsRuntime("25.0.0"), true);
+});
+
+test("Windows cache-lock failures tell the operator to exit active Codex sessions", async () => {
+  const project = await temporaryProject("adaptive installer cache lock ");
+  try {
+    const fake = await fakeCodex(project, { failPluginAdd: true });
+    const result = runManager(project, fake, ["install", "--non-interactive"]);
+    assert.equal(result.status, 5);
+    assert.match(result.stderr, /plugin cache is in use on Windows/i);
+    assert.match(result.stderr, /fully exit Codex Desktop and every Codex CLI session/i);
+    assert.doesNotMatch(result.stderr, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  } finally {
+    await project.cleanup();
+  }
 });
 
 test("install, upgrade, optional AGENTS patch, and uninstall are idempotent in a Unicode Codex Home", async () => {

@@ -6,7 +6,8 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { listPolicyProposals } from "../scripts/lib/learning.mjs";
-import { temporaryProject } from "./fixtures.mjs";
+import { routeStage } from "../scripts/lib/router.mjs";
+import { CATALOG, routeInput, temporaryProject } from "./fixtures.mjs";
 
 const worker = join(dirname(fileURLToPath(import.meta.url)), "concurrency-worker.mjs");
 
@@ -48,6 +49,83 @@ test("50 processes concurrently migrate an empty SQLite database", async () => {
     assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 3);
     store.close();
   } finally {
+    await project.cleanup();
+  }
+});
+
+test("50 concurrent Stop processes finalize one pending outcome exactly once without blocking", async () => {
+  const project = await temporaryProject("adaptive concurrency stop ");
+  const previousHome = process.env.ADAPTIVE_ROUTER_HOME;
+  process.env.ADAPTIVE_ROUTER_HOME = project.home;
+  try {
+    const setup = new RouterStore();
+    const route = await routeStage(routeInput({ contextId: "shared-stop" }), {
+      catalog: CATALOG,
+      cwd: project.root,
+      store: setup,
+    });
+    assert.equal(route.action, "delegate");
+    setup.close();
+
+    const results = await Promise.all(
+      Array.from({ length: 50 }, () => runWorker(project, "stop", "shared-stop")),
+    );
+    assert.ok(results.every((result) => result.action === "allow"));
+    assert.equal(results.reduce((sum, result) => sum + result.recordedUnknown, 0), 1);
+
+    const verified = new RouterStore();
+    assert.deepEqual(
+      { ...verified.db.prepare("SELECT route_id, status FROM outcomes").get() },
+      { route_id: route.routeId, status: "unknown" },
+    );
+    assert.equal(Number(verified.db.prepare("SELECT count(*) AS count FROM outcomes").get().count), 1);
+    verified.close();
+  } finally {
+    if (previousHome == null) delete process.env.ADAPTIVE_ROUTER_HOME;
+    else process.env.ADAPTIVE_ROUTER_HOME = previousHome;
+    await project.cleanup();
+  }
+});
+
+test("concurrent Stop and verified outcome writers leave one consistent terminal outcome", async () => {
+  const project = await temporaryProject("adaptive concurrency stop outcome race ");
+  const previousHome = process.env.ADAPTIVE_ROUTER_HOME;
+  process.env.ADAPTIVE_ROUTER_HOME = project.home;
+  try {
+    const setup = new RouterStore();
+    const route = await routeStage(routeInput({ contextId: "stop-outcome-race" }), {
+      catalog: CATALOG,
+      cwd: project.root,
+      store: setup,
+    });
+    assert.equal(route.action, "delegate");
+    setup.close();
+
+    const recordPayload = JSON.stringify({
+      routeId: route.routeId,
+      gate: route.verificationGate,
+      escalations: route.escalation.count,
+    });
+    const results = await Promise.all([
+      ...Array.from({ length: 10 }, () => runWorker(project, "stop", "stop-outcome-race")),
+      ...Array.from({ length: 10 }, () => (
+        runWorker(project, "record-existing", "stop-outcome-race", recordPayload)
+      )),
+    ]);
+    assert.equal(results.filter((result) => result.action === "allow").length, 10);
+    assert.equal(results.filter((result) => result.action === "record").length, 10);
+    assert.ok([0, 10].includes(results.filter((result) => result.conflict === true).length));
+
+    const verified = new RouterStore();
+    const rows = verified.db.prepare("SELECT route_id, status FROM outcomes").all()
+      .map((row) => ({ ...row }));
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].route_id, route.routeId);
+    assert.ok(["passed", "unknown"].includes(rows[0].status));
+    verified.close();
+  } finally {
+    if (previousHome == null) delete process.env.ADAPTIVE_ROUTER_HOME;
+    else process.env.ADAPTIVE_ROUTER_HOME = previousHome;
     await project.cleanup();
   }
 });

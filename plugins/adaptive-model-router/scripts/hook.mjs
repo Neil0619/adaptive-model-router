@@ -276,13 +276,7 @@ async function stopHook(input) {
   const store = new RouterStore();
   try {
     const context = store.context({ cwd: input.cwd || process.cwd(), contextId, authoritative: true });
-    const result = store.handleStop(context, input.stop_hook_active === true);
-    if (result.action === "block") {
-      writeJsonLine(process.stdout, {
-        decision: "block",
-        reason: "Call record_outcome for each pending Adaptive Model Router delegated stage, then finish the task.",
-      });
-    }
+    store.handleStop(context);
   } finally {
     store.close();
   }

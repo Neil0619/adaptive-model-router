@@ -42,6 +42,33 @@ if (operation === "migrate") {
 } else if (operation === "approve") {
   const result = approvePolicyProposal({ contextId, proposalId: value }, { cwd });
   process.stdout.write(`${JSON.stringify(result)}\n`);
+} else if (operation === "stop") {
+  const store = new RouterStore();
+  const context = store.context({ cwd, contextId });
+  const result = store.handleStop(context);
+  store.close();
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+} else if (operation === "record-existing") {
+  const payload = JSON.parse(value);
+  try {
+    const result = recordOutcome({
+      routeId: payload.routeId,
+      contextId,
+      status: "passed",
+      gate: payload.gate,
+      failureType: null,
+      retries: 0,
+      retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
+      escalations: payload.escalations,
+      userCorrection: false,
+    }, { cwd });
+    process.stdout.write(`${JSON.stringify({ action: "record", result })}\n`);
+  } catch (error) {
+    process.stdout.write(`${JSON.stringify({
+      action: "record",
+      conflict: /conflicting final outcome/u.test(String(error?.message || "")),
+    })}\n`);
+  }
 } else {
   throw new Error("unknown worker operation");
 }
