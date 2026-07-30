@@ -47,6 +47,9 @@ const runtimeDescriptor = parseRuntimeDescriptor(await json(join(pluginRoot, "ru
 const marketplace = await json(join(repoRoot, ".agents", "plugins", "marketplace.json"));
 const hooks = await json(join(pluginRoot, "hooks", "hooks.json"));
 const releaseWorkflow = await readFile(join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
+const releaseChecklist = await readFile(join(repoRoot, "docs", "RELEASE.md"), "utf8");
+const windowsSmoke = await readFile(join(repoRoot, "docs", "WINDOWS_SMOKE.md"), "utf8");
+const macosSmoke = await readFile(join(repoRoot, "docs", "MACOS_SMOKE.md"), "utf8");
 const skill = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8");
 const skillUi = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "agents", "openai.yaml"), "utf8");
 assert(manifest.version.split("+")[0] === packageJson.version, "manifest base version and package version differ");
@@ -62,6 +65,26 @@ assert(Array.isArray(manifest.interface?.defaultPrompt) && manifest.interface.de
 assert(packageJson.version === "0.4.0", "release base version must be 0.4.0");
 const releaseTag = `v${packageJson.version}`;
 const releaseArtifact = `adaptive-model-router-${releaseTag}`;
+const releaseCandidateRef = "codex/v040-stop-hook-fix";
+for (const [name, document] of [
+  ["release checklist", releaseChecklist],
+  ["Windows smoke", windowsSmoke],
+  ["macOS smoke", macosSmoke],
+]) {
+  assert(document.includes(releaseCandidateRef), `${name} must use ${releaseCandidateRef}`);
+  assert(
+    !document.includes("codex/v040-shadow-inspection-fix"),
+    `${name} still uses the invalidated shadow-inspection candidate`,
+  );
+}
+assert(
+  windowsSmoke.includes("published `stable` remains on v0.3.0"),
+  "Windows smoke must state the published stable version",
+);
+assert(
+  releaseChecklist.includes("published `stable` remains on v0.3.0"),
+  "release checklist must state the published stable version",
+);
 const releaseVersions = [...releaseWorkflow.matchAll(/\bv\d+\.\d+\.\d+\b/gu)].map(
   (match) => match[0],
 );

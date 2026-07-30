@@ -66,7 +66,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/v040-shadow-inspection-fix"
+$CandidateRef = "codex/v040-stop-hook-fix"
 $SmokeRoot = Join-Path $env:TEMP ("Adaptive Router Windows 冒烟 " + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $SmokeRoot "source checkout"
 $Project = Join-Path $SmokeRoot "测试 project with spaces"
@@ -88,6 +88,15 @@ characters. Keep `$Source` and `$Project` for the complete smoke run.
 codex plugin marketplace list
 codex plugin list
 ```
+
+Before replacing an earlier candidate with the same plugin version, fully exit
+Codex Desktop and every Codex CLI session. An active plugin MCP process uses
+the cached plugin directory as its working directory on Windows, so the native
+`plugin add` backup step can otherwise fail with a file-in-use or access-denied
+error. If this runbook was handed to an active Codex task, checkpoint the task,
+exit Codex, run the native remove/add commands below from an external
+PowerShell window, then reopen the task. Run each mutating command separately;
+do not let a later list command hide an earlier nonzero exit status.
 
 If a same-name marketplace remains from this repository's earlier `stable`
 smoke, remove only that known plugin and marketplace before adding the

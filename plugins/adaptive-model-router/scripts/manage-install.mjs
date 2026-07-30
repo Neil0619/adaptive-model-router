@@ -76,6 +76,16 @@ function run(command, args, { json = false, quiet = false } = {}) {
     env: process.env,
   });
   if (result.error || result.status !== 0) {
+    const failureText = `${result.error?.message || ""}\n${result.stderr || ""}`;
+    if (
+      args[0] === "plugin" &&
+      /failed to (?:back up|remove) (?:existing )?plugin cache entry|used by another process/iu.test(failureText)
+    ) {
+      throw new InstallError(
+        "Codex plugin cache is in use on Windows; fully exit Codex Desktop and every Codex CLI session, then retry",
+        5,
+      );
+    }
     throw new InstallError(`${command} ${args.join(" ")} failed`, 5);
   }
   if (!quiet && result.stdout) process.stdout.write(result.stdout);

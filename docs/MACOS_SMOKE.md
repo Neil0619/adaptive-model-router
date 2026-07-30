@@ -2,7 +2,7 @@
 
 This is the blocking logged-in macOS gate for `v0.4.0`. Run it in Codex Desktop
 or CLI on native macOS against the frozen
-`codex/v040-shadow-inspection-fix` ref.
+`codex/v040-stop-hook-fix` ref.
 Do not create or push the release tag from this smoke task.
 
 ## Pass criteria
@@ -29,7 +29,7 @@ Do not create or push the release tag from this smoke task.
 ## 1. Prepare a Unicode project and candidate checkout
 
 ```bash
-CandidateRef="codex/v040-shadow-inspection-fix"
+CandidateRef="codex/v040-stop-hook-fix"
 SmokeRoot="$(mktemp -d)/Adaptive Router macOS 冒烟"
 Source="$SmokeRoot/source checkout"
 Project="$SmokeRoot/测试 project with spaces"
