@@ -309,10 +309,18 @@ release needs both the validated artifact and the completed manual report at
 the end of this runbook.
 
 The canonical runner seeds a deterministic fixture in its disposable project,
-then asks the managed read-only Codex task and bounded subagent to review and
-test it. This keeps the route/subagent/outcome gate valid on hosts whose managed
-permission profile cannot be broadened by `-s workspace-write`; the runner does
-not bypass command approvals, the managed sandbox, or Hook trust.
+then asks the managed read-only Codex task and bounded subagent to perform two
+independent reviews bound to the router's `structured-check` gate. The native
+PowerShell runner validates both fixed-key review summaries, proves the fixture
+file set and hashes did not change during review, immediately runs the Node
+tests, and proves the file set and hashes still did not change. Together they
+form the same blocking route/subagent/outcome check. This keeps the gate valid
+on hosts whose managed permission profile cannot be broadened by
+`-s workspace-write`; the runner does not bypass command approvals, the managed
+sandbox, or Hook trust. Because `codex exec --json` omits `spawn_agent` from its
+public event projection, the runner reads only the required lifecycle metadata
+from the dedicated smoke Home to prove one ordered route/spawn/wait/outcome and
+the bounded target model/effort; it never emits raw session logs.
 
 ## 6. Exercise host-model intent protection
 

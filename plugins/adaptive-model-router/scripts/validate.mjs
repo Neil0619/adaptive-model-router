@@ -96,6 +96,7 @@ assert(
 checkObjectSchemas(smokeEvidenceSchema, "smokeEvidence");
 assert(smokeEvidenceSchema.properties?.schemaVersion?.const === 1, "smoke evidence schema version must be 1");
 assert(smokeEvidenceSchema.properties?.gate?.enum?.includes("macos-native"), "smoke evidence schema must support the blocking macOS gate");
+assert(smokeEvidenceSchema.properties?.route?.properties?.verificationGate?.enum?.includes("structured-check"), "smoke evidence schema must preserve structured review gates");
 assert(macosEvidenceTemplate.gate === "macos-native" && macosEvidenceTemplate.status === "FAIL", "macOS evidence template must fail closed");
 assert(macosEvidenceTemplate.checks?.length === 16, "macOS evidence template must contain all canonical checks");
 assert(
@@ -116,7 +117,18 @@ assert(windowsSmokeRunner.includes("@($InstalledRouterLauncher, $InstalledRouter
 assert(windowsSmokeRunner.includes("Write-SmokeFixture -Root $Project"), "Windows smoke runner must seed its deterministic fixture outside the managed read-only Codex session");
 assert(windowsSmokeRunner.includes("@('exec', '-s', 'read-only', 'resume'"), "Windows smoke runner must keep resumed turns in the managed read-only sandbox");
 assert(windowsSmokeRunner.includes("@('exec', '-s', 'read-only', '--json'"), "Windows smoke runner must start new turns in the managed read-only sandbox");
-assert(windowsSmokeRunner.includes("fixture changed during managed read-only verification"), "Windows smoke runner must prove the deterministic fixture was not mutated");
+assert(windowsSmokeRunner.includes("@('exec', '-s', 'read-only', '--json', '-C', $Project2"), "Windows smoke runner must keep the cross-project status probe read-only");
+assert(windowsSmokeRunner.includes("the native runner performs the executable test immediately after this read-only review"), "Windows smoke runner must separate model review from host-side executable verification");
+assert(windowsSmokeRunner.includes("phase=review and evidence review=true"), "Windows smoke runner must route the managed task as a structured review");
+assert(windowsSmokeRunner.includes("read-only review did not preserve the structured-check contract"), "Windows smoke runner must bind the review outcome to the structured-check gate");
+assert(windowsSmokeRunner.includes("Assert-StructuredReviewSummary"), "Windows smoke runner must validate both managed review checklists");
+assert(windowsSmokeRunner.includes("Read-CodexSessionTrace"), "Windows smoke runner must count collaboration lifecycle calls from the dedicated session trace");
+assert(windowsSmokeRunner.includes("Read-BoundedSubagentExecution"), "Windows smoke runner must verify the bounded target model and effort from execution metadata");
+assert(windowsSmokeRunner.includes("Get-NestedPropertyValue"), "Windows smoke runner must safely inspect mixed session JSONL under strict mode");
+assert(windowsSmokeRunner.includes("managed review lifecycle order is not route, spawn, wait completion, outcome"), "Windows smoke runner must enforce delegated lifecycle ordering");
+assert(windowsSmokeRunner.includes("fixture changed during managed read-only review"), "Windows smoke runner must prove the deterministic fixture was not mutated by managed review");
+assert(windowsSmokeRunner.includes("fixture changed during native executable verification"), "Windows smoke runner must prove the deterministic fixture was not mutated by native tests");
+assert(smokeEvidenceValidator.includes('"structured-check"'), "smoke evidence validator must preserve structured review gates");
 assert(!windowsSmokeRunner.includes("--dangerously-bypass-approvals-and-sandbox"), "Windows smoke runner must not bypass command approvals or the managed sandbox");
 assert(!windowsSmokeRunner.includes("--dangerously-bypass-hook-trust"), "Windows smoke runner must not bypass Hook trust");
 assert(windowsSmokeRunner.includes("invoke-command-shim.ps1"), "Windows smoke runner must use the command-shim adapter");

@@ -172,7 +172,10 @@ function Invoke-CodexTurn {
     $thread = @($events | Where-Object { $_.type -eq 'thread.started' } | Select-Object -Last 1)
     $resolvedSession = if ($ResumeSession) { $ResumeSession } elseif ($thread.Count -eq 1) { [string]$thread[0].thread_id } else { $null }
     if ([string]::IsNullOrWhiteSpace($resolvedSession)) { throw 'Codex did not emit thread.started' }
-    return [pscustomobject]@{ SessionId = $resolvedSession; Events = $events }
+    if (-not (Test-Path -LiteralPath $lastMessage -PathType Leaf)) { throw 'Codex did not write its final response' }
+    $lastMessageText = Get-Content -LiteralPath $lastMessage -Raw
+    if ([string]::IsNullOrWhiteSpace($lastMessageText)) { throw 'Codex wrote an empty final response' }
+    return [pscustomobject]@{ SessionId = $resolvedSession; Events = $events; LastMessage = $lastMessageText }
 }
 
 function Read-RouterState {
@@ -217,6 +220,67 @@ function Get-FirstToolEventIndex {
         if ($toolName -eq $Tool -or $toolName.EndsWith("__$Tool", [StringComparison]::Ordinal)) { return $index }
     }
     return -1
+}
+
+function Get-NestedPropertyValue {
+    param(
+        [AllowNull()][object]$InputObject,
+        [Parameter(Mandatory = $true)][string[]]$Path
+    )
+    $value = $InputObject
+    foreach ($segment in $Path) {
+        if ($null -eq $value) { return $null }
+        $property = $value.PSObject.Properties[$segment]
+        if ($null -eq $property) { return $null }
+        $value = $property.Value
+    }
+    return $value
+}
+
+function Read-CodexSessionTrace {
+    param([Parameter(Mandatory = $true)][string]$Context)
+    $sessionRoot = Join-Path $DedicatedCodexHome 'sessions'
+    $sessionFiles = @(Get-ChildItem -LiteralPath $sessionRoot -Recurse -File -Filter ("*-{0}.jsonl" -f $Context))
+    if ($sessionFiles.Count -ne 1) { throw 'Codex parent session trace was not uniquely identifiable' }
+    $entries = [Collections.Generic.List[object]]::new()
+    foreach ($line in (Get-Content -LiteralPath $sessionFiles[0].FullName)) {
+        if ([string]::IsNullOrWhiteSpace($line)) { continue }
+        try { $entries.Add(($line | ConvertFrom-Json -Depth 50)) } catch { throw 'Codex parent session trace contains invalid JSONL' }
+    }
+    return @($entries)
+}
+
+function Read-BoundedSubagentExecution {
+    param(
+        [Parameter(Mandatory = $true)][string]$ParentContext,
+        [Parameter(Mandatory = $true)][string]$AgentPath,
+        [Parameter(Mandatory = $true)][datetime]$StartedAfter
+    )
+    $sessionRoot = Join-Path $DedicatedCodexHome 'sessions'
+    $matches = [Collections.Generic.List[object]]::new()
+    foreach ($file in (Get-ChildItem -LiteralPath $sessionRoot -Recurse -File -Filter '*.jsonl' | Where-Object { $_.LastWriteTimeUtc -ge $StartedAfter.AddSeconds(-2) })) {
+        $entries = [Collections.Generic.List[object]]::new()
+        $isMatch = $false
+        foreach ($line in (Get-Content -LiteralPath $file.FullName)) {
+            if ([string]::IsNullOrWhiteSpace($line)) { continue }
+            try { $entry = $line | ConvertFrom-Json -Depth 50 } catch { throw 'Codex bounded-subagent trace contains invalid JSONL' }
+            $entries.Add($entry)
+            $spawn = Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'source', 'subagent', 'thread_spawn')
+            if ($null -ne $spawn -and [string](Get-NestedPropertyValue -InputObject $spawn -Path @('parent_thread_id')) -eq $ParentContext -and [string](Get-NestedPropertyValue -InputObject $spawn -Path @('agent_path')) -eq $AgentPath) { $isMatch = $true }
+        }
+        if ($isMatch) { $matches.Add(@($entries)) }
+    }
+    if ($matches.Count -ne 1) { throw 'bounded-subagent execution trace was not uniquely identifiable' }
+    $turnContexts = @($matches[0] | Where-Object {
+        (Get-NestedPropertyValue -InputObject $_ -Path @('type')) -eq 'turn_context' -and
+        -not [string]::IsNullOrWhiteSpace([string](Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'model'))) -and
+        -not [string]::IsNullOrWhiteSpace([string](Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'effort')))
+    })
+    if ($turnContexts.Count -lt 1) { throw 'bounded-subagent execution trace lacks model and effort metadata' }
+    return [pscustomobject]@{
+        Model = [string](Get-NestedPropertyValue -InputObject $turnContexts[-1] -Path @('payload', 'model'))
+        Effort = [string](Get-NestedPropertyValue -InputObject $turnContexts[-1] -Path @('payload', 'effort'))
+    }
 }
 
 function Get-NewRoutes {
@@ -331,9 +395,38 @@ test("preserves Chinese text", () => assert.equal(normalizeLines("你好  \r\n�
 
 function Get-SmokeFixtureHash {
     param([Parameter(Mandatory = $true)][string]$Root)
+    $relativeFiles = @(Get-ChildItem -LiteralPath (Join-Path $Root 'src'), (Join-Path $Root 'test') -File -Recurse |
+        ForEach-Object { [IO.Path]::GetRelativePath($Root, $_.FullName).Replace('\', '/') } |
+        Sort-Object)
+    $hashes = [ordered]@{}
+    foreach ($relativeFile in $relativeFiles) {
+        $hashes[$relativeFile] = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $Root $relativeFile)).Hash
+    }
     return [ordered]@{
-        source = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $Root 'src\normalize-lines.mjs')).Hash
-        test = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $Root 'test\normalize-lines.test.mjs')).Hash
+        files = $relativeFiles
+        hashes = $hashes
+    }
+}
+
+function Assert-StructuredReviewSummary {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    try { $summary = $Text | ConvertFrom-Json -Depth 20 } catch { throw 'managed review did not return valid JSON' }
+    $summaryKeys = @($summary.PSObject.Properties.Name | Sort-Object)
+    if (($summaryKeys -join ',') -ne 'agreement,rootReview,subagentReview,testExecution') { throw 'managed review summary fields differ from the fixed contract' }
+    $checkKeys = @('chineseText', 'cr', 'crlf', 'dependencyFree', 'emptyInput', 'existingFinalNewline', 'nonEmptyFinalLf', 'trailingWhitespace')
+    foreach ($reviewName in @('rootReview', 'subagentReview')) {
+        $review = $summary.$reviewName
+        $reviewKeys = @($review.PSObject.Properties.Name | Sort-Object)
+        if (($reviewKeys -join ',') -ne 'checks,verdict') { throw "$reviewName fields differ from the fixed contract" }
+        if ([string]$review.verdict -ne 'passed') { throw "$reviewName did not pass" }
+        $actualCheckKeys = @($review.checks.PSObject.Properties.Name | Sort-Object)
+        if (($actualCheckKeys -join ',') -ne ($checkKeys -join ',')) { throw "$reviewName checklist differs from the fixed contract" }
+        foreach ($checkKey in $checkKeys) {
+            if ($review.checks.$checkKey -ne $true) { throw "$reviewName checklist contains a failed item" }
+        }
+    }
+    if ($summary.agreement -ne $true -or [string]$summary.testExecution -ne 'deferred-to-native-runner') {
+        throw 'managed reviews did not agree or claimed executable verification'
     }
 }
 
@@ -428,34 +521,65 @@ Follow the trusted automatic-router context for this turn. Call route_stage exac
 
     Write-SmokeFixture -Root $Project
     $fixtureHashBefore = Get-SmokeFixtureHash -Root $Project
+    $reviewHistoryBefore = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+    $sessionTraceBeforeCount = @(Read-CodexSessionTrace -Context $SessionId).Count
+    $reviewStartedAt = [DateTime]::UtcNow
     $implementationPrompt = @'
-Review and verify the existing dependency-free Node.js 24 line-normalization utility and tests in this temporary project without modifying files. Follow the trusted fixed-context automatic-router instruction injected for this turn. At the implementation verification stage call route_stage with workProduct=true, requirementsSettled=true, strongVerification=true, batchSize=2 and the host's actual bounded-subagent capabilities. A Sol/Terra-only host must omit Luna. Confirm that normalizeLines(text) converts CRLF and CR to LF, strips trailing spaces/tabs on every line, returns exactly one final LF for non-empty input, returns an empty string for empty input, and that node:test covers CRLF, CR, trailing whitespace, empty input, an existing final newline, and Chinese text. If the route delegates, create exactly one bounded subagent using target.model and target.effort, with no recursive routing or outcome ownership. The root task must review the existing files, run node --test test/normalize-lines.test.mjs, and call record_outcome exactly once with the factual verification result and typed retry breakdown. Then call status, history, diagnose, and learning status. Return a concise redacted summary. Never expose source, prompt text, environment values, secrets, absolute paths, session/context identifiers, or raw logs.
+Review the existing dependency-free Node.js 24 line-normalization utility and tests in this temporary project without modifying files. Follow the trusted fixed-context automatic-router instruction injected for this turn. Call route_stage exactly once for a bounded review stage with phase=review and evidence review=true, workProduct=true, requirementsSettled=true, strongVerification=true, batchSize=2 plus the host's actual bounded-subagent capabilities. A Sol/Terra-only host must omit Luna. The root task and exactly one bounded subagent must independently inspect the existing source and tests against this fixed checklist: CRLF normalization, CR normalization, trailing spaces/tabs removal, exactly one final LF for non-empty input, empty input preservation, existing final newline handling, Chinese text preservation, and no runtime dependencies. When the route delegates, call the spawn_agent collaboration tool exactly once using target.model and target.effort; the subagent must return only its structured checklist and must not route recursively or own record_outcome. The root must complete its own checklist, call wait_agent until the subagent's final checklist is available, compare both results, and call record_outcome exactly once using the returned structured-check gate. Pass only when both reviews pass and agree. Do not run Node tests or any write command; the native runner performs the executable test immediately after this read-only review. Then call status, history, diagnose, and learning status. Return only one redacted JSON object with exactly rootReview, subagentReview, agreement, and testExecution. Each review must contain exactly verdict and checks; verdict must be passed, and checks must contain exactly the boolean keys crlf, cr, trailingWhitespace, nonEmptyFinalLf, emptyInput, existingFinalNewline, chineseText, dependencyFree. Set agreement to true and testExecution to deferred-to-native-runner. Never expose source, prompt text, environment values, secrets, paths, session/context identifiers, or raw logs.
 '@
     $implementationTurn = Invoke-CodexTurn -Prompt $implementationPrompt -Model 'gpt-5.6-sol' -ResumeSession $SessionId
+    $implementationTrace = @(Read-CodexSessionTrace -Context $SessionId | Select-Object -Skip $sessionTraceBeforeCount)
+    Assert-StructuredReviewSummary -Text $implementationTurn.LastMessage
+    $fixtureHashAfterReview = Get-SmokeFixtureHash -Root $Project
+    if (($fixtureHashBefore | ConvertTo-Json -Depth 20 -Compress) -ne ($fixtureHashAfterReview | ConvertTo-Json -Depth 20 -Compress)) {
+        throw 'fixture changed during managed read-only review'
+    }
     Invoke-Process -FilePath 'node' -ArgumentList @('--test', 'test/normalize-lines.test.mjs') -WorkingDirectory $Project | Out-Null
-    $fixtureHashAfter = Get-SmokeFixtureHash -Root $Project
-    if (($fixtureHashBefore | ConvertTo-Json -Compress) -ne ($fixtureHashAfter | ConvertTo-Json -Compress)) {
-        throw 'fixture changed during managed read-only verification'
+    $fixtureHashAfterTest = Get-SmokeFixtureHash -Root $Project
+    if (($fixtureHashBefore | ConvertTo-Json -Depth 20 -Compress) -ne ($fixtureHashAfterTest | ConvertTo-Json -Depth 20 -Compress)) {
+        throw 'fixture changed during native executable verification'
     }
     $status = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
     $history = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
     $doctor = Read-RouterState -Command 'doctor' -Context $SessionId -WorkingProject $Project
     $learningBeforeIntent = Read-RouterState -Command 'learning' -Context $SessionId -WorkingProject $Project
-    $delegated = @($history.routes | Where-Object { $_.action -eq 'delegate' -and $_.outcome.status -eq 'passed' })
-    if ($delegated.Count -ne 1 -or $status.pendingOutcomes -ne 0) { throw 'delegated lifecycle did not produce one verified outcome' }
-    $route = $delegated[0]
+    $reviewRoutes = @(Get-NewRoutes -Before $reviewHistoryBefore -After $history)
+    if ($reviewRoutes.Count -ne 1 -or $reviewRoutes[0].action -ne 'delegate' -or $reviewRoutes[0].outcome.status -ne 'passed' -or $status.pendingOutcomes -ne 0) { throw 'managed review did not add exactly one verified delegated route' }
+    $route = $reviewRoutes[0]
     if ($route.outcome.source -ne 'record_outcome') { throw 'verified outcome was not finalized by record_outcome' }
+    if ($route.category -ne 'review' -or $route.verificationGate -ne 'structured-check' -or $route.outcome.gate -ne 'structured-check') { throw 'read-only review did not preserve the structured-check contract' }
+    if (@($route.reasonCodes) -notcontains 'REVIEW_STAGE' -or @($route.reasonCodes) -notcontains 'STRONG_VERIFICATION') { throw 'review route did not preserve its review and verification signals' }
     $retryBreakdown = $route.outcome.retryBreakdown
     $retryKeys = @($retryBreakdown.PSObject.Properties.Name | Sort-Object)
     if (($retryKeys -join ',') -ne 'environment,information,reasoning,tooling') { throw 'verified outcome does not contain the complete typed retry breakdown' }
     $retryTotal = [int]$retryBreakdown.reasoning + [int]$retryBreakdown.environment + [int]$retryBreakdown.information + [int]$retryBreakdown.tooling
     if ($retryTotal -ne [int]$route.outcome.retries) { throw 'verified outcome retry breakdown does not sum to retries' }
-    $spawnCalls = @(Get-ToolCallItems -Events $implementationTurn.Events -Tool 'spawn_agent')
     $outcomeCalls = @(Get-ToolCallItems -Events $implementationTurn.Events -Tool 'record_outcome')
-    if ($spawnCalls.Count -ne 1 -or $outcomeCalls.Count -ne 1) { throw 'implementation turn did not contain exactly one subagent spawn and one root outcome call' }
-    $spawnIndex = Get-FirstToolEventIndex -Events $implementationTurn.Events -Tool 'spawn_agent'
-    $outcomeIndex = Get-FirstToolEventIndex -Events $implementationTurn.Events -Tool 'record_outcome'
-    if ($spawnIndex -lt 0 -or $outcomeIndex -le $spawnIndex) { throw 'record_outcome did not follow the bounded subagent spawn' }
+    $routeTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'mcp_tool_call_end' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'invocation', 'tool')) -eq 'route_stage' })
+    $spawnTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'namespace')) -eq 'collaboration' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'name')) -eq 'spawn_agent' })
+    $waitTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'namespace')) -eq 'collaboration' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'name')) -eq 'wait_agent' })
+    $recordTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'mcp_tool_call_end' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'invocation', 'tool')) -eq 'record_outcome' })
+    if ($routeTrace.Count -ne 1 -or $spawnTrace.Count -ne 1 -or $waitTrace.Count -ne 1 -or $recordTrace.Count -ne 1 -or $outcomeCalls.Count -ne 1) { throw 'managed review lifecycle call cardinality differs from one route, spawn, wait, and outcome' }
+    $spawnCallId = [string](Get-NestedPropertyValue -InputObject $spawnTrace[0] -Path @('payload', 'call_id'))
+    $waitCallId = [string](Get-NestedPropertyValue -InputObject $waitTrace[0] -Path @('payload', 'call_id'))
+    $spawnOutput = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call_output' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'call_id')) -eq $spawnCallId })
+    $waitOutput = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call_output' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'call_id')) -eq $waitCallId })
+    if ($spawnOutput.Count -ne 1 -or $waitOutput.Count -ne 1) { throw 'managed review collaboration calls did not complete exactly once' }
+    try { $spawnResult = (Get-NestedPropertyValue -InputObject $spawnOutput[0] -Path @('payload', 'output')) | ConvertFrom-Json -Depth 20 } catch { throw 'bounded-subagent spawn result is invalid' }
+    try { $waitResult = (Get-NestedPropertyValue -InputObject $waitOutput[0] -Path @('payload', 'output')) | ConvertFrom-Json -Depth 20 } catch { throw 'bounded-subagent wait result is invalid' }
+    $agentPath = [string](Get-NestedPropertyValue -InputObject $spawnResult -Path @('task_name'))
+    if ([string]::IsNullOrWhiteSpace($agentPath) -or (Get-NestedPropertyValue -InputObject $waitResult -Path @('timed_out')) -ne $false -or [string](Get-NestedPropertyValue -InputObject $waitResult -Path @('message')) -notmatch 'finished|completed|final') { throw 'bounded subagent was not observed to finish before outcome recording' }
+    $tracePositions = [ordered]@{}
+    for ($traceIndex = 0; $traceIndex -lt $implementationTrace.Count; $traceIndex += 1) {
+        $entry = $implementationTrace[$traceIndex]
+        $payloadType = Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'type')
+        $toolName = Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'invocation', 'tool')
+        if ($payloadType -eq 'mcp_tool_call_end' -and $toolName -eq 'route_stage') { $tracePositions.route = $traceIndex }
+        if ($payloadType -eq 'function_call' -and (Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'namespace')) -eq 'collaboration' -and (Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'name')) -eq 'spawn_agent') { $tracePositions.spawn = $traceIndex }
+        if ($payloadType -eq 'function_call_output' -and (Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'call_id')) -eq $waitCallId) { $tracePositions.waited = $traceIndex }
+        if ($payloadType -eq 'mcp_tool_call_end' -and $toolName -eq 'record_outcome') { $tracePositions.outcome = $traceIndex }
+    }
+    if (-not ($tracePositions['route'] -lt $tracePositions['spawn'] -and $tracePositions['spawn'] -lt $tracePositions['waited'] -and $tracePositions['waited'] -lt $tracePositions['outcome'])) { throw 'managed review lifecycle order is not route, spawn, wait completion, outcome' }
     $RouteEvidence.action = 'delegate'
     $RouteEvidence.targetFamily = Get-ModelFamily -Model ([string]$route.target.model)
     $RouteEvidence.targetEffort = [string]$route.target.effort
@@ -465,8 +589,8 @@ Review and verify the existing dependency-free Node.js 24 line-normalization uti
     $DiagnosticEvidence.databaseHealth = [string]$doctor.databaseHealth
     $DiagnosticEvidence.classifierState = if ($doctor.classifier.circuitOpen) { 'open' } else { 'closed' }
     if ($RouteEvidence.targetFamily -notin @('sol', 'terra')) { throw 'automatic bounded target escaped the Sol/Terra capability set' }
-    $spawnProjection = $spawnCalls[0] | ConvertTo-Json -Depth 30 -Compress
-    if (-not $spawnProjection.Contains([string]$route.target.model, [StringComparison]::Ordinal) -or -not $spawnProjection.Contains([string]$route.target.effort, [StringComparison]::Ordinal)) { throw 'subagent spawn did not use the routed target model and effort' }
+    $subagentExecution = Read-BoundedSubagentExecution -ParentContext $SessionId -AgentPath $agentPath -StartedAfter $reviewStartedAt
+    if ($subagentExecution.Model -ne [string]$route.target.model -or $subagentExecution.Effort -ne [string]$route.target.effort) { throw 'bounded-subagent execution did not use the routed target model and effort' }
     if ($route.rootTask.changedByRouter -ne $false -or [string]::IsNullOrWhiteSpace([string]$route.rootTask.model)) { throw 'history did not preserve the root versus bounded-target boundary' }
     if ($DiagnosticEvidence.databaseHealth -ne 'ok' -or $DiagnosticEvidence.classifierState -ne 'closed') { throw 'router diagnostics are not healthy' }
     Assert-PrivateProjection -Values @($status, $history, $doctor, $learningBeforeIntent)
@@ -570,7 +694,7 @@ Review and verify the existing dependency-free Node.js 24 line-normalization uti
     Assert-InstalledCandidate -ExpectedRef $CandidateRef -ExpectedCommit $CandidateCommit
     Add-SmokeCheck -Id 'native-and-wrapper-lifecycle' -Blocking $true -Status 'PASS'
 
-    $second = Invoke-Process -FilePath 'codex' -ArgumentList @('exec', '--json', '-C', $Project2, '-m', 'gpt-5.6-sol', 'router: status') -WorkingDirectory $Project2
+    $second = Invoke-Process -FilePath 'codex' -ArgumentList @('exec', '-s', 'read-only', '--json', '-C', $Project2, '-m', 'gpt-5.6-sol', 'router: status') -WorkingDirectory $Project2
     $secondEvent = @($second.Stdout -split "`r?`n" | ForEach-Object { if ($_){ try { $_ | ConvertFrom-Json -Depth 20 } catch {} } } | Where-Object { $_.type -eq 'thread.started' } | Select-Object -Last 1)
     if ($secondEvent.Count -ne 1) { throw 'second project did not start a Codex session' }
     $secondStatus = Read-RouterState -Command 'status' -Context ([string]$secondEvent[0].thread_id) -WorkingProject $Project2

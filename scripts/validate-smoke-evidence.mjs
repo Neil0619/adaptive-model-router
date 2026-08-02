@@ -175,7 +175,7 @@ function validate(evidence, schema, options = {}) {
   enumValue(evidence.route.action, ["delegate", "continue", "ask_user", "unavailable"], "route.action");
   enumValue(evidence.route.targetFamily, ["sol", "terra", "luna", "none"], "route.targetFamily");
   enumValue(evidence.route.targetEffort, ["low", "medium", "high", "xhigh", "max", "ultra", "none"], "route.targetEffort");
-  enumValue(evidence.route.verificationGate, ["light-checks", "targeted-tests", "full-checks", "unavailable"], "route.verificationGate");
+  enumValue(evidence.route.verificationGate, ["light-checks", "targeted-tests", "structured-check", "full-checks", "unavailable"], "route.verificationGate");
   for (const key of ["pendingOutcomes", "stopHookUnknown"]) {
     if (!Number.isInteger(evidence.route[key]) || evidence.route[key] < 0) fail(`route.${key} must be a non-negative integer`);
   }

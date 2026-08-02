@@ -74,7 +74,7 @@ function validEvidence() {
       action: "delegate",
       targetFamily: "sol",
       targetEffort: "high",
-      verificationGate: "full-checks",
+      verificationGate: "structured-check",
       pendingOutcomes: 0,
       stopHookUnknown: 0,
     },
@@ -136,6 +136,12 @@ test("smoke evidence validator rejects path leaks and inconsistent PASS claims",
     const schemaInvalidDateResult = await runEvidence(project, schemaInvalidDate);
     assert.notEqual(schemaInvalidDateResult.result.status, 0);
     assert.match(schemaInvalidDateResult.result.stderr, /RFC 3339 date-time/u);
+
+    const unknownGate = validEvidence();
+    unknownGate.route.verificationGate = "invented-check";
+    const unknownGateResult = await runEvidence(project, unknownGate);
+    assert.notEqual(unknownGateResult.result.status, 0);
+    assert.match(unknownGateResult.result.stderr, /schema enum|allowed value/u);
 
     const placeholder = validEvidence();
     placeholder.candidate.commitSha = "0".repeat(40);
