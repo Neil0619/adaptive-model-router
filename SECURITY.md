@@ -22,6 +22,13 @@ testing. This project does not ask users to pipe a remote script into a shell;
 the primary installation path uses native Codex marketplace commands. The
 optional repository wrappers execute only after download and review.
 
+The plugin MCP server auto-approves only the normal routing lifecycle and
+read-only inspection allowlist so automatic routing also works on headless
+Codex surfaces. Configuration, route overrides, policy approval or rejection,
+rollback, rebase, scoring-profile re-anchoring, legacy import, and project-data
+deletion remain approval-prompted. Server-side confirmation requirements still
+apply independently of the host approval mode.
+
 Router diagnostics and public reports must not include prompts, source,
 credentials, environment-variable values, SQLite files, or absolute project
 paths. See [docs/PRIVACY.md](docs/PRIVACY.md) and

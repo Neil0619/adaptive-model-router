@@ -149,6 +149,25 @@ assert(routerMcp?.command === "node", "MCP must use the Node command resolved by
 assert(routerMcp.cwd === ".", "MCP cwd must resolve from the plugin root");
 assert(routerMcp.args?.[0] === "./scripts/node-launcher.mjs", "MCP must use the relative runtime launcher");
 assert(routerMcp.args?.[1] === "./scripts/mcp-server.mjs", "MCP must use the relative server path");
+assert(routerMcp.default_tools_approval_mode === "prompt", "MCP must fail closed for tools without an explicit approval policy");
+const autoApprovedTools = [
+  "diagnose_router",
+  "get_learning_status",
+  "get_route_history",
+  "get_route_status",
+  "list_policy_proposals",
+  "record_outcome",
+  "resolve_host_model_intent",
+  "route_stage",
+  "shadow_route_stage",
+];
+assert(
+  JSON.stringify(Object.keys(routerMcp.tools || {}).sort()) === JSON.stringify(autoApprovedTools),
+  "MCP may auto-approve only the routing lifecycle and read-only inspection allowlist",
+);
+for (const tool of autoApprovedTools) {
+  assert(routerMcp.tools[tool]?.approval_mode === "approve", `${tool} must be non-interactive after plugin trust`);
+}
 assert(!JSON.stringify(routerMcp).includes("PLUGIN_ROOT"), "MCP config must not rely on hook-only PLUGIN_ROOT interpolation");
 assert(skill.includes("`target.effort` value to the current Codex subagent `reasoning_effort` parameter"), "skill must map router effort to the Codex subagent parameter");
 assert(!skill.includes("using exactly `target.model` and `target.effort`"), "skill must not present router output fields as host parameter names");
