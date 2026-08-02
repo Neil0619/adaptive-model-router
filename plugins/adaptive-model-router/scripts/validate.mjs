@@ -54,6 +54,7 @@ const smokeEvidenceSchema = await json(join(repoRoot, "docs", "release-evidence"
 const macosEvidenceTemplate = await json(join(repoRoot, "docs", "release-evidence", "templates", "macos-v1.json"));
 const smokeEvidenceValidator = await readFile(join(repoRoot, "scripts", "validate-smoke-evidence.mjs"), "utf8");
 const installedCandidateVerifier = await readFile(join(repoRoot, "scripts", "verify-installed-candidate.mjs"), "utf8");
+const gateContentComparator = await readFile(join(repoRoot, "scripts", "compare-gate-content.mjs"), "utf8");
 const windowsSmokeRunnerPath = "scripts/windows-smoke.ps1";
 const windowsSmokeRunner = await readFile(join(repoRoot, ...windowsSmokeRunnerPath.split("/")), "utf8");
 const windowsCommandShim = await readFile(join(repoRoot, "scripts", "invoke-command-shim.ps1"), "utf8");
@@ -109,6 +110,7 @@ assert(windowsSmokeRunner.includes("[Parameter(Mandatory = $true)]"), "Windows s
 assert(windowsSmokeRunner.includes("validate-smoke-evidence.mjs"), "Windows smoke runner must validate its evidence");
 assert(windowsSmokeRunner.includes("candidate-automated-gate"), "Windows smoke runner must repeat the exact candidate automated gate");
 assert(windowsSmokeRunner.includes("Assert-InstalledCandidate"), "Windows smoke runner must verify the installed candidate revision");
+assert(windowsSmokeRunner.includes("compare-gate-content.mjs"), "Windows smoke runner must compare gate content through the candidate comparator");
 assert(!windowsSmokeRunner.includes("--dangerously-bypass-hook-trust"), "Windows smoke runner must not bypass Hook trust");
 assert(windowsSmokeRunner.includes("invoke-command-shim.ps1"), "Windows smoke runner must use the command-shim adapter");
 assert(windowsCommandShim.includes("ValueFromRemainingArguments"), "Windows command shim must preserve argument boundaries");
@@ -117,6 +119,7 @@ assert(macosSmoke.includes("verify-installed-candidate.mjs"), "macOS smoke must 
 assert(macosSmoke.includes("--expected-ref=\"$CandidateRef\"") && macosSmoke.includes("--expected-commit=\"$CandidateCommit\""), "macOS evidence must bind the expected ref and commit");
 assert(releaseChecklist.includes("docs/release-evidence/v0.4.0/macos.json"), "release checklist must retain canonical macOS evidence");
 assert(installedCandidateVerifier.includes(".codex-marketplace-install.json"), "installed candidate verifier must inspect marketplace metadata");
+assert(gateContentComparator.includes("normalizeLineEndings"), "gate comparator must normalize line endings explicitly");
 const releaseVersions = [...releaseWorkflow.matchAll(/\bv\d+\.\d+\.\d+\b/gu)].map(
   (match) => match[0],
 );

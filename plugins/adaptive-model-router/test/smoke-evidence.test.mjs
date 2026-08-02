@@ -6,6 +6,10 @@ import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { temporaryProject } from "./fixtures.mjs";
 import { verifyInstalledCandidate } from "../../../scripts/verify-installed-candidate.mjs";
+import {
+  filesMatchIgnoringLineEndings,
+  normalizeLineEndings,
+} from "../../../scripts/compare-gate-content.mjs";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const validator = join(repoRoot, "scripts", "validate-smoke-evidence.mjs");
@@ -28,6 +32,23 @@ const requiredCheckIds = [
   "cross-project-persistence",
   "final-state-settled",
 ];
+
+test("release gate comparison ignores only line-ending transformations", async () => {
+  assert.deepEqual(normalizeLineEndings(Buffer.from("one\r\ntwo\rthree\n")), Buffer.from("one\ntwo\nthree\n"));
+  const project = await temporaryProject("adaptive gate comparison ");
+  try {
+    const lf = join(project.root, "gate-lf.txt");
+    const crlf = join(project.root, "gate-crlf.txt");
+    const changed = join(project.root, "gate-changed.txt");
+    await writeFile(lf, "alpha\nbeta\n");
+    await writeFile(crlf, "alpha\r\nbeta\r\n");
+    await writeFile(changed, "alpha\r\nchanged\r\n");
+    assert.equal(await filesMatchIgnoringLineEndings(lf, crlf), true);
+    assert.equal(await filesMatchIgnoringLineEndings(lf, changed), false);
+  } finally {
+    await project.cleanup();
+  }
+});
 
 function validEvidence() {
   return {

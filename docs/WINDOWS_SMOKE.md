@@ -19,6 +19,9 @@ directory. It uses native `codex exec --json`/`resume` turns, never bypasses
 Hook trust, independently reads router status/history/diagnostics, exercises
 the lifecycle in this runbook, and emits a strict redacted JSON artifact plus
 derived Markdown and SHA-256 files under `docs/release-evidence/v0.4.0/`.
+Its candidate gate normalizes only CRLF/CR versus LF when comparing tracked
+text files, so ordinary Windows checkout conversion is accepted while every
+other byte change remains blocking.
 Review and trust the three hooks before running it. A failure produces only
 stable warning codes in the artifact; raw prompts, events, session/context
 identifiers, errors, source, secrets, logs, and absolute paths are excluded.

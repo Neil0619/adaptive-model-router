@@ -260,6 +260,8 @@ function Get-PluginTreeHash {
 }
 
 function Assert-CandidateGateFiles {
+    $comparator = Join-Path $Source 'scripts\compare-gate-content.mjs'
+    if (-not (Test-Path -LiteralPath $comparator -PathType Leaf)) { throw 'the frozen candidate is missing its gate-file comparator' }
     $pairs = @(
         @((Join-Path $PSScriptRoot 'windows-smoke.ps1'), (Join-Path $Source 'scripts\windows-smoke.ps1')),
         @((Join-Path $PSScriptRoot 'invoke-command-shim.ps1'), (Join-Path $Source 'scripts\invoke-command-shim.ps1')),
@@ -268,9 +270,8 @@ function Assert-CandidateGateFiles {
     )
     foreach ($pair in $pairs) {
         if (-not (Test-Path -LiteralPath $pair[1] -PathType Leaf)) { throw 'the frozen candidate is missing a release-gate file' }
-        $localHash = (Get-FileHash -LiteralPath $pair[0] -Algorithm SHA256).Hash
-        $candidateHash = (Get-FileHash -LiteralPath $pair[1] -Algorithm SHA256).Hash
-        if ($localHash -ne $candidateHash) { throw 'the executing release gate differs from the frozen candidate' }
+        $comparison = Invoke-Process -FilePath 'node' -ArgumentList @($comparator, $pair[0], $pair[1]) -WorkingDirectory $Source -AllowFailure
+        if ($comparison.ExitCode -ne 0) { throw 'the executing release gate differs from the frozen candidate' }
     }
 }
 
