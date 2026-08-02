@@ -1,65 +1,13 @@
-import { access, mkdtemp } from "node:fs/promises";
-import { constants as fsConstants, rmSync } from "node:fs";
-import { spawn, spawnSync, execFile } from "node:child_process";
+import { mkdtemp } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
-import { promisify } from "node:util";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ROUTER_VERSION } from "./constants.mjs";
+import { resolveCodexCommand, spawnSpec } from "./codex-command.mjs";
 
-const execFileAsync = promisify(execFile);
-const MAC_BINARIES = [
-  "/Applications/Codex.app/Contents/Resources/codex",
-  "/Applications/ChatGPT.app/Contents/Resources/codex",
-];
-
-async function executable(path) {
-  try {
-    await access(path, fsConstants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function windowsKind(path) {
-  return /\.(?:cmd|bat)$/i.test(path) ? "cmd" : "direct";
-}
-
-export async function resolveCodexCommand({ platform = process.platform, env = process.env } = {}) {
-  if (env.CODEX_BIN) return { path: env.CODEX_BIN, kind: platform === "win32" ? windowsKind(env.CODEX_BIN) : "direct" };
-  if (platform === "darwin") {
-    for (const path of MAC_BINARIES) if (await executable(path)) return { path, kind: "direct" };
-  }
-  if (platform === "win32") {
-    for (const name of ["codex.exe", "codex.cmd", "codex.bat"]) {
-      try {
-        const { stdout } = await execFileAsync("where.exe", [name], { windowsHide: true, timeout: 2_000 });
-        const candidate = String(stdout).split(/\r?\n/).map((line) => line.trim()).find(Boolean);
-        if (candidate) return { path: candidate, kind: windowsKind(candidate) };
-      } catch {
-        // Try the next platform-specific executable name.
-      }
-    }
-    return { path: "codex.exe", kind: "direct" };
-  }
-  return { path: "codex", kind: "direct" };
-}
-
-function quoteCmd(value) {
-  const escaped = String(value).replaceAll("%", "%%").replaceAll("^", "^^").replaceAll('"', '""');
-  return `"${escaped}"`;
-}
-
-export function spawnSpec(resolved, args, env = process.env) {
-  if (resolved.kind !== "cmd") return { command: resolved.path, args, windowsVerbatimArguments: false };
-  const commandLine = [quoteCmd(resolved.path), ...args.map(quoteCmd)].join(" ");
-  return {
-    command: env.ComSpec || env.COMSPEC || "cmd.exe",
-    args: ["/d", "/v:off", "/s", "/c", `"${commandLine}"`],
-    windowsVerbatimArguments: true,
-  };
-}
+export { resolveCodexCommand, spawnSpec } from "./codex-command.mjs";
 
 export class AppServerClient {
   constructor({ timeoutMs = 8_000, spawnImpl = spawn, resolveImpl = resolveCodexCommand, clock = Date.now } = {}) {

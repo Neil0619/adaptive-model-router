@@ -61,8 +61,9 @@ The smoke passes only when all of the following succeed:
 - installation from the frozen reviewed candidate ref with the two native
   Codex commands while published `stable` remains on v0.3.0;
 - the exact cloned candidate passes `npm test`, `npm run validate`, and
-  `npm run eval`, and the installed marketplace metadata revision equals the
-  cloned 40-character commit SHA before and after lifecycle testing;
+  `npm run eval`, and the installed marketplace metadata or Git checkout
+  identity equals the reviewed repository, ref, and cloned 40-character commit
+  SHA before and after lifecycle testing;
 - review and trust of all three plugin-bundled command hooks;
 - one persisted global automatic-routing opt-in and an ordinary substantive
   task that does not name the skill or repeat a trigger phrase;

@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { temporaryProject } from "./fixtures.mjs";
 import { verifyInstalledCandidate } from "../../../scripts/verify-installed-candidate.mjs";
@@ -148,7 +148,7 @@ test("smoke evidence contract accepts macOS evidence and its checked-in FAIL tem
   }
 });
 
-test("installed candidate verification binds ref, revision, enabled state, and version", () => {
+test("installed candidate verification binds repository, ref, revision, enabled state, and version", () => {
   const expectedCommit = "a".repeat(40);
   const marketplaceState = { marketplaces: [{ name: "adaptive-model-router", root: "/redacted/cache" }] };
   const pluginState = {
@@ -158,19 +158,90 @@ test("installed candidate verification binds ref, revision, enabled state, and v
       version: "0.4.0",
     }],
   };
-  const metadata = { ref_name: "codex/windows-smoke", revision: expectedCommit };
+  const identity = {
+    source: "https://github.com/Neil0619/adaptive-model-router.git",
+    ref: "codex/windows-smoke",
+    revision: expectedCommit,
+  };
   assert.doesNotThrow(() => verifyInstalledCandidate({
     marketplaceState,
     pluginState,
-    metadata,
+    identity,
     expectedRef: "codex/windows-smoke",
     expectedCommit,
   }));
   assert.throws(() => verifyInstalledCandidate({
     marketplaceState,
     pluginState,
-    metadata: { ...metadata, revision: "b".repeat(40) },
+    identity: { ...identity, revision: "b".repeat(40) },
     expectedRef: "codex/windows-smoke",
     expectedCommit,
   }), /revision differs/u);
+  assert.throws(() => verifyInstalledCandidate({
+    marketplaceState,
+    pluginState,
+    identity: { ...identity, source: "https://github.com/example/other.git" },
+    expectedRef: "codex/windows-smoke",
+    expectedCommit,
+  }), /reviewed repository/u);
+});
+
+test("installed candidate CLI discovers Codex from PATH and verifies a git checkout without metadata", async () => {
+  const project = await temporaryProject("adaptive installed verifier ");
+  try {
+    const marketplaceRoot = join(project.root, "marketplace checkout 中文");
+    const bin = join(project.root, "fake verifier bin");
+    await mkdir(marketplaceRoot, { recursive: true });
+    await mkdir(bin, { recursive: true });
+    assert.equal(spawnSync("git", ["init", "--initial-branch=codex/windows-smoke", marketplaceRoot], { encoding: "utf8" }).status, 0);
+    assert.equal(spawnSync("git", ["-C", marketplaceRoot, "config", "user.email", "smoke@example.invalid"], { encoding: "utf8" }).status, 0);
+    assert.equal(spawnSync("git", ["-C", marketplaceRoot, "config", "user.name", "Smoke Fixture"], { encoding: "utf8" }).status, 0);
+    await writeFile(join(marketplaceRoot, "fixture.txt"), "fixture\n");
+    assert.equal(spawnSync("git", ["-C", marketplaceRoot, "add", "fixture.txt"], { encoding: "utf8" }).status, 0);
+    assert.equal(spawnSync("git", ["-C", marketplaceRoot, "commit", "-m", "fixture"], { encoding: "utf8" }).status, 0);
+    assert.equal(spawnSync("git", ["-C", marketplaceRoot, "remote", "add", "origin", "https://github.com/Neil0619/adaptive-model-router.git"], { encoding: "utf8" }).status, 0);
+    const commit = spawnSync("git", ["-C", marketplaceRoot, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+
+    const fakeSource = join(bin, "fake-codex.mjs");
+    const fakeSourceText = `
+const args = process.argv.slice(2).join(" ");
+const root = process.env.FAKE_MARKETPLACE_ROOT;
+if (args === "plugin marketplace list --json") {
+  process.stdout.write(JSON.stringify({ marketplaces: [{ name: "adaptive-model-router", root, marketplaceSource: { sourceType: "git", source: "https://github.com/Neil0619/adaptive-model-router.git" } }] }));
+  process.exit(0);
+}
+if (args === "plugin list --available --json") {
+  process.stdout.write(JSON.stringify({ installed: [{ pluginId: "adaptive-model-router@adaptive-model-router", enabled: true, version: "0.4.0" }] }));
+  process.exit(0);
+}
+process.exit(2);
+`;
+    await writeFile(fakeSource, fakeSourceText);
+    if (process.platform === "win32") {
+      await writeFile(join(bin, "codex.cmd"), `@echo off\r\n"${process.execPath}" "%~dp0fake-codex.mjs" %*\r\n`, "ascii");
+    } else {
+      const executable = join(bin, "codex");
+      await writeFile(executable, `#!${process.execPath}\n${fakeSourceText}`);
+      await chmod(executable, 0o755);
+    }
+    const { CODEX_BIN: _ignored, ...baseEnv } = process.env;
+    const pathKey = Object.keys(baseEnv).find((key) => key.toLowerCase() === "path") || "PATH";
+    const env = {
+      ...baseEnv,
+      FAKE_MARKETPLACE_ROOT: marketplaceRoot,
+    };
+    env[pathKey] = `${bin}${delimiter}${baseEnv[pathKey] || ""}`;
+    const result = spawnSync(process.execPath, [
+      join(repoRoot, "scripts", "verify-installed-candidate.mjs"),
+      "--ref=codex/windows-smoke",
+      `--commit=${commit}`,
+    ], {
+      encoding: "utf8",
+      env,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /ref, revision, and plugin version verified/u);
+  } finally {
+    await project.cleanup();
+  }
 });

@@ -68,8 +68,9 @@ rerun the smoke gate.
   asserts that the pointer contains no absolute path.
 - Syntax, manifest, marketplace, plugin, and skill validation pass.
 - The native Windows runner repeats test/validate/eval against the exact cloned
-  candidate and rejects installed marketplace metadata whose revision differs
-  from that clone before or after lifecycle testing.
+  candidate and rejects installed marketplace metadata or Git checkout identity
+  whose repository, ref, or revision differs from that clone before or after
+  lifecycle testing.
 - CodeQL passes.
 - `private: true` remains present; no npm package is published.
 

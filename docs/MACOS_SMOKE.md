@@ -83,8 +83,9 @@ node "$Source/scripts/verify-installed-candidate.mjs" \
   --ref="$CandidateRef" --commit="$CandidateCommit"
 ```
 
-The verifier binds `.codex-marketplace-install.json` to the cloned ref and full
-revision and requires the installed, enabled plugin to report version `0.4.0`.
+The verifier binds Codex marketplace metadata when present, otherwise the
+marketplace Git checkout, to the reviewed repository, cloned ref, and full
+revision. It also requires the installed, enabled plugin to report version `0.4.0`.
 Stop if it fails. Run it again after the final lifecycle reinstall in section 6.
 
 Open `$Project` in Codex, start a new task, review `/hooks`, and trust the

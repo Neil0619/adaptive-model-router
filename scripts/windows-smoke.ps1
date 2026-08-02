@@ -279,16 +279,8 @@ function Assert-InstalledCandidate {
         [Parameter(Mandatory = $true)][string]$ExpectedRef,
         [Parameter(Mandatory = $true)][string]$ExpectedCommit
     )
-    $marketplaceState = (Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'marketplace', 'list', '--json')).Stdout | ConvertFrom-Json -Depth 30
-    $marketplace = @($marketplaceState.marketplaces | Where-Object { $_.name -eq 'adaptive-model-router' })
-    if ($marketplace.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$marketplace[0].root)) { throw 'installed candidate marketplace is missing or ambiguous' }
-    $metadataPath = Join-Path ([string]$marketplace[0].root) '.codex-marketplace-install.json'
-    $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json -Depth 20
-    if ([string]$metadata.ref_name -ne $ExpectedRef -or [string]$metadata.revision -ne $ExpectedCommit) { throw 'installed marketplace revision differs from the cloned candidate' }
-
-    $pluginState = (Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'list', '--available', '--json')).Stdout | ConvertFrom-Json -Depth 30
-    $installed = @($pluginState.installed | Where-Object { $_.pluginId -eq 'adaptive-model-router@adaptive-model-router' -and $_.enabled -eq $true })
-    if ($installed.Count -ne 1 -or [string]$installed[0].version -ne '0.4.0') { throw 'exact Adaptive Model Router candidate is not installed and enabled' }
+    $verifier = Join-Path $Source 'scripts\verify-installed-candidate.mjs'
+    Invoke-Process -FilePath 'node' -ArgumentList @($verifier, "--ref=$ExpectedRef", "--commit=$ExpectedCommit") -WorkingDirectory $Source | Out-Null
 }
 
 function Invoke-Wrapper {
