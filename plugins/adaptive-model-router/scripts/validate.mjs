@@ -113,6 +113,11 @@ assert(windowsSmokeRunner.includes("Assert-InstalledCandidate"), "Windows smoke 
 assert(windowsSmokeRunner.includes("compare-gate-content.mjs"), "Windows smoke runner must compare gate content through the candidate comparator");
 assert(windowsSmokeRunner.includes("$InstalledRouterLauncher"), "Windows smoke runner must resolve router state through the installed runtime launcher");
 assert(windowsSmokeRunner.includes("@($InstalledRouterLauncher, $InstalledRouterCli"), "Windows smoke runner must read the installed plugin data instead of the legacy Codex Home state root");
+assert(windowsSmokeRunner.includes("Write-SmokeFixture -Root $Project"), "Windows smoke runner must seed its deterministic fixture outside the managed read-only Codex session");
+assert(windowsSmokeRunner.includes("@('exec', '-s', 'read-only', 'resume'"), "Windows smoke runner must keep resumed turns in the managed read-only sandbox");
+assert(windowsSmokeRunner.includes("@('exec', '-s', 'read-only', '--json'"), "Windows smoke runner must start new turns in the managed read-only sandbox");
+assert(windowsSmokeRunner.includes("fixture changed during managed read-only verification"), "Windows smoke runner must prove the deterministic fixture was not mutated");
+assert(!windowsSmokeRunner.includes("--dangerously-bypass-approvals-and-sandbox"), "Windows smoke runner must not bypass command approvals or the managed sandbox");
 assert(!windowsSmokeRunner.includes("--dangerously-bypass-hook-trust"), "Windows smoke runner must not bypass Hook trust");
 assert(windowsSmokeRunner.includes("invoke-command-shim.ps1"), "Windows smoke runner must use the command-shim adapter");
 assert(windowsCommandShim.includes("ValueFromRemainingArguments"), "Windows command shim must preserve argument boundaries");

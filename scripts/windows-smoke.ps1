@@ -158,10 +158,10 @@ function Invoke-CodexTurn {
     )
     $lastMessage = Join-Path $RawRoot (([guid]::NewGuid().ToString('N')) + '.last.txt')
     if ($ResumeSession) {
-        $arguments = @('exec', 'resume', '--json', '-o', $lastMessage, '-m', $Model, $ResumeSession, $Prompt)
+        $arguments = @('exec', '-s', 'read-only', 'resume', '--json', '-o', $lastMessage, '-m', $Model, $ResumeSession, $Prompt)
     }
     else {
-        $arguments = @('exec', '--json', '-o', $lastMessage, '-C', $WorkingProject, '-m', $Model, $Prompt)
+        $arguments = @('exec', '-s', 'read-only', '--json', '-o', $lastMessage, '-C', $WorkingProject, '-m', $Model, $Prompt)
     }
     $result = Invoke-Process -FilePath 'codex' -ArgumentList $arguments -WorkingDirectory $WorkingProject
     $events = [Collections.Generic.List[object]]::new()
@@ -294,6 +294,49 @@ function Invoke-Wrapper {
     return Invoke-Process -FilePath 'pwsh' -ArgumentList (@('-NoProfile', '-File', $installer) + $Arguments) -WorkingDirectory $Source
 }
 
+function Write-SmokeFixture {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    $sourceDirectory = Join-Path $Root 'src'
+    $testDirectory = Join-Path $Root 'test'
+    New-Item -ItemType Directory -Force -Path $sourceDirectory, $testDirectory | Out-Null
+    $source = @'
+export function normalizeLines(text) {
+  if (text === "") return "";
+  const normalized = text
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\r", "\n")
+    .split("\n")
+    .map((line) => line.replace(/[ \t]+$/u, ""))
+    .join("\n")
+    .replace(/\n+$/u, "");
+  return `${normalized}\n`;
+}
+'@
+    $test = @'
+import assert from "node:assert/strict";
+import test from "node:test";
+import { normalizeLines } from "../src/normalize-lines.mjs";
+
+test("normalizes CRLF", () => assert.equal(normalizeLines("a\r\nb"), "a\nb\n"));
+test("normalizes CR", () => assert.equal(normalizeLines("a\rb"), "a\nb\n"));
+test("strips trailing whitespace", () => assert.equal(normalizeLines("a  \n b\t"), "a\n b\n"));
+test("preserves empty input", () => assert.equal(normalizeLines(""), ""));
+test("keeps exactly one final newline", () => assert.equal(normalizeLines("a\n\n"), "a\n"));
+test("preserves Chinese text", () => assert.equal(normalizeLines("你好  \r\n世界"), "你好\n世界\n"));
+'@
+    $utf8NoBom = [Text.UTF8Encoding]::new($false)
+    [IO.File]::WriteAllText((Join-Path $sourceDirectory 'normalize-lines.mjs'), ($source + "`n"), $utf8NoBom)
+    [IO.File]::WriteAllText((Join-Path $testDirectory 'normalize-lines.test.mjs'), ($test + "`n"), $utf8NoBom)
+}
+
+function Get-SmokeFixtureHash {
+    param([Parameter(Mandatory = $true)][string]$Root)
+    return [ordered]@{
+        source = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $Root 'src\normalize-lines.mjs')).Hash
+        test = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $Root 'test\normalize-lines.test.mjs')).Hash
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $SmokeRoot, $Project, $Project2, $HookProject, $RawRoot | Out-Null
 $failed = $false
 try {
@@ -383,11 +426,17 @@ Follow the trusted automatic-router context for this turn. Call route_stage exac
     if (@(Get-ToolCallItems -Events $hookTurn.Events -Tool 'spawn_agent').Count -ne 0 -or @(Get-ToolCallItems -Events $hookTurn.Events -Tool 'record_outcome').Count -ne 0) { throw 'the Stop-hook probe unexpectedly spawned or recorded an explicit outcome' }
     Add-SmokeCheck -Id 'hook-trust-and-global-on' -Blocking $true -Status 'PASS'
 
+    Write-SmokeFixture -Root $Project
+    $fixtureHashBefore = Get-SmokeFixtureHash -Root $Project
     $implementationPrompt = @'
-Implement and test a dependency-free Node.js 24 line-normalization utility in this temporary project. Follow the trusted fixed-context automatic-router instruction injected for this turn. At the implementation stage call route_stage with workProduct=true, requirementsSettled=true, strongVerification=true, batchSize=2 and the host's actual bounded-subagent capabilities. A Sol/Terra-only host must omit Luna. The required files are src/normalize-lines.mjs and test/normalize-lines.test.mjs. normalizeLines(text) must convert CRLF and CR to LF, strip trailing spaces/tabs on every line, return exactly one final LF for non-empty input, and return an empty string for empty input. Cover CRLF, CR, trailing whitespace, empty input, an existing final newline, and Chinese text with node:test. If the route delegates, create exactly one bounded subagent using target.model and target.effort, with no recursive routing or outcome ownership. The root task must review the work, run node --test test/normalize-lines.test.mjs, and call record_outcome exactly once with the factual verification result and typed retry breakdown. Then call status, history, diagnose, and learning status. Return a concise redacted summary. Never expose source, prompt text, environment values, secrets, absolute paths, session/context identifiers, or raw logs.
+Review and verify the existing dependency-free Node.js 24 line-normalization utility and tests in this temporary project without modifying files. Follow the trusted fixed-context automatic-router instruction injected for this turn. At the implementation verification stage call route_stage with workProduct=true, requirementsSettled=true, strongVerification=true, batchSize=2 and the host's actual bounded-subagent capabilities. A Sol/Terra-only host must omit Luna. Confirm that normalizeLines(text) converts CRLF and CR to LF, strips trailing spaces/tabs on every line, returns exactly one final LF for non-empty input, returns an empty string for empty input, and that node:test covers CRLF, CR, trailing whitespace, empty input, an existing final newline, and Chinese text. If the route delegates, create exactly one bounded subagent using target.model and target.effort, with no recursive routing or outcome ownership. The root task must review the existing files, run node --test test/normalize-lines.test.mjs, and call record_outcome exactly once with the factual verification result and typed retry breakdown. Then call status, history, diagnose, and learning status. Return a concise redacted summary. Never expose source, prompt text, environment values, secrets, absolute paths, session/context identifiers, or raw logs.
 '@
     $implementationTurn = Invoke-CodexTurn -Prompt $implementationPrompt -Model 'gpt-5.6-sol' -ResumeSession $SessionId
     Invoke-Process -FilePath 'node' -ArgumentList @('--test', 'test/normalize-lines.test.mjs') -WorkingDirectory $Project | Out-Null
+    $fixtureHashAfter = Get-SmokeFixtureHash -Root $Project
+    if (($fixtureHashBefore | ConvertTo-Json -Compress) -ne ($fixtureHashAfter | ConvertTo-Json -Compress)) {
+        throw 'fixture changed during managed read-only verification'
+    }
     $status = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
     $history = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
     $doctor = Read-RouterState -Command 'doctor' -Context $SessionId -WorkingProject $Project

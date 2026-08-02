@@ -308,6 +308,12 @@ human witness for `/hooks`, `/statusline`, or the Desktop model selector. A
 release needs both the validated artifact and the completed manual report at
 the end of this runbook.
 
+The canonical runner seeds a deterministic fixture in its disposable project,
+then asks the managed read-only Codex task and bounded subagent to review and
+test it. This keeps the route/subagent/outcome gate valid on hosts whose managed
+permission profile cannot be broadened by `-s workspace-write`; the runner does
+not bypass command approvals, the managed sandbox, or Hook trust.
+
 ## 6. Exercise host-model intent protection
 
 Record the root-model slug shown by `router: status`. After the current turn is
