@@ -58,7 +58,26 @@ function parseArgs(values) {
 }
 
 function codexExecutable() {
-  return process.env.CODEX_BIN || "codex";
+  if (process.env.CODEX_BIN) return process.env.CODEX_BIN;
+  if (process.platform !== "win32") return "codex";
+
+  // PowerShell commonly resolves `codex` to codex.ps1. Node's spawn APIs do
+  // not apply PowerShell's command discovery, so select a directly runnable
+  // Windows shim before falling back to the bare command name.
+  for (const candidate of ["codex.cmd", "codex.exe"]) {
+    const result = spawnSync("where.exe", [candidate], {
+      encoding: "utf8",
+      windowsHide: true,
+      env: process.env,
+    });
+    if (result.status !== 0) continue;
+    const match = result.stdout
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .find(Boolean);
+    if (match) return match;
+  }
+  return "codex";
 }
 
 function commandSpec(command, args) {

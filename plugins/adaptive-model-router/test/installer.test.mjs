@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { access, chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { supportsRuntime } from "../scripts/lib/runtime.mjs";
 import { AGENTS_MARKER_END, AGENTS_MARKER_START } from "../scripts/lib/constants.mjs";
@@ -101,16 +101,18 @@ async function fakeCodex(project, initial = {}) {
   return { executable, statePath, bin };
 }
 
-function runManager(project, fake, args = []) {
+function runManager(project, fake, args = [], { useCodexBin = true } = {}) {
   const codexHome = join(project.root, "Codex Home 空格");
+  const env = {
+    ...process.env,
+    PATH: `${fake.bin}${delimiter}${process.env.PATH || ""}`,
+    CODEX_HOME: codexHome,
+    FAKE_CODEX_STATE: fake.statePath,
+  };
+  if (useCodexBin) env.CODEX_BIN = fake.executable;
   const result = spawnSync(process.execPath, [manager, ...args], {
     encoding: "utf8",
-    env: {
-      ...process.env,
-      CODEX_HOME: codexHome,
-      CODEX_BIN: fake.executable,
-      FAKE_CODEX_STATE: fake.statePath,
-    },
+    env,
   });
   return { ...result, codexHome };
 }
@@ -134,6 +136,23 @@ test("Windows cache-lock failures tell the operator to exit active Codex session
     assert.match(result.stderr, /plugin cache is in use on Windows/i);
     assert.match(result.stderr, /fully exit Codex Desktop and every Codex CLI session/i);
     assert.doesNotMatch(result.stderr, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("installer discovers Codex from PATH when CODEX_BIN is unset", async () => {
+  const project = await temporaryProject("adaptive installer command discovery ");
+  try {
+    const fake = await fakeCodex(project);
+    const result = runManager(
+      project,
+      fake,
+      ["install", "--non-interactive"],
+      { useCodexBin: false },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Adaptive Model Router 0\.4\.0 is installed/i);
   } finally {
     await project.cleanup();
   }
