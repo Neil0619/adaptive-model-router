@@ -7,6 +7,44 @@ non-blocking smoke target.
 The operator may give this entire document to Codex on the Windows machine.
 Do not create or push the release tag from the smoke task.
 
+The canonical automated entry point is
+[`scripts/windows-smoke.ps1`](../scripts/windows-smoke.ps1):
+
+```powershell
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-smoke'
+```
+
+It accepts only the frozen candidate ref and an optional evidence output
+directory. It uses native `codex exec --json`/`resume` turns, never bypasses
+Hook trust, independently reads router status/history/diagnostics, exercises
+the lifecycle in this runbook, and emits a strict redacted JSON artifact plus
+derived Markdown and SHA-256 files under `docs/release-evidence/v0.4.0/`.
+Review and trust the three hooks before running it. A failure produces only
+stable warning codes in the artifact; raw prompts, events, session/context
+identifiers, errors, source, secrets, logs, and absolute paths are excluded.
+
+The runner refuses to use the default Codex Home. Prepare a disposable Windows
+test account or dedicated Codex Home, add the explicit smoke marker, log in
+there, install the exact candidate once, and trust its three Hook hashes. Then
+expose only that directory to the runner:
+
+```powershell
+$SmokeCodexHome = 'D:\codex-smoke-home'
+New-Item -ItemType Directory -Force -Path $SmokeCodexHome | Out-Null
+Set-Content -LiteralPath (Join-Path $SmokeCodexHome '.adaptive-router-smoke-home') -Value 'adaptive-model-router smoke home v1' -NoNewline
+$env:CODEX_HOME = $SmokeCodexHome
+$env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-smoke'
+```
+
+All plugin, marketplace, AGENTS marker, global-routing, session, and learning
+mutations are confined to this dedicated home. Delete it after retaining the
+validated evidence. The runner intentionally will not copy authentication or
+trust state out of the operator's normal Codex Home.
+It also rejects filesystem roots and broad system/user directories even when a
+marker is present. The marker explicitly declares that the directory may be
+mutated by install, upgrade, uninstall, AGENTS, session, and learning tests.
+
 Suggested handoff prompt:
 
 ```text
@@ -22,6 +60,9 @@ The smoke passes only when all of the following succeed:
 
 - installation from the frozen reviewed candidate ref with the two native
   Codex commands while published `stable` remains on v0.3.0;
+- the exact cloned candidate passes `npm test`, `npm run validate`, and
+  `npm run eval`, and the installed marketplace metadata revision equals the
+  cloned 40-character commit SHA before and after lifecycle testing;
 - review and trust of all three plugin-bundled command hooks;
 - one persisted global automatic-routing opt-in and an ordinary substantive
   task that does not name the skill or repeat a trigger phrase;
@@ -48,6 +89,8 @@ The smoke passes only when all of the following succeed:
 
 - Windows 11, running natively.
 - A logged-in current Codex Desktop or CLI session.
+- A dedicated, disposable Codex Home named by
+  `ADAPTIVE_ROUTER_SMOKE_CODEX_HOME`; the default `~/.codex` is rejected.
 - Git.
 - Node.js 24.15.0 or newer.
 - PowerShell as the agent/terminal environment.
@@ -55,6 +98,8 @@ The smoke passes only when all of the following succeed:
 Record the environment evidence:
 
 ```powershell
+$DedicatedCodexHome = [IO.Path]::GetFullPath($env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME)
+$env:CODEX_HOME = $DedicatedCodexHome
 [System.Environment]::OSVersion.VersionString
 node --version
 git --version
@@ -66,7 +111,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/v040-stop-hook-fix"
+$CandidateRef = "codex/windows-smoke"
 $SmokeRoot = Join-Path $env:TEMP ("Adaptive Router Windows 冒烟 " + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $SmokeRoot "source checkout"
 $Project = Join-Path $SmokeRoot "测试 project with spaces"
@@ -248,6 +293,17 @@ selector or CLI model status-line field continues to show the root task model.
 Inspect the Codex Subagents view (`/subagents` on CLI) for the bounded target
 instead.
 
+For the canonical headless CLI runner, the machine-readable equivalent is
+strictly checked from one turn's JSONL lifecycle: exactly one `spawn_agent`
+call must use the routed target model/effort, exactly one root
+`record_outcome` call must follow, and route history must keep
+`rootTask.changedByRouter=false` with a distinct bounded target. Interactive
+Desktop/manual runs retain the visual selector check above. The headless JSON
+artifact is the canonical machine-readable result, but it does not replace the
+human witness for `/hooks`, `/statusline`, or the Desktop model selector. A
+release needs both the validated artifact and the completed manual report at
+the end of this runbook.
+
 ## 6. Exercise host-model intent protection
 
 Record the root-model slug shown by `router: status`. After the current turn is
@@ -385,7 +441,7 @@ Set-Location $Source
 Verify the owned marker occurs exactly once:
 
 ```powershell
-$AgentsPath = Join-Path $HOME ".codex\AGENTS.md"
+$AgentsPath = Join-Path $DedicatedCodexHome 'AGENTS.md'
 # This token is intentionally stable for backward-compatible owned-block removal.
 $StartMarker = "<!-- adaptive-model-router:start v0.2.0 -->"
 $EndMarker = "<!-- adaptive-model-router:end -->"

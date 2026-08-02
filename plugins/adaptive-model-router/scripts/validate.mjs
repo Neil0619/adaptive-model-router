@@ -50,6 +50,13 @@ const releaseWorkflow = await readFile(join(repoRoot, ".github", "workflows", "r
 const releaseChecklist = await readFile(join(repoRoot, "docs", "RELEASE.md"), "utf8");
 const windowsSmoke = await readFile(join(repoRoot, "docs", "WINDOWS_SMOKE.md"), "utf8");
 const macosSmoke = await readFile(join(repoRoot, "docs", "MACOS_SMOKE.md"), "utf8");
+const smokeEvidenceSchema = await json(join(repoRoot, "docs", "release-evidence", "schema-v1.json"));
+const macosEvidenceTemplate = await json(join(repoRoot, "docs", "release-evidence", "templates", "macos-v1.json"));
+const smokeEvidenceValidator = await readFile(join(repoRoot, "scripts", "validate-smoke-evidence.mjs"), "utf8");
+const installedCandidateVerifier = await readFile(join(repoRoot, "scripts", "verify-installed-candidate.mjs"), "utf8");
+const windowsSmokeRunnerPath = "scripts/windows-smoke.ps1";
+const windowsSmokeRunner = await readFile(join(repoRoot, ...windowsSmokeRunnerPath.split("/")), "utf8");
+const windowsCommandShim = await readFile(join(repoRoot, "scripts", "invoke-command-shim.ps1"), "utf8");
 const skill = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8");
 const skillUi = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "agents", "openai.yaml"), "utf8");
 assert(manifest.version.split("+")[0] === packageJson.version, "manifest base version and package version differ");
@@ -65,7 +72,7 @@ assert(Array.isArray(manifest.interface?.defaultPrompt) && manifest.interface.de
 assert(packageJson.version === "0.4.0", "release base version must be 0.4.0");
 const releaseTag = `v${packageJson.version}`;
 const releaseArtifact = `adaptive-model-router-${releaseTag}`;
-const releaseCandidateRef = "codex/v040-stop-hook-fix";
+const releaseCandidateRef = "codex/windows-smoke";
 for (const [name, document] of [
   ["release checklist", releaseChecklist],
   ["Windows smoke", windowsSmoke],
@@ -85,6 +92,31 @@ assert(
   releaseChecklist.includes("published `stable` remains on v0.3.0"),
   "release checklist must state the published stable version",
 );
+checkObjectSchemas(smokeEvidenceSchema, "smokeEvidence");
+assert(smokeEvidenceSchema.properties?.schemaVersion?.const === 1, "smoke evidence schema version must be 1");
+assert(smokeEvidenceSchema.properties?.gate?.enum?.includes("macos-native"), "smoke evidence schema must support the blocking macOS gate");
+assert(macosEvidenceTemplate.gate === "macos-native" && macosEvidenceTemplate.status === "FAIL", "macOS evidence template must fail closed");
+assert(macosEvidenceTemplate.checks?.length === 16, "macOS evidence template must contain all canonical checks");
+assert(
+  windowsSmoke.includes("[`" + windowsSmokeRunnerPath + "`](../" + windowsSmokeRunnerPath + ")"),
+  "Windows smoke must link the canonical runner",
+);
+assert(
+  windowsSmoke.includes(`.\\${windowsSmokeRunnerPath.replaceAll("/", "\\")}`),
+  "Windows smoke PowerShell example must invoke the canonical runner",
+);
+assert(windowsSmokeRunner.includes("[Parameter(Mandatory = $true)]"), "Windows smoke runner must require a candidate ref");
+assert(windowsSmokeRunner.includes("validate-smoke-evidence.mjs"), "Windows smoke runner must validate its evidence");
+assert(windowsSmokeRunner.includes("candidate-automated-gate"), "Windows smoke runner must repeat the exact candidate automated gate");
+assert(windowsSmokeRunner.includes("Assert-InstalledCandidate"), "Windows smoke runner must verify the installed candidate revision");
+assert(!windowsSmokeRunner.includes("--dangerously-bypass-hook-trust"), "Windows smoke runner must not bypass Hook trust");
+assert(windowsSmokeRunner.includes("invoke-command-shim.ps1"), "Windows smoke runner must use the command-shim adapter");
+assert(windowsCommandShim.includes("ValueFromRemainingArguments"), "Windows command shim must preserve argument boundaries");
+assert(smokeEvidenceValidator.includes("status disagrees with blocking checks"), "smoke evidence validator must enforce PASS consistency");
+assert(macosSmoke.includes("verify-installed-candidate.mjs"), "macOS smoke must verify the installed ref, revision, and version");
+assert(macosSmoke.includes("--expected-ref=\"$CandidateRef\"") && macosSmoke.includes("--expected-commit=\"$CandidateCommit\""), "macOS evidence must bind the expected ref and commit");
+assert(releaseChecklist.includes("docs/release-evidence/v0.4.0/macos.json"), "release checklist must retain canonical macOS evidence");
+assert(installedCandidateVerifier.includes(".codex-marketplace-install.json"), "installed candidate verifier must inspect marketplace metadata");
 const releaseVersions = [...releaseWorkflow.matchAll(/\bv\d+\.\d+\.\d+\b/gu)].map(
   (match) => match[0],
 );
@@ -138,5 +170,9 @@ for (const tool of TOOL_DEFINITIONS) checkObjectSchemas(tool.inputSchema, tool.n
 for (const path of (await files(join(pluginRoot, "scripts"))).filter((path) => path.endsWith(".mjs"))) {
   const checked = spawnSync(process.execPath, ["--check", path], { encoding: "utf8" });
   assert(checked.status === 0, `syntax check failed for ${path.slice(pluginRoot.length + 1)}`);
+}
+for (const path of (await files(join(repoRoot, "scripts"))).filter((path) => path.endsWith(".mjs"))) {
+  const checked = spawnSync(process.execPath, ["--check", path], { encoding: "utf8" });
+  assert(checked.status === 0, `syntax check failed for ${path.slice(repoRoot.length + 1)}`);
 }
 process.stdout.write("Adaptive Model Router validation passed.\n");

@@ -79,6 +79,9 @@ test("50 concurrent Stop processes finalize one pending outcome exactly once wit
       { route_id: route.routeId, status: "unknown" },
     );
     assert.equal(Number(verified.db.prepare("SELECT count(*) AS count FROM outcomes").get().count), 1);
+    const context = verified.context({ cwd: project.root, contextId: "shared-stop" });
+    assert.equal(verified.status(context).outcomeObservability.stopHookUnknown, 1);
+    assert.equal(verified.routeHistory(context).routes[0].outcome.source, "stop_hook");
     verified.close();
   } finally {
     if (previousHome == null) delete process.env.ADAPTIVE_ROUTER_HOME;
@@ -122,6 +125,18 @@ test("concurrent Stop and verified outcome writers leave one consistent terminal
     assert.equal(rows.length, 1);
     assert.equal(rows[0].route_id, route.routeId);
     assert.ok(["passed", "unknown"].includes(rows[0].status));
+    const context = verified.context({ cwd: project.root, contextId: "stop-outcome-race" });
+    const historyOutcome = verified.routeHistory(context).routes[0].outcome;
+    const stopObservationCount = Number(verified.db.prepare(`
+      SELECT count(*) AS count FROM stop_observations WHERE resolved_at IS NOT NULL
+    `).get().count);
+    if (rows[0].status === "passed") {
+      assert.equal(historyOutcome.source, "record_outcome");
+      assert.equal(stopObservationCount, 0);
+    } else {
+      assert.equal(historyOutcome.source, "stop_hook");
+      assert.equal(stopObservationCount, 1);
+    }
     verified.close();
   } finally {
     if (previousHome == null) delete process.env.ADAPTIVE_ROUTER_HOME;

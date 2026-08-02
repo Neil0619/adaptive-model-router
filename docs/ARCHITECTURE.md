@@ -52,7 +52,9 @@ flowchart LR
 - `scripts/lib/app-server.mjs` owns one short-lived classifier app-server process with a single total deadline and early-notification buffering.
 - `scripts/lib/database.mjs` owns SQLite migrations, immutable scoring profiles
   and snapshots, short `BEGIN IMMEDIATE` transactions, exactly-once claims, and
-  project/context isolation.
+  project/context isolation. Its route projection labels outcomes as explicit
+  `record_outcome` or Stop-auto-finalized `unknown` without adding a parallel
+  outcome log or changing the storage contract.
 - `scripts/lib/learning.mjs` validates typed retry outcomes, filters eligible
   snapshots, and manages approval-gated immutable policy revisions.
 - `scripts/hook.mjs` handles exact control prefixes, the global automatic
@@ -107,6 +109,12 @@ projection explicitly reports the hook-observed root model when available,
 that reasoning effort remains host-only, and that the router did not change the
 root model. The Codex model selector therefore continues to describe the root
 task, never the bounded-stage target.
+
+Stop fallback reuses the existing resolved `stop_observations` row as a
+provenance marker only when its `INSERT OR IGNORE` actually wins the outcome
+race. Status exposes the aggregate Stop-finalized unknown count; history labels
+each terminal outcome's source. Explicit verification that wins concurrently
+is never mislabeled as Stop-finalized.
 
 SQLite `user_version` 3 preserves the v2 task/root-model tables and adds:
 

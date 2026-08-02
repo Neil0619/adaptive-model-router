@@ -86,11 +86,13 @@ test("history shows timestamped model transitions, outcomes, filters, and the ro
       assert.deepEqual(history.routes[1].transition.from, { model: "gpt-5.6-terra", effort: "medium" });
       assert.deepEqual(history.routes[1].transition.to, { model: "gpt-5.6-sol", effort: "high" });
       assert.equal(history.routes[1].outcome.status, "failed");
+      assert.equal(history.routes[1].outcome.source, "record_outcome");
       assert.equal(history.routes[1].outcome.userCorrection, true);
       assert.equal(history.routes[2].transition.state, "target_unchanged");
       assert.equal(history.routes[2].outcome, null);
       assert.equal(history.routes[3].transition.state, "initial_delegate");
       assert.equal(history.routes[3].outcome.status, "passed");
+      assert.equal(history.routes[3].outcome.source, "record_outcome");
       for (const route of history.routes) assert.equal(Number.isNaN(Date.parse(route.createdAt)), false);
       for (const route of history.routes) assert.equal(route.rootTask.model, "gpt-5.6-sol");
 
@@ -107,6 +109,7 @@ test("history shows timestamped model transitions, outcomes, filters, and the ro
       assert.equal(typeof status.latestRoute.classifier, "string");
       assert.equal(typeof status.latestRoute.escalations, "number");
       assert.deepEqual(status.rootTask, history.rootTask);
+      assert.deepEqual(status.outcomeObservability, { stopHookUnknown: 0 });
       assert.deepEqual(status.currentStage, {
         state: "root",
         target: null,

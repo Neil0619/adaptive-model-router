@@ -22,6 +22,7 @@ const DEFAULT_HISTORY_LIMIT = 20;
 const MAX_HISTORY_LIMIT = 100;
 const INSPECTION_GUARD_PREFIX = "inspection_guard:";
 const INSPECTION_GUARD_TTL_MS = 60 * 60 * 1_000;
+const STOP_OUTCOME_MARKER = "stop:auto-finalized";
 const STORAGE_CONTRACT_SCHEMA = Object.freeze({
   meta: ["key", "value"],
   projects: ["project_id", "created_at"],
@@ -950,9 +951,16 @@ export class RouterStore {
         o.retry_tooling AS outcome_retry_tooling,
         o.escalations AS outcome_escalations,
         o.user_correction AS outcome_user_correction,
-        o.recorded_at AS outcome_recorded_at
+        o.recorded_at AS outcome_recorded_at,
+        so.route_id AS stop_finalized_route_id
       FROM routes r
       LEFT JOIN outcomes o ON o.route_id = r.route_id
+      LEFT JOIN stop_observations so
+        ON so.project_id = r.project_id
+        AND so.context_key = r.context_key
+        AND so.route_id = r.route_id
+        AND so.resolved_at IS NOT NULL
+        AND so.reminded_at = '${STOP_OUTCOME_MARKER}'
       WHERE r.project_id = ? AND r.context_key = ? ${actionClause}
       ORDER BY r.rowid DESC
       LIMIT ?
@@ -1014,6 +1022,7 @@ export class RouterStore {
           escalations: Number(row.outcome_escalations || 0),
           userCorrection: row.outcome_user_correction === 1,
           recordedAt: row.outcome_recorded_at,
+          source: row.stop_finalized_route_id ? "stop_hook" : "record_outcome",
         } : null,
       };
     });
@@ -1136,11 +1145,24 @@ export class RouterStore {
           payloadHash(normalized),
           stoppedAt,
         );
-        recordedUnknown += Number(result.changes);
-        this.db.prepare(`
-          UPDATE stop_observations SET resolved_at = ?
-          WHERE project_id = ? AND context_key = ? AND route_id = ?
-        `).run(stoppedAt, context.projectId, context.contextKey, route.route_id);
+        const inserted = Number(result.changes);
+        recordedUnknown += inserted;
+        if (inserted === 1) {
+          this.db.prepare(`
+            INSERT INTO stop_observations(
+              project_id, context_key, route_id, reminded_at, resolved_at
+            ) VALUES(?, ?, ?, ?, ?)
+            ON CONFLICT(project_id, context_key, route_id) DO UPDATE SET
+              reminded_at = excluded.reminded_at,
+              resolved_at = excluded.resolved_at
+          `).run(
+            context.projectId,
+            context.contextKey,
+            route.route_id,
+            STOP_OUTCOME_MARKER,
+            stoppedAt,
+          );
+        }
       }
       return { action: "allow", recordedUnknown };
     });
@@ -1610,6 +1632,17 @@ export class RouterStore {
       SELECT count(*) AS count FROM routes r LEFT JOIN outcomes o ON o.route_id = r.route_id
       WHERE r.project_id = ? AND r.context_key = ? AND r.action = 'delegate' AND o.route_id IS NULL
     `).get(context.projectId, context.contextKey).count);
+    const stopHookUnknown = Number(this.db.prepare(`
+      SELECT count(*) AS count
+      FROM outcomes o
+      JOIN stop_observations so
+        ON so.project_id = o.project_id
+        AND so.context_key = o.context_key
+        AND so.route_id = o.route_id
+        AND so.resolved_at IS NOT NULL
+        AND so.reminded_at = '${STOP_OUTCOME_MARKER}'
+      WHERE o.project_id = ? AND o.context_key = ? AND o.status = 'unknown'
+    `).get(context.projectId, context.contextKey).count);
     return {
       routerVersion: ROUTER_VERSION,
       projectKey: context.projectId.slice(0, 12),
@@ -1645,6 +1678,7 @@ export class RouterStore {
       latestRoute: latestStatus,
       pendingOutcomes,
       pendingProposals,
+      outcomeObservability: { stopHookUnknown },
     };
   }
 

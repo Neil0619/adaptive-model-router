@@ -852,7 +852,13 @@ test("Stop hook finalizes every pending outcome as unknown without blocking the 
           { route_id: secondRoute.routeId, status: "unknown" },
         ].sort((left, right) => left.route_id.localeCompare(right.route_id)),
       );
-      assert.equal(Number(storeBefore.db.prepare("SELECT count(*) AS count FROM stop_observations").get().count), 0);
+      assert.equal(Number(storeBefore.db.prepare("SELECT count(*) AS count FROM stop_observations").get().count), 2);
+      const stopContext = storeBefore.context({ cwd: project.root, contextId: "stop-session" });
+      assert.equal(storeBefore.status(stopContext).outcomeObservability.stopHookUnknown, 2);
+      assert.deepEqual(
+        storeBefore.routeHistory(stopContext).routes.map((route) => route.outcome.source),
+        ["stop_hook", "stop_hook"],
+      );
       assert.doesNotMatch(
         JSON.stringify({
           routes: storeBefore.db.prepare("SELECT * FROM routes").all(),
@@ -917,6 +923,8 @@ test("Stop hook resolves a legacy reminder while finalizing its pending outcome"
         verified.db.prepare("SELECT resolved_at FROM stop_observations WHERE route_id = ?").get(route.routeId).resolved_at,
         null,
       );
+      const legacyContext = verified.context({ cwd: project.root, contextId: "legacy-stop-session" });
+      assert.equal(verified.routeHistory(legacyContext).routes[0].outcome.source, "stop_hook");
       verified.close();
     });
   } finally {
@@ -955,6 +963,9 @@ test("Stop hook allows a route that already has a final outcome", async () => {
         verified.db.prepare("SELECT resolved_at FROM stop_observations WHERE route_id = ?").get(route.routeId).resolved_at,
         null,
       );
+      const completeContext = verified.context({ cwd: project.root, contextId: "complete" });
+      assert.equal(verified.routeHistory(completeContext).routes[0].outcome.source, "record_outcome");
+      assert.equal(verified.status(completeContext).outcomeObservability.stopHookUnknown, 0);
       verified.close();
     });
   } finally {

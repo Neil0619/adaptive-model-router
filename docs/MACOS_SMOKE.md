@@ -2,7 +2,7 @@
 
 This is the blocking logged-in macOS gate for `v0.4.0`. Run it in Codex Desktop
 or CLI on native macOS against the frozen
-`codex/v040-stop-hook-fix` ref.
+`codex/windows-smoke` ref.
 Do not create or push the release tag from this smoke task.
 
 ## Pass criteria
@@ -29,7 +29,7 @@ Do not create or push the release tag from this smoke task.
 ## 1. Prepare a Unicode project and candidate checkout
 
 ```bash
-CandidateRef="codex/v040-stop-hook-fix"
+CandidateRef="codex/windows-smoke"
 SmokeRoot="$(mktemp -d)/Adaptive Router macOS 冒烟"
 Source="$SmokeRoot/source checkout"
 Project="$SmokeRoot/测试 project with spaces"
@@ -37,6 +37,7 @@ mkdir -p "$Project"
 git clone --branch "$CandidateRef" --single-branch \
   https://github.com/Neil0619/adaptive-model-router.git "$Source"
 CandidateCommit="$(git -C "$Source" rev-parse HEAD)"
+PluginTreeSha256="$(git -C "$Source" ls-tree -r --full-tree "$CandidateCommit" plugins/adaptive-model-router | shasum -a 256 | awk '{print $1}')"
 git -C "$Project" init
 node --version
 git --version
@@ -45,6 +46,15 @@ codex --version
 
 Stop if Node is older than `24.15.0`, Codex is not logged in, or the candidate
 ref does not resolve to the reviewed commit.
+
+Run the complete automated gate from the exact clone before installation:
+
+```bash
+cd "$Source/plugins/adaptive-model-router"
+npm test
+npm run validate
+npm run eval
+```
 
 ## 2. Install and trust the candidate
 
@@ -69,7 +79,13 @@ Then install the candidate:
 ```bash
 codex plugin marketplace add Neil0619/adaptive-model-router --ref "$CandidateRef"
 codex plugin add adaptive-model-router@adaptive-model-router
+node "$Source/scripts/verify-installed-candidate.mjs" \
+  --ref="$CandidateRef" --commit="$CandidateCommit"
 ```
+
+The verifier binds `.codex-marketplace-install.json` to the cloned ref and full
+revision and requires the installed, enabled plugin to report version `0.4.0`.
+Stop if it fails. Run it again after the final lifecycle reinstall in section 6.
 
 Open `$Project` in Codex, start a new task, review `/hooks`, and trust the
 current `SubagentStart`, `UserPromptSubmit`, and `Stop` definitions. Never
@@ -167,6 +183,8 @@ cd "$Source"
 ./install.sh uninstall --ref="$CandidateRef"
 ./install.sh --ref="$CandidateRef"
 ./install.sh --ref="$CandidateRef"
+node "$Source/scripts/verify-installed-candidate.mjs" \
+  --ref="$CandidateRef" --commit="$CandidateCommit"
 ```
 
 Confirm the owned AGENTS marker was inserted once and removed completely while
@@ -184,7 +202,47 @@ Start Codex from a second temporary project without repeating `router: global
 on`. Trust the current Hook hash if asked, then use `router: status` to confirm
 the global setting persisted while task-specific manual state did not.
 
-## 7. Report
+## 7. Produce canonical evidence and report
+
+Copy the checked-in fail-closed template only after completing every preceding
+step:
+
+```bash
+EvidenceDir="$Source/docs/release-evidence/v0.4.0"
+mkdir -p "$EvidenceDir"
+cp "$Source/docs/release-evidence/templates/macos-v1.json" "$EvidenceDir/macos.json"
+```
+
+Populate `macos.json` only from observed results. Replace the timestamp,
+candidate commit/tree hash, environment versions, route target/gate and final
+diagnostics. Map the 16 checks as follows:
+
+- preflight, frozen commit, exact-clone test/validate/eval, native install and
+  both installed-revision verifications cover the first five IDs;
+- Hook trust/global activation, delegate/outcome, root/target separation, Luna
+  guard, privacy, learning/shadow, host-model intent and negative control cover
+  the next eight IDs;
+- native/wrapper lifecycle, second-project persistence and settled final status
+  cover the final three IDs.
+
+Change a check from `SKIP` to `PASS` only when its corresponding observation
+passed. For an overall PASS, set `warnings` to `[]`, set the strict route and
+healthy diagnostic fields, and change top-level `status` last. Then validate and
+generate the only derived views:
+
+```bash
+node "$Source/scripts/validate-smoke-evidence.mjs" "$EvidenceDir/macos.json" \
+  --write-derivatives --expected-ref="$CandidateRef" \
+  --expected-commit="$CandidateCommit"
+```
+
+Retain `macos.json`, `macos.md`, and `macos.json.sha256`. The validator rejects
+placeholders, incomplete checks, mismatched platform/ref/commit, pending or
+Stop-finalized unknown outcomes, unhealthy diagnostics, and private path-like
+data from any `PASS` artifact.
+
+Also return the human-only witness report below; the JSON does not replace
+visible Hook trust or model-selector observations.
 
 Return:
 

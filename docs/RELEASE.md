@@ -6,7 +6,9 @@ until every blocking item below has fresh evidence for the exact candidate
 commit. The original `codex/v040-scoring-evolution` candidate was invalidated
 by the read-only-inspection Hook fix. The later shadow-inspection candidate was
 invalidated by the Stop-hook fix; the replacement candidate below includes the
-same reviewed v0.4 runtime plus both fixes.
+same reviewed v0.4 runtime plus both fixes, Windows cache-replacement integrity
+checks, explicit Stop-finalization observability, and the canonical redacted
+smoke-evidence gate.
 
 v0.4.0 includes the reviewed v0.3.1 capability fix, which was merged into the
 v0.4.0 main tree and was not published separately. The published `stable`
@@ -18,7 +20,7 @@ it after artifact creation.
 Keep `stable` on the last published release until the release workflow has
 created the new artifacts. For logged-in smoke testing, freeze a dedicated
 candidate ref at the reviewed commit. For v0.4.0 the handoff ref is
-`codex/v040-stop-hook-fix`; do not move it after smoke evidence is
+`codex/windows-smoke`; do not move it after smoke evidence is
 collected.
 
 Record the candidate:
@@ -27,7 +29,7 @@ Record the candidate:
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/main
-git rev-parse origin/codex/v040-stop-hook-fix
+git rev-parse origin/codex/windows-smoke
 git rev-parse origin/stable
 ```
 
@@ -36,8 +38,11 @@ The worktree must be clean. The candidate ref must contain the reviewed tree;
 verify that the release-relevant trees are byte-identical:
 
 ```bash
-git diff --exit-code origin/main origin/codex/v040-stop-hook-fix -- \
-  .agents plugins install.sh install.ps1 .github/workflows/release.yml
+git diff --exit-code origin/main origin/codex/windows-smoke -- \
+  .agents plugins scripts docs/release-evidence/schema-v1.json \
+  docs/release-evidence/templates/macos-v1.json \
+  docs/WINDOWS_SMOKE.md docs/MACOS_SMOKE.md docs/RELEASE.md \
+  install.sh install.ps1 .github/workflows/release.yml
 ```
 
 Any installed plugin, marketplace, wrapper, hook, skill, contract, test, or
@@ -47,9 +52,10 @@ manual smoke evidence.
 
 A documentation-only follow-up still creates a new release commit. Earlier
 runtime smoke evidence may be reused only when the maintainer records that the
-plugin tree, marketplace file, `install.sh`, `install.ps1`, and release workflow
-are byte-identical between the smoked and final commits. Otherwise rerun the
-smoke gate.
+plugin tree, marketplace file, smoke runner/validator/schema/template, `install.sh`,
+`install.ps1`, both native smoke runbooks, this release checklist, and release
+workflow are byte-identical between the smoked and final commits. Otherwise
+rerun the smoke gate.
 
 ## 2. Automated gate
 
@@ -61,6 +67,9 @@ smoke gate.
   rejects a damaged candidate, rolls a later-failing active Hook back, and
   asserts that the pointer contains no absolute path.
 - Syntax, manifest, marketplace, plugin, and skill validation pass.
+- The native Windows runner repeats test/validate/eval against the exact cloned
+  candidate and rejects installed marketplace metadata whose revision differs
+  from that clone before or after lifecycle testing.
 - CodeQL passes.
 - `private: true` remains present; no npm package is published.
 
@@ -72,6 +81,31 @@ npm test
 npm run validate
 npm run eval
 ```
+
+On native Windows, run the canonical orchestrator only after trusting the
+current candidate's three hooks in a dedicated, disposable Codex Home. The
+runner refuses the operator's default Codex Home:
+
+```powershell
+$SmokeCodexHome = 'D:\codex-smoke-home'
+New-Item -ItemType Directory -Force -Path $SmokeCodexHome | Out-Null
+Set-Content -LiteralPath (Join-Path $SmokeCodexHome '.adaptive-router-smoke-home') -Value 'adaptive-model-router smoke home v1' -NoNewline
+$env:CODEX_HOME = $SmokeCodexHome
+$env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-smoke'
+```
+
+Validate and retain `docs/release-evidence/v0.4.0/windows.json`, its generated
+Markdown view, and its `.sha256` sidecar. The JSON must match schema v1, the
+frozen ref and commit, contain no raw operational data, and report `PASS` only
+when every blocking check passes, privacy passes, and pending outcomes are zero.
+Also retain the completed human report from `WINDOWS_SMOKE.md`; hook-trust and
+visible selector/status-line observations cannot be replaced by headless JSON.
+
+On native macOS, retain `docs/release-evidence/v0.4.0/macos.json`, its generated
+Markdown view and `.sha256` sidecar. It must be produced from the fail-closed
+template and validated with both `--expected-ref` and `--expected-commit` as
+specified by `MACOS_SMOKE.md`. Retain its human-only Hook/selector witness too.
 
 ## 3. Logged-in smoke gate
 
