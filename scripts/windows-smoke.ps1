@@ -602,7 +602,7 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     $lunaTurn = Invoke-CodexTurn -Prompt 'Call route_stage once for a substantive implementation stage with an explicit request override model gpt-5.6-luna/high while hostCapabilities.delegation contains only the actual Sol and Terra bounded targets. Do not create a subagent or change files. Return only the redacted action and reason codes.' -Model 'gpt-5.6-sol' -ResumeSession $SessionId
     $capabilityHistory = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
     $lunaGuard = @(Get-NewRoutes -Before $capabilityHistoryBefore -After $capabilityHistory)
-    if ($lunaGuard.Count -ne 1 -or $lunaGuard[0].action -ne 'ask_user' -or @($lunaGuard[0].reasonCodes) -notcontains 'EXPLICIT_MODEL_UNAVAILABLE') { throw 'explicit unavailable Luna did not ask the user exactly once' }
+    if ($lunaGuard.Count -ne 1 -or $lunaGuard[0].action -ne 'ask_user' -or @($lunaGuard[0].reasonCodes) -notcontains 'EXPLICIT_TARGET_UNAVAILABLE') { throw 'explicit unavailable Luna did not ask the user exactly once' }
     Assert-NoDelegatedWork -Turn $lunaTurn -Route $lunaGuard[0]
     Add-SmokeCheck -Id 'capability-boundary' -Blocking $true -Status 'PASS'
 

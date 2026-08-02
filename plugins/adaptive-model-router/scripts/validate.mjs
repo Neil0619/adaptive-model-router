@@ -121,6 +121,8 @@ assert(windowsSmokeRunner.includes("@('exec', '-s', 'read-only', '--json', '-C',
 assert(windowsSmokeRunner.includes("the native runner performs the executable test immediately after this read-only review"), "Windows smoke runner must separate model review from host-side executable verification");
 assert(windowsSmokeRunner.includes("phase=review and evidence review=true"), "Windows smoke runner must route the managed task as a structured review");
 assert(windowsSmokeRunner.includes("read-only review did not preserve the structured-check contract"), "Windows smoke runner must bind the review outcome to the structured-check gate");
+assert(windowsSmokeRunner.includes("EXPLICIT_TARGET_UNAVAILABLE"), "Windows smoke runner must enforce the current unavailable bounded-target reason code");
+assert(!windowsSmokeRunner.includes("EXPLICIT_MODEL_UNAVAILABLE"), "Windows smoke runner must not assert the obsolete unavailable-model reason code");
 assert(windowsSmokeRunner.includes("Assert-StructuredReviewSummary"), "Windows smoke runner must validate both managed review checklists");
 assert(windowsSmokeRunner.includes("Read-CodexSessionTrace"), "Windows smoke runner must count collaboration lifecycle calls from the dedicated session trace");
 assert(windowsSmokeRunner.includes("Read-BoundedSubagentExecution"), "Windows smoke runner must verify the bounded target model and effort from execution metadata");
