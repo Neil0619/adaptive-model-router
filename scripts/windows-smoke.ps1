@@ -42,6 +42,8 @@ $RequiredWindowsChecks = @(
     'final-state-settled'
 )
 $SessionId = $null
+$InstalledRouterLauncher = $null
+$InstalledRouterCli = $null
 $CandidateCommit = ('0' * 40)
 $PluginTreeSha256 = ('0' * 64)
 $RouteEvidence = [ordered]@{
@@ -179,8 +181,10 @@ function Read-RouterState {
         [Parameter(Mandatory = $true)][string]$Context,
         [Parameter(Mandatory = $true)][string]$WorkingProject
     )
-    $routerCli = Join-Path $Source 'plugins\adaptive-model-router\scripts\codex-route.mjs'
-    $arguments = @($routerCli, $Command, '--context', $Context)
+    if ([string]::IsNullOrWhiteSpace($InstalledRouterLauncher) -or [string]::IsNullOrWhiteSpace($InstalledRouterCli)) {
+        throw 'installed router state reader is unavailable'
+    }
+    $arguments = @($InstalledRouterLauncher, $InstalledRouterCli, $Command, '--context', $Context)
     if ($Command -eq 'history') { $arguments += @('--limit', '50', '--action', 'all') }
     $result = Invoke-Process -FilePath 'node' -ArgumentList $arguments -WorkingDirectory $WorkingProject
     return ($result.Stdout | ConvertFrom-Json -Depth 50)
@@ -353,6 +357,13 @@ try {
     Invoke-Process -FilePath 'node' -ArgumentList @($manager, 'install', '--non-interactive', "--ref=$CandidateRef") -WorkingDirectory $Source | Out-Null
     Add-SmokeCheck -Id 'native-install' -Blocking $true -Status 'PASS'
     Assert-InstalledCandidate -ExpectedRef $CandidateRef -ExpectedCommit $CandidateCommit
+    $pluginManifest = Get-Content -LiteralPath (Join-Path $candidatePluginRoot '.codex-plugin\plugin.json') -Raw | ConvertFrom-Json
+    $installedPluginRoot = Join-Path $DedicatedCodexHome ("plugins\cache\adaptive-model-router\adaptive-model-router\{0}" -f [string]$pluginManifest.version)
+    $InstalledRouterLauncher = Join-Path $installedPluginRoot 'scripts\node-launcher.mjs'
+    $InstalledRouterCli = Join-Path $installedPluginRoot 'scripts\codex-route.mjs'
+    if (-not (Test-Path -LiteralPath $InstalledRouterLauncher -PathType Leaf) -or -not (Test-Path -LiteralPath $InstalledRouterCli -PathType Leaf)) {
+        throw 'installed router state reader files are missing'
+    }
     Add-SmokeCheck -Id 'installed-candidate-integrity' -Blocking $true -Status 'PASS'
 
     $turn = Invoke-CodexTurn -Prompt 'router: global on' -Model 'gpt-5.6-sol'

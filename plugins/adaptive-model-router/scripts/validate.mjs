@@ -111,6 +111,8 @@ assert(windowsSmokeRunner.includes("validate-smoke-evidence.mjs"), "Windows smok
 assert(windowsSmokeRunner.includes("candidate-automated-gate"), "Windows smoke runner must repeat the exact candidate automated gate");
 assert(windowsSmokeRunner.includes("Assert-InstalledCandidate"), "Windows smoke runner must verify the installed candidate revision");
 assert(windowsSmokeRunner.includes("compare-gate-content.mjs"), "Windows smoke runner must compare gate content through the candidate comparator");
+assert(windowsSmokeRunner.includes("$InstalledRouterLauncher"), "Windows smoke runner must resolve router state through the installed runtime launcher");
+assert(windowsSmokeRunner.includes("@($InstalledRouterLauncher, $InstalledRouterCli"), "Windows smoke runner must read the installed plugin data instead of the legacy Codex Home state root");
 assert(!windowsSmokeRunner.includes("--dangerously-bypass-hook-trust"), "Windows smoke runner must not bypass Hook trust");
 assert(windowsSmokeRunner.includes("invoke-command-shim.ps1"), "Windows smoke runner must use the command-shim adapter");
 assert(windowsCommandShim.includes("ValueFromRemainingArguments"), "Windows command shim must preserve argument boundaries");
