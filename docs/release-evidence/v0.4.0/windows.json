@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "gate": "windows-native",
+  "status": "PASS",
+  "generatedAt": "2026-08-03T03:23:57.9429947+00:00",
+  "candidate": {
+    "ref": "codex/windows-smoke",
+    "commitSha": "dc23f30a96c8e86e0251896986a1e1301840746d",
+    "pluginTreeSha256": "03ae8db7d9754278b9dd60837097fffc176242d95acf682fafd2d54ae5f7cac8"
+  },
+  "environment": {
+    "platform": "windows",
+    "surface": "cli",
+    "osVersion": "Microsoft Windows NT 10.0.26220.0",
+    "codexVersion": "codex-cli 0.146.0",
+    "nodeVersion": "v24.18.0",
+    "gitVersion": "git version 2.45.1.windows.1"
+  },
+  "checks": [
+    {
+      "id": "native-preflight",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "candidate-frozen",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "candidate-automated-gate",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "native-install",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "installed-candidate-integrity",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "hook-trust-and-global-on",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "route-subagent-outcome",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "root-target-boundary",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "redacted-observability",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "capability-boundary",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "learning-and-shadow",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "host-model-intent",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "negative-control",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "native-and-wrapper-lifecycle",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "cross-project-persistence",
+      "blocking": true,
+      "status": "PASS"
+    },
+    {
+      "id": "final-state-settled",
+      "blocking": true,
+      "status": "PASS"
+    }
+  ],
+  "route": {
+    "action": "delegate",
+    "targetFamily": "sol",
+    "targetEffort": "medium",
+    "verificationGate": "structured-check",
+    "pendingOutcomes": 0,
+    "stopHookUnknown": 0
+  },
+  "diagnostics": {
+    "databaseHealth": "ok",
+    "classifierState": "closed",
+    "privacy": "PASS"
+  },
+  "warnings": []
+}
