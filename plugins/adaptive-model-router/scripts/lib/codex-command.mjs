@@ -1,6 +1,7 @@
 import { execFile, spawnSync } from "node:child_process";
 import { access, constants as fsConstants } from "node:fs/promises";
 import { accessSync } from "node:fs";
+import { delimiter, resolve } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -16,6 +17,12 @@ function windowsKind(path) {
 
 function firstOutputLine(stdout) {
   return String(stdout).split(/\r?\n/u).map((line) => line.trim()).find(Boolean);
+}
+
+function pathCandidates(env, name) {
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path");
+  if (!pathKey || !env[pathKey]) return [];
+  return String(env[pathKey]).split(delimiter).filter(Boolean).map((directory) => resolve(directory, name));
 }
 
 async function executable(path) {
@@ -39,6 +46,7 @@ function executableSync(path) {
 export async function resolveCodexCommand({ platform = process.platform, env = process.env } = {}) {
   if (env.CODEX_BIN) return { path: env.CODEX_BIN, kind: platform === "win32" ? windowsKind(env.CODEX_BIN) : "direct" };
   if (platform === "darwin") {
+    for (const path of pathCandidates(env, "codex")) if (await executable(path)) return { path, kind: "direct" };
     for (const path of MAC_BINARIES) if (await executable(path)) return { path, kind: "direct" };
   }
   if (platform === "win32") {
@@ -59,6 +67,7 @@ export async function resolveCodexCommand({ platform = process.platform, env = p
 export function resolveCodexCommandSync({ platform = process.platform, env = process.env } = {}) {
   if (env.CODEX_BIN) return { path: env.CODEX_BIN, kind: platform === "win32" ? windowsKind(env.CODEX_BIN) : "direct" };
   if (platform === "darwin") {
+    for (const path of pathCandidates(env, "codex")) if (executableSync(path)) return { path, kind: "direct" };
     for (const path of MAC_BINARIES) if (executableSync(path)) return { path, kind: "direct" };
   }
   if (platform === "win32") {

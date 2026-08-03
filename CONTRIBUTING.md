@@ -40,3 +40,6 @@ tests, creates the signed tag, and lets the release workflow generate the source
 archive, SBOM, checksums, and provenance before advancing protected `stable`.
 Follow [docs/RELEASE.md](docs/RELEASE.md); use
 [docs/WINDOWS_SMOKE.md](docs/WINDOWS_SMOKE.md) for the Windows handoff.
+After the one-time Hook trust bootstrap, the smoke orchestrator must dispatch
+controls and prompts, use native task/thread model overrides, and restore the
+initial root model without handing `/model` or copy/paste steps to the user.

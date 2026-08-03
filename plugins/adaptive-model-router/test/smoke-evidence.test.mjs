@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,7 +97,14 @@ test("smoke evidence validator accepts a strict redacted PASS and writes determi
     const { output, result } = await runEvidence(project, validEvidence(), ["--write-derivatives"]);
     assert.equal(result.status, 0, result.stderr);
     assert.match(await readFile(output.replace(/\.json$/u, ".md"), "utf8"), /route-subagent-outcome/u);
-    assert.match(await readFile(`${output}.sha256`, "utf8"), /^[0-9a-f]{64}  windows\.json\n$/u);
+    const canonical = await readFile(output, "utf8");
+    const expectedChecksum = `${createHash("sha256").update(canonical).digest("hex")}  windows.json\n`;
+    assert.equal(await readFile(`${output}.sha256`, "utf8"), expectedChecksum);
+
+    await writeFile(output, canonical.replaceAll("\n", "\r\n"));
+    const crlfResult = spawnSync(process.execPath, [validator, output, "--write-derivatives"], { encoding: "utf8" });
+    assert.equal(crlfResult.status, 0, crlfResult.stderr);
+    assert.equal(await readFile(`${output}.sha256`, "utf8"), expectedChecksum);
   } finally {
     await project.cleanup();
   }
