@@ -131,6 +131,12 @@ test("smoke evidence validator rejects path leaks and inconsistent PASS claims",
     assert.notEqual(incompleteResult.result.status, 0);
     assert.match(incompleteResult.result.stderr, /too few items|complete canonical gate set/u);
 
+    const uxWitness = validEvidence();
+    uxWitness.uxWitness = { selectorObserved: true };
+    const uxWitnessResult = await runEvidence(project, uxWitness);
+    assert.notEqual(uxWitnessResult.result.status, 0);
+    assert.match(uxWitnessResult.result.stderr, /contains additional field uxWitness/u);
+
     const schemaInvalidDate = validEvidence();
     schemaInvalidDate.generatedAt = "2026-08-02";
     const schemaInvalidDateResult = await runEvidence(project, schemaInvalidDate);

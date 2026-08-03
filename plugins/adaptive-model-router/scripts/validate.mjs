@@ -50,6 +50,7 @@ const releaseWorkflow = await readFile(join(repoRoot, ".github", "workflows", "r
 const releaseChecklist = await readFile(join(repoRoot, "docs", "RELEASE.md"), "utf8");
 const windowsSmoke = await readFile(join(repoRoot, "docs", "WINDOWS_SMOKE.md"), "utf8");
 const macosSmoke = await readFile(join(repoRoot, "docs", "MACOS_SMOKE.md"), "utf8");
+const smokeEvidenceReadme = await readFile(join(repoRoot, "docs", "release-evidence", "README.md"), "utf8");
 const smokeEvidenceSchema = await json(join(repoRoot, "docs", "release-evidence", "schema-v1.json"));
 const macosEvidenceTemplate = await json(join(repoRoot, "docs", "release-evidence", "templates", "macos-v1.json"));
 const smokeEvidenceValidator = await readFile(join(repoRoot, "scripts", "validate-smoke-evidence.mjs"), "utf8");
@@ -131,6 +132,18 @@ assert(windowsSmokeRunner.includes("managed review lifecycle order is not route,
 assert(windowsSmokeRunner.includes("fixture changed during managed read-only review"), "Windows smoke runner must prove the deterministic fixture was not mutated by managed review");
 assert(windowsSmokeRunner.includes("fixture changed during native executable verification"), "Windows smoke runner must prove the deterministic fixture was not mutated by native tests");
 assert(smokeEvidenceValidator.includes('"structured-check"'), "smoke evidence validator must preserve structured review gates");
+assert(windowsSmoke.includes("smoke-contract: post-trust-automatic-v1 selector-optional-v1"), "Windows smoke must declare the post-trust automation contract");
+assert(!windowsSmoke.includes("blocking manual Windows gate"), "Windows smoke must not describe the canonical gate as manual");
+assert(!windowsSmoke.includes("The human operator must"), "Windows smoke must not delegate automated prompts or model changes to the operator");
+assert(!windowsSmoke.includes("completed manual report"), "Windows smoke must not require a second manual functional report");
+assert(releaseChecklist.includes("smoke-contract: windows-artifact-authoritative-v1 selector-optional-v1"), "release checklist must make Windows evidence authoritative and selector checks optional");
+assert(smokeEvidenceReadme.includes("smoke-contract: hook-trust-only-human-v1 selector-optional-v1"), "evidence contract must isolate Hook trust from optional selector evidence");
+assert(macosSmoke.includes("smoke-contract: post-trust-agent-owned-v1 selector-optional-v1"), "macOS smoke must use the same post-trust and selector semantics");
+assert(!macosSmoke.includes("human-only witness report"), "macOS smoke must not require a human selector report");
+assert(windowsSmokeRunner.includes("-Model 'gpt-5.6-terra' -ResumeSession"), "Windows smoke runner must automate a distinct host-model slug");
+assert(windowsSmokeRunner.includes("$secondPendingRoutes.Count -ne 1"), "Windows smoke runner must require exactly one second pending route");
+assert(windowsSmokeRunner.includes("$postKeepAutomatic.taskMode -ne 'automatic'"), "Windows smoke runner must verify keep-automatic mode");
+assert(windowsSmokeRunner.includes("[string]$finalStatus.rootTask.model -ne $InitialRootModel"), "Windows smoke runner must verify initial-model restoration");
 assert(!windowsSmokeRunner.includes("--dangerously-bypass-approvals-and-sandbox"), "Windows smoke runner must not bypass command approvals or the managed sandbox");
 assert(!windowsSmokeRunner.includes("--dangerously-bypass-hook-trust"), "Windows smoke runner must not bypass Hook trust");
 assert(windowsSmokeRunner.includes("invoke-command-shim.ps1"), "Windows smoke runner must use the command-shim adapter");

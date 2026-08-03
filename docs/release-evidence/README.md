@@ -15,8 +15,12 @@ healthy, the bounded target is Sol/Terra, privacy passes, and delegated/Stop
 outcome counts are settled. Raw Codex events, prompts, source, logs,
 session/context identifiers, errors, secrets, and absolute paths are forbidden.
 
-The native runbook's human-only hook-trust and visible root-model witness remain
-blocking release evidence; a headless JSON `PASS` cannot substitute for them.
+Reviewing and trusting the current Hook definitions remains the only required
+human prerequisite. The canonical artifact is the blocking functional evidence
+for root/target separation and host-model intent. A visible selector or status
+line observation is optional, non-blocking UX evidence and is deliberately
+excluded from the JSON contract.
+<!-- smoke-contract: hook-trust-only-human-v1 selector-optional-v1 -->
 
 Canonical `windows.json` and `macos.json` release evidence belongs under
 `docs/release-evidence/v0.4.0/` after each native platform run. macOS collection

@@ -5,6 +5,8 @@ or CLI on native macOS against the frozen
 `codex/windows-smoke` ref.
 Do not create or push the release tag from this smoke task.
 
+<!-- smoke-contract: post-trust-agent-owned-v1 selector-optional-v1 -->
+
 ## Pass criteria
 
 - Candidate-ref installation and current hook trust succeed.
@@ -16,8 +18,8 @@ Do not create or push the release tag from this smoke task.
   calls `route_stage`.
 - A Sol/Terra-only bounded capability never returns Luna; an explicit Luna
   override asks the user without starting a subagent.
-- The Codex model selector remains the root model while Subagents shows the
-  bounded target.
+- Route and execution metadata keep the root boundary unchanged while recording
+  the bounded target separately. A visible selector check is optional UX only.
 - A changed model slug stays root-only while pending; keep-automatic resumes on
   the next stage, and current-task manual mode prevents delegation.
 - Status, history, diagnostics, Hook output, and SQLite contain no prompt,
@@ -92,21 +94,25 @@ Open `$Project` in Codex, start a new task, review `/hooks`, and trust the
 current `SubagentStart`, `UserPromptSubmit`, and `Stop` definitions. Never
 bypass Hook trust.
 
-Send `router: global on` once, then `router: status`. Confirm global automatic
-activation is on, task mode is automatic, and the first observed model only
-establishes a baseline without a pending question.
+After this trust step, the smoke agent owns every remaining prompt, control
+message, host-managed model transition, verification, and restoration. It must
+not ask the operator to retype controls or change the model selector.
+
+The smoke agent submits `router: global on` once, then `router: status`.
+Confirm global automatic activation is on, task mode is automatic, and the
+first observed model only establishes a baseline without a pending question.
 
 ## 3. Run the automatic route lifecycle
 
-Use the exact ordinary implementation prompt in section 5 of the
-[Windows smoke runbook](WINDOWS_SMOKE.md).
-It intentionally does not name the skill or use `$adaptive-model-router`.
+Use the managed route-lifecycle contract in section 5 of the
+[Windows smoke runbook](WINDOWS_SMOKE.md). The ordinary managed prompt must not
+name the skill, use `$adaptive-model-router`, or contain a router control prefix.
 
 The result must include one `delegate` route, exactly one bounded subagent using
 the returned model and `reasoning_effort`, successful root verification, and
-exactly one strict `record_outcome`. Confirm the Codex model selector still
-shows the root task during delegation; inspect the Subagents view for the
-bounded target. The subagent must execute only its assigned scope and return to
+exactly one strict `record_outcome`. Machine-verify that route and execution
+metadata keep the root task unchanged and record the bounded target separately.
+The subagent must execute only its assigned scope and return to
 the root without calling `route_stage`, asking for a manual/automatic decision,
 or creating a host-model change event.
 
@@ -118,18 +124,22 @@ feedback or replace the final user-facing reply.
 
 ## 4. Exercise both host-model decisions
 
-Follow section 6 of the [Windows smoke runbook](WINDOWS_SMOKE.md) on macOS:
+Use a dedicated persistent CLI session and host-managed `codex exec`/`resume`
+model arguments to automate the section 6 contract from the
+[Windows smoke runbook](WINDOWS_SMOKE.md):
 
-1. Change to a different model slug, not only a different effort.
+1. Establish an initial model slug, then select a different slug on a resumed
+   turn, not only a different effort.
 2. Submit the ordinary review prompt and confirm `continue` with
    `HOST_MODEL_INTENT_PENDING`, no subagent, and one stable change ID across an
    unanswered reminder.
-3. Send `router: auto session`; confirm automatic mode resumes from the next
+3. Submit `router: auto session`; confirm automatic mode resumes from the next
    substantive stage.
-4. Change the slug again, create a new pending event, send `router: manual`, and
-   confirm a substantive `route_stage` returns `continue` with
-   `MANUAL_ROOT_SELECTED` and no target.
-5. Restore with `router: auto session`.
+4. Return to the initial slug, prove a distinct pending event, submit
+   `router: manual`, and confirm a substantive `route_stage` returns `continue`
+   with `MANUAL_ROOT_SELECTED` and no target.
+5. Submit `router: auto session`, then verify automatic mode, no pending change,
+   and the initial root-model slug.
 
 Record that effort-only changes are not visible to the Hook and require an
 explicit `router: manual` when they mean root-only intent.
@@ -200,8 +210,10 @@ this release; changes to Hook JSON, skill instructions, MCP schemas, or the
 storage contract still require a new task.
 
 Start Codex from a second temporary project without repeating `router: global
-on`. Trust the current Hook hash if asked, then use `router: status` to confirm
-the global setting persisted while task-specific manual state did not.
+on`. An unchanged Hook hash must not create a routine second trust step; if it
+does, investigate the installed candidate identity or trust record. Use
+`router: status` to confirm the global setting persisted while task-specific
+manual state did not.
 
 ## 7. Produce canonical evidence and report
 
@@ -242,8 +254,9 @@ placeholders, incomplete checks, mismatched platform/ref/commit, pending or
 Stop-finalized unknown outcomes, unhealthy diagnostics, and private path-like
 data from any `PASS` artifact.
 
-Also return the human-only witness report below; the JSON does not replace
-visible Hook trust or model-selector observations.
+Record that the current Hook definitions were reviewed and trusted before the
+run. The JSON is the blocking functional source of truth. The summary below is
+agent-produced; its selector field is optional, non-blocking UX information.
 
 Return:
 
@@ -259,7 +272,7 @@ Global automatic persisted: PASS | FAIL
 Ordinary prompt delegate lifecycle: PASS | FAIL
 Observed root model:
 Bounded target model/effort:
-Codex selector stayed on root: PASS | FAIL
+Optional selector UX observation: NOT OBSERVED | PASS | FAIL
 Verification and record_outcome: PASS | FAIL
 Pending keep-automatic behavior: PASS | FAIL
 Manual-root behavior: PASS | FAIL

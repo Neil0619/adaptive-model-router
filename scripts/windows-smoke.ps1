@@ -42,6 +42,7 @@ $RequiredWindowsChecks = @(
     'final-state-settled'
 )
 $SessionId = $null
+$InitialRootModel = $null
 $InstalledRouterLauncher = $null
 $InstalledRouterCli = $null
 $CandidateCommit = ('0' * 40)
@@ -508,6 +509,8 @@ try {
     $baseline = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
     if (-not $baseline.autoActivation.globalEnabled -or -not $baseline.autoActivation.effective -or $baseline.taskMode -ne 'automatic') { throw 'global automatic routing did not activate' }
     if ($baseline.rootTask.modelVisibility -ne 'hook_observed' -or $baseline.rootTask.changedByRouter -ne $false) { throw 'the trusted prompt hook did not expose the unchanged root-model boundary' }
+    $InitialRootModel = [string]$baseline.rootTask.model
+    if ([string]::IsNullOrWhiteSpace($InitialRootModel)) { throw 'the initial root-model baseline is unavailable' }
 
     $hookTurn = Invoke-CodexTurn -WorkingProject $HookProject -Model 'gpt-5.6-sol' -Prompt @'
 Follow the trusted automatic-router context for this turn. Call route_stage exactly once for an implementation stage with workProduct=true, requirementsSettled=true, strongVerification=true, batchSize=2 and the host's actual Sol/Terra bounded-subagent capabilities. If it delegates, deliberately do not spawn a subagent and do not call record_outcome; return the redacted route and end the turn so the trusted Stop hook must finalize it as unknown.
@@ -647,28 +650,38 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     Assert-NoDelegatedWork -Turn $pendingTurnOne -Route $pendingRoutes[1]
     Assert-NoDelegatedWork -Turn $pendingTurnTwo -Route $pendingRoutes[0]
     if ($null -eq $pendingOne.pendingHostModelChange -or $pendingOne.pendingHostModelChange.changeId -ne $pendingTwo.pendingHostModelChange.changeId) { throw 'model reminder did not reuse one pending event' }
+    $firstPendingChangeId = [string]$pendingOne.pendingHostModelChange.changeId
     Invoke-CodexTurn -Prompt 'router: auto session' -Model 'gpt-5.6-terra' -ResumeSession $SessionId | Out-Null
-    if ($null -ne (Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project).pendingHostModelChange) { throw 'keep-automatic did not resolve the pending event' }
+    $postKeepAutomatic = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
+    if ($postKeepAutomatic.taskMode -ne 'automatic' -or $null -ne $postKeepAutomatic.pendingHostModelChange) { throw 'keep-automatic did not restore automatic mode and resolve the pending event' }
 
-    Invoke-CodexTurn -Prompt $reviewPrompt -Model 'gpt-5.6-sol' -ResumeSession $SessionId | Out-Null
-    Invoke-CodexTurn -Prompt 'router: manual' -Model 'gpt-5.6-sol' -ResumeSession $SessionId | Out-Null
+    $secondPendingHistoryBefore = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+    $secondPendingTurn = Invoke-CodexTurn -Prompt $reviewPrompt -Model $InitialRootModel -ResumeSession $SessionId
+    $secondPendingStatus = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
+    $secondPendingHistory = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+    $secondPendingRoutes = @(Get-NewRoutes -Before $secondPendingHistoryBefore -After $secondPendingHistory)
+    if ($secondPendingRoutes.Count -ne 1 -or $secondPendingRoutes[0].action -ne 'continue' -or @($secondPendingRoutes[0].reasonCodes) -notcontains 'HOST_MODEL_INTENT_PENDING') { throw 'returning to the initial root model did not create a new pending event' }
+    Assert-NoDelegatedWork -Turn $secondPendingTurn -Route $secondPendingRoutes[0]
+    if ($null -eq $secondPendingStatus.pendingHostModelChange -or [string]$secondPendingStatus.pendingHostModelChange.changeId -eq $firstPendingChangeId) { throw 'the second model change did not create a distinct pending event' }
+
+    Invoke-CodexTurn -Prompt 'router: manual' -Model $InitialRootModel -ResumeSession $SessionId | Out-Null
     $manualHistoryBefore = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
-    $manualTurn = Invoke-CodexTurn -Prompt 'Call route_stage for a substantive implementation stage using current bounded-subagent capabilities. Return only the redacted action and reason codes; do not change files.' -Model 'gpt-5.6-sol' -ResumeSession $SessionId
+    $manualTurn = Invoke-CodexTurn -Prompt 'Call route_stage for a substantive implementation stage using current bounded-subagent capabilities. Return only the redacted action and reason codes; do not change files.' -Model $InitialRootModel -ResumeSession $SessionId
     $manualHistory = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
     $manualRoutes = @(Get-NewRoutes -Before $manualHistoryBefore -After $manualHistory)
     if ($manualRoutes.Count -ne 1 -or $manualRoutes[0].action -ne 'continue' -or @($manualRoutes[0].reasonCodes) -notcontains 'MANUAL_ROOT_SELECTED') { throw 'manual root mode did not block delegation' }
     Assert-NoDelegatedWork -Turn $manualTurn -Route $manualRoutes[0]
-    Invoke-CodexTurn -Prompt 'router: auto session' -Model 'gpt-5.6-sol' -ResumeSession $SessionId | Out-Null
+    Invoke-CodexTurn -Prompt 'router: auto session' -Model $InitialRootModel -ResumeSession $SessionId | Out-Null
     Add-SmokeCheck -Id 'host-model-intent' -Blocking $true -Status 'PASS'
 
-    Invoke-CodexTurn -Prompt 'router: off' -Model 'gpt-5.6-sol' -ResumeSession $SessionId | Out-Null
+    Invoke-CodexTurn -Prompt 'router: off' -Model $InitialRootModel -ResumeSession $SessionId | Out-Null
     $disabledHistoryBefore = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
-    $disabledTurn = Invoke-CodexTurn -Prompt 'Discuss the quoted text `router: on` without changing router state. Then call route_stage for a substantive implementation stage and return only the redacted route.' -Model 'gpt-5.6-sol' -ResumeSession $SessionId
+    $disabledTurn = Invoke-CodexTurn -Prompt 'Discuss the quoted text `router: on` without changing router state. Then call route_stage for a substantive implementation stage and return only the redacted route.' -Model $InitialRootModel -ResumeSession $SessionId
     $disabledHistory = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
     $disabledRoutes = @(Get-NewRoutes -Before $disabledHistoryBefore -After $disabledHistory)
     if ($disabledRoutes.Count -ne 1 -or $disabledRoutes[0].action -ne 'continue' -or @($disabledRoutes[0].reasonCodes) -notcontains 'ROUTER_DISABLED') { throw 'ordinary quoted control text changed router state' }
     Assert-NoDelegatedWork -Turn $disabledTurn -Route $disabledRoutes[0]
-    Invoke-CodexTurn -Prompt 'router: auto session' -Model 'gpt-5.6-sol' -ResumeSession $SessionId | Out-Null
+    Invoke-CodexTurn -Prompt 'router: auto session' -Model $InitialRootModel -ResumeSession $SessionId | Out-Null
     Add-SmokeCheck -Id 'negative-control' -Blocking $true -Status 'PASS'
 
     Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'marketplace', 'upgrade', 'adaptive-model-router') | Out-Null
@@ -704,6 +717,7 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     $finalStatus = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
     $finalDoctor = Read-RouterState -Command 'doctor' -Context $SessionId -WorkingProject $Project
     if ($finalStatus.taskMode -ne 'automatic' -or $null -ne $finalStatus.pendingHostModelChange -or $finalStatus.pendingOutcomes -ne 0 -or $finalStatus.outcomeObservability.stopHookUnknown -ne 0) { throw 'final router state is not automatic and settled' }
+    if ($finalStatus.rootTask.modelVisibility -ne 'hook_observed' -or [string]$finalStatus.rootTask.model -ne $InitialRootModel) { throw 'final root model did not return to the initial baseline' }
     if ($finalDoctor.databaseHealth -ne 'ok' -or $finalDoctor.classifier.circuitOpen) { throw 'final router diagnostics are not healthy' }
     Assert-PrivateProjection -Values @(
         $finalStatus,
@@ -714,6 +728,9 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
         $shadowDoctorAfter,
         $shadowLearningAfter,
         $pendingHistory,
+        $postKeepAutomatic,
+        $secondPendingStatus,
+        $secondPendingHistory,
         $manualHistory,
         $disabledHistory,
         $secondStatus

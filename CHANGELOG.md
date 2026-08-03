@@ -10,6 +10,10 @@ All notable changes to this project are documented here.
   strict path-free evidence schema, independent status/history/diagnostics
   checks, exact clone-versus-installed revision verification, candidate-local
   test/validate/eval gates, generated Markdown, and a SHA-256 sidecar.
+- After initial Hook trust, the Windows orchestrator automatically owns the
+  route lifecycle, Sol → Terra → Sol host-model-intent checks, control messages,
+  initial-model restoration, and final settled-state verification. Visible
+  selector/status-line observations are optional, non-blocking UX evidence.
 - A fail-closed macOS evidence template, exact installed ref/revision/version
   verifier, expected-ref/commit validation, and canonical Markdown/SHA-256
   retention flow for the blocking native macOS report.

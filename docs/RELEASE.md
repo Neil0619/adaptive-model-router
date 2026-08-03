@@ -48,7 +48,7 @@ git diff --exit-code origin/main origin/codex/windows-smoke -- \
 Any installed plugin, marketplace, wrapper, hook, skill, contract, test, or
 release-workflow
 change after this point creates a new runtime candidate and invalidates earlier
-manual smoke evidence.
+native smoke evidence.
 
 A documentation-only follow-up still creates a new release commit. Earlier
 runtime smoke evidence may be reused only when the maintainer records that the
@@ -96,17 +96,24 @@ $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
 .\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-smoke'
 ```
 
+After Hook trust, the runner requires no operator-entered prompts, control
+messages, model-selector actions, or status-line configuration. It performs
+and restores the full functional lifecycle inside its disposable session.
+
 Validate and retain `docs/release-evidence/v0.4.0/windows.json`, its generated
 Markdown view, and its `.sha256` sidecar. The JSON must match schema v1, the
 frozen ref and commit, contain no raw operational data, and report `PASS` only
 when every blocking check passes, privacy passes, and pending outcomes are zero.
-Also retain the completed human report from `WINDOWS_SMOKE.md`; hook-trust and
-visible selector/status-line observations cannot be replaced by headless JSON.
+Record that the current Hook definitions were reviewed and trusted before the
+run. The validated Windows artifact is the blocking functional source of truth;
+visible selector/status-line observations are optional, non-blocking UX notes.
+<!-- smoke-contract: windows-artifact-authoritative-v1 selector-optional-v1 -->
 
 On native macOS, retain `docs/release-evidence/v0.4.0/macos.json`, its generated
 Markdown view and `.sha256` sidecar. It must be produced from the fail-closed
 template and validated with both `--expected-ref` and `--expected-commit` as
-specified by `MACOS_SMOKE.md`. Retain its human-only Hook/selector witness too.
+specified by `MACOS_SMOKE.md`. Record the required Hook trust prerequisite;
+selector/status-line observations remain optional and non-blocking.
 
 ## 3. Logged-in smoke gate
 
@@ -121,7 +128,8 @@ Run the complete route lifecycle once on macOS and once on native Windows 11:
 4. Submit an ordinary substantive task that does not name the skill or include
    a trigger phrase, and obtain a `delegate` route.
 5. Create exactly one bounded subagent using the returned model and effort;
-   confirm the Codex selector continues to display the root task.
+   machine-verify that route and execution metadata keep the root boundary
+   unchanged and record the bounded target separately.
    Confirm the route input uses the host's bounded-subagent capability rather
    than the root picker. A Sol/Terra-only host must not return Luna.
 6. Integrate the result, run the returned verification gate, and record one
@@ -129,10 +137,11 @@ Run the complete route lifecycle once on macOS and once on native Windows 11:
 7. Confirm status and route history preserve the root-model versus
    bounded-target boundary, include the delegated route/outcome, and expose no
    prompt, source, secret, or absolute project path.
-8. Change the active model slug after its baseline. Confirm the pending request
-   and unconfirmed reminders stay root-only, then test both keep-automatic and
-   current-task manual-root decisions. Record that effort-only changes are not
-   observable by the hook.
+8. Use host-managed resumed CLI turns to change the active model slug after its
+   baseline. Automatically confirm that pending requests and reminders stay
+   root-only, test keep-automatic and current-task manual-root decisions, and
+   restore the initial model and automatic mode. Record that effort-only changes
+   are not observable by the Hook.
 9. Exercise upgrade, uninstall, reinstall, idempotence, and optional AGENTS
    marker removal. Confirm the installer explains the one-time v0.3 → v0.4
    restart boundary and the compatible v0.4+ no-restart path.

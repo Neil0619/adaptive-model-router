@@ -1,8 +1,10 @@
 # Native Windows 11 smoke test
 
-This is the blocking manual Windows gate for `v0.4.0`. Run it in native Windows
-11 with the Codex agent using PowerShell, not inside WSL2. WSL2 is a separate
-non-blocking smoke target.
+This is the blocking automated Windows gate for `v0.4.0`. Run it in native
+Windows 11 with PowerShell, not inside WSL2. WSL2 is a separate non-blocking
+smoke target.
+
+<!-- smoke-contract: post-trust-automatic-v1 selector-optional-v1 -->
 
 The operator may give this entire document to Codex on the Windows machine.
 Do not create or push the release tag from the smoke task.
@@ -25,6 +27,9 @@ other byte change remains blocking.
 Review and trust the three hooks before running it. A failure produces only
 stable warning codes in the artifact; raw prompts, events, session/context
 identifiers, errors, source, secrets, logs, and absolute paths are excluded.
+Hook trust is the only required interactive action. After trust, the canonical
+runner owns every prompt, control message, model-slug transition, verification,
+and final restoration; it must not ask the operator to repeat sections 5 or 6.
 
 The runner refuses to use the default Codex Home. Prepare a disposable Windows
 test account or dedicated Codex Home, add the explicit smoke marker, log in
@@ -48,13 +53,13 @@ It also rejects filesystem roots and broad system/user directories even when a
 marker is present. The marker explicitly declares that the directory may be
 mutated by install, upgrade, uninstall, AGENTS, session, and learning tests.
 
-Suggested handoff prompt:
+Suggested handoff prompt after the three Hook definitions are trusted:
 
 ```text
-请完整读取 docs/WINDOWS_SMOKE.md，并在原生 Windows 11 + PowerShell 环境中按顺序执行。
-你负责检查前置条件、安装、hook 信任、route → bounded subagent → verification →
-outcome、隐私断言、升级/卸载/重装和 AGENTS marker。遇到 Stop conditions 中任一情况
-立即停止并按模板返回 FAIL。不要创建或推送 v0.4.0 tag，也不要调用 clear_project_data。
+请完整读取 docs/WINDOWS_SMOKE.md。在我完成三个 Hook 的审查和信任后，只运行
+scripts/windows-smoke.ps1 的 canonical 自动流程；不要让我手工粘贴第 5/6 节提示、
+切换模型或发送 router 控制。遇到 Stop conditions 中任一情况立即停止并返回 FAIL。
+不要创建或推送 v0.4.0 tag，也不要调用 clear_project_data。
 ```
 
 ## Pass criteria
@@ -79,10 +84,11 @@ The smoke passes only when all of the following succeed:
 - root verification followed by one strict final outcome;
 - visible status/history that preserve the root-model versus bounded-target
   boundary and include the delegated route;
-- one host-model slug change that stays root-only while pending, followed by
-  both keep-automatic and current-task manual-root behavior;
-- confirmation that the Codex Desktop model selector or CLI model status-line
-  field continues to show the root task, not the bounded subagent target;
+- two host-model slug transitions that stay root-only while pending, including
+  a distinct second event, keep-automatic, current-task manual-root behavior,
+  and restoration of the initial model;
+- machine-verified route and execution metadata showing that the root-model
+  boundary remains unchanged while the bounded target is recorded separately;
 - redacted status and diagnostics with no prompt, source, secret, or absolute
   project path;
 - native upgrade and uninstall;
@@ -183,214 +189,80 @@ In the new task:
 If the plugin or hooks are not visible, restart the ChatGPT desktop app and
 start another new task. If they remain unavailable, stop and report the failure.
 
-After hook trust is complete and the current turn is idle, the **human
-operator** must send this exact-prefix control as its own user message to opt
-in for all local projects sharing this Codex Home:
+After Hook trust is complete, exit the interactive trust task so the installed
+plugin cache is no longer active. Start the canonical runner from the external
+PowerShell window. The runner sends this exact-prefix control through its
+dedicated persistent CLI session:
 
 ```text
 router: global on
 ```
 
-The agent cannot send this control on the operator's behalf, and the opening
-instruction to read this runbook does not execute it. Do not inspect the
-global setting or fail this gate until the trusted `UserPromptSubmit` hook has
-processed the standalone control and its model-visible context confirms that
-the control was applied.
+The trusted `UserPromptSubmit` Hook must process the control. The runner then
+sends `router: status`, independently reads installed router state, and proves
+that global automatic routing is on, task mode is automatic, and the first
+valid host model establishes only a baseline. No manual prompt, `/statusline`
+configuration, or `/status` transcription is part of the blocking gate.
 
-The human operator must then send `router: status` as a separate message.
-Confirm that global automatic routing is on, this task is automatic, and the
-first valid host model is only the baseline. There must be no model-intent
-question on this first observation.
-
-On the CLI surface, send `/statusline`, add the `model` field to the footer,
-then send `/status` and record the active root model. The CLI does not expose
-the persistent top model selector used by Codex Desktop; the configured model
-status-line field is the equivalent visible root-model evidence for this
-smoke. Keep it visible during the bounded subagent run. This is a visual
-cross-check only: do not ask the human operator to retype the slug as a user
-message, and do not expect `/status` or `/statusline` to expose the internal
-task/session identifier.
+An operator may optionally watch the Desktop selector or CLI model status line
+while the runner executes. This is a non-blocking UX observation only; absence
+of that visual witness cannot change an otherwise valid canonical artifact.
 
 ## 5. Run the route → subagent → verification → outcome smoke
 
-Paste the following ordinary task prompt into the fresh task. It intentionally
-does not name the skill, use `$adaptive-model-router`, or contain a router
-control prefix:
+Do not paste an implementation prompt or create a separate smoke task. The
+canonical runner seeds a deterministic fixture and owns the complete managed
+route lifecycle. Its ordinary prompt intentionally does not name the skill or
+contain a router control prefix.
 
-```text
-Use only the exact fixed contextId instruction injected by the trusted
-UserPromptSubmit hook for this ordinary task turn. The Hook derives it from
-the host session and makes it model-visible; `/status`, `/statusline`, cwd,
-environment variables, and project paths are not contextId sources. Reuse the
-injected value for every router tool call in this task and never invent or ask
-the human operator to provide one. If this ordinary prompt turn does not
-contain the trusted fixed-contextId instruction, stop and report that the Hook
-context is unavailable.
+The runner requires exactly one `delegate` route, one bounded subagent using the
+returned target model and effort, one completed wait, root-owned verification,
+and exactly one strict `record_outcome`. It proves the root boundary remains
+unchanged, the child does not route recursively or own the outcome, and the
+ordered lifecycle is route → spawn → completed wait → outcome. The native host
+then executes the fixture tests and checks that neither the managed review nor
+the tests changed the fixture.
 
-Follow the fixed model-visible automatic-routing context injected by the
-trusted prompt hook. At the implementation stage, call route_stage with this
-factual input:
-- goal: Implement and test a dependency-free Node.js 24 line-normalization utility in this temporary project.
-- phase: implementation
-- evidence:
-  - workProduct: true
-  - requirementsSettled: true
-  - strongVerification: true
-  - batchSize: 2
-- hostCapabilities.delegation:
-  - available: true
-  - targets: copy the exact bounded-subagent model and reasoning_effort enums
-    exposed by this Codex host; do not copy the root model picker. For the
-    current Sol/Terra-only contract, include Sol and Terra and omit Luna.
-
-Acceptance criteria:
-- create src/normalize-lines.mjs exporting normalizeLines(text);
-- convert CRLF and CR line endings to LF;
-- remove trailing spaces and tabs from every line;
-- return exactly one final LF for non-empty input and an empty string for empty input;
-- create test/normalize-lines.test.mjs using node:test;
-- cover CRLF, CR, trailing whitespace, empty input, an existing final newline,
-  and Chinese text;
-- use no third-party dependencies.
-
-If route_stage returns delegate, create exactly one bounded subagent. Pass
-target.model to the host model parameter and target.effort to the host
-reasoning_effort parameter. Give the subagent only the implementation and test
-scope above. Do not create overlapping writers.
-
-If route_stage returns continue or ask_user, do not force delegation. Stop and
-report the complete redacted route result because the smoke gate did not reach
-the required bounded-subagent path.
-
-The child must receive the bounded-subagent isolation instruction and execute
-only the assigned stage. If it calls `route_stage`, asks whether the Terra/Sol
-child model is a manual root-model change, mutates a router control, or owns
-`record_outcome`, stop and report a failure. The parent root task alone
-verifies the result and records the route outcome.
-
-The root task must review and integrate the delegated work, then run:
-node --test test/normalize-lines.test.mjs
-
-After verification, call record_outcome exactly once for the delegated route.
-Use the returned verificationGate as gate, the actual escalation count, the
-actual retry count, a retryBreakdown with reasoning/environment/information/tooling
-counters that sum exactly to retries, userCorrection=false unless I corrected
-the result, and:
-- status=passed and failureType=null when the test passes;
-- otherwise status=failed with the factual enumerated failureType.
-
-Finally call get_route_status, get_route_history with limit=10 and action=all,
-and diagnose_router with the same contextId. Check that status preserves the
-hook-observed-or-host-managed root-model boundary, history contains this route and its outcome,
-and their serialized output contains no task prompt, source code,
-environment-variable values, secret values, or absolute project path. Return a
-short smoke summary containing the route action, target model/effort, target
-transition, history count, reason codes, verification gate, test result,
-outcome result, pending outcome count, database health, classifier state, and
-privacy assertion. Do not return the absolute project path.
-```
-
-The Stop hook must not create outcome-bookkeeping feedback or replace the final
-user-facing reply after the successful result.
-While the bounded subagent runs, confirm visually that the Codex Desktop model
-selector or CLI model status-line field continues to show the root task model.
-Inspect the Codex Subagents view (`/subagents` on CLI) for the bounded target
-instead.
-
-For the canonical headless CLI runner, the machine-readable equivalent is
-strictly checked from one turn's JSONL lifecycle: exactly one `spawn_agent`
-call must use the routed target model/effort, exactly one root
-`record_outcome` call must follow, and route history must keep
-`rootTask.changedByRouter=false` with a distinct bounded target. Interactive
-Desktop/manual runs retain the visual selector check above. The headless JSON
-artifact is the canonical machine-readable result, but it does not replace the
-human witness for `/hooks`, `/statusline`, or the Desktop model selector. A
-release needs both the validated artifact and the completed manual report at
-the end of this runbook.
-
-The canonical runner seeds a deterministic fixture in its disposable project,
-then asks the managed read-only Codex task and bounded subagent to perform two
-independent reviews bound to the router's `structured-check` gate. The native
-PowerShell runner validates both fixed-key review summaries, proves the fixture
-file set and hashes did not change during review, immediately runs the Node
-tests, and proves the file set and hashes still did not change. Together they
-form the same blocking route/subagent/outcome check. This keeps the gate valid
-on hosts whose managed permission profile cannot be broadened by
-`-s workspace-write`; the runner does not bypass command approvals, the managed
-sandbox, or Hook trust. Because `codex exec --json` omits `spawn_agent` from its
-public event projection, the runner reads only the required lifecycle metadata
-from the dedicated smoke Home to prove one ordered route/spawn/wait/outcome and
-the bounded target model/effort; it never emits raw session logs.
+The runner validates both fixed-key review summaries against the
+`structured-check` gate and reads only the required lifecycle metadata from the
+dedicated smoke Home. Status, history, diagnostics, and learning reports must
+remain redacted and show a healthy database, a versioned scoring profile, zero
+pending outcomes, and zero unexpected Stop-finalized unknown outcomes. These
+assertions are blocking and are derived from JSONL lifecycle and
+installed-router state, not from an operator transcription.
 
 ## 6. Exercise host-model intent protection
 
-Record the root-model slug shown by `router: status`. After the current turn is
-idle, the **human operator** must type `/model` in the Codex CLI, press Enter,
-and choose a different model slug from the popup. Do not ask the agent to invoke
-the slash command on its own: slash commands are host UI controls and are not
-agent tools. Choose a different slug, not merely a different effort such as Sol
-Max versus Sol High. Run `/status` and confirm that the selected slug is active,
-then send this ordinary substantive review request:
+The runner establishes a `gpt-5.6-sol` baseline in its disposable session, then
+uses the host CLI's `-m` argument on resumed turns to select
+`gpt-5.6-terra`. Two ordinary review turns must remain root-only with
+`HOST_MODEL_INTENT_PENDING`, create no bounded work, and reuse one pending
+change ID. The runner then sends `router: auto session` and verifies that the
+pending event is resolved.
 
-```text
-Review the line-normalization utility and its tests for missing edge cases.
-Follow the automatic router context, make no file changes, and return a concise
-finding plus the redacted route action and reason codes.
-```
+The runner next returns the disposable session to `gpt-5.6-sol`, creates a new
+pending event, sends `router: manual`, and proves that a substantive route
+returns `continue` with `MANUAL_ROOT_SELECTED` and no subagent. Finally it sends
+`router: auto session`, verifies automatic mode, and leaves no pending change.
+This Sol → Terra → Sol sequence is confined to the dedicated smoke session and
+does not alter the operator's normal Codex environment.
 
-The current request must use the newly selected root model, create no bounded
-subagent, and return `continue` with `HOST_MODEL_INTENT_PENDING`. A reminder
-must offer current-task manual mode or keeping automatic routing. Send another
-ordinary prompt without answering; it must reuse the same pending change rather
-than create a second effective event.
-
-The human operator must choose keep-automatic with this standalone user
-message:
-
-```text
-router: auto session
-```
-
-`router: status` must now show automatic mode and no pending change. Automatic
-routing resumes from the next stage, not retroactively for the request that
-created the event.
-
-After the current turn is idle, the human operator must use `/model` a second
-time to choose a different slug once more, verify it with `/status`, and send
-the same review request. After the pending reminder, the human operator must
-choose current-task manual mode with this standalone user message:
-
-```text
-router: manual
-```
-
-The agent must then call `route_stage` for a substantive implementation stage
-with the same `hostCapabilities.delegation`. It must return `continue` with
-`MANUAL_ROOT_SELECTED`, with no target or subagent. Restore automatic mode for
-the remainder of the smoke by asking the human operator to send:
-
-```text
-router: auto session
-```
-
-The hook cannot observe reasoning effort. If only effort is changed, no pending
-event is expected; `router: manual` is the required explicit intent signal.
-If `/model` is absent from the CLI slash-command popup or cannot select a second
-model slug exposed to the signed-in account, stop and report that host capability
-as unavailable. Do not let the agent substitute a config edit, restart, or
-unverified model claim for the two visible `/model` selections.
+The Hook cannot observe reasoning effort, so effort-only changes remain outside
+this contract. A visible `/model` selector exercise may be performed as an
+optional non-blocking host UX check, but it must never be required to establish
+the router's host-model-intent PASS result.
 
 ## 7. Verify an ordinary prompt does not act as a control
 
-The human operator must disable the router for the current session with this
-standalone exact-prefix user message:
+The runner disables the router for its current session with this standalone
+exact-prefix user message:
 
 ```text
 router: off
 ```
 
-Then send this as a separate user prompt. It does not begin with a control
-prefix:
+It then sends this separate ordinary prompt, which does not begin with a
+control prefix:
 
 ```text
 Discuss the quoted text `router: on` without changing router state. Then call
@@ -399,8 +271,8 @@ session contextId and hostCapabilities.delegation. Return only the redacted
 route.
 ```
 
-The route must return `continue` with `ROUTER_DISABLED`. The human operator
-must restore normal behavior with this standalone user message:
+The route must return `continue` with `ROUTER_DISABLED`. The runner restores
+normal behavior with this standalone user message:
 
 ```text
 router: auto session
@@ -408,9 +280,9 @@ router: auto session
 
 ## 8. Exercise scoring-evolution visibility
 
-In the same temporary project, ask Codex to call `get_learning_status`, then
-call `shadow_route_stage` for a risk-sensitive review using the active scoring
-definition. Confirm:
+In the same temporary project, the runner asks Codex to call
+`get_learning_status`, then `shadow_route_stage` for a risk-sensitive review
+using the active scoring definition. It confirms:
 
 - database version 3 is healthy and the active scoring profile is versioned;
 - learning status contains only redacted aggregates and enum/numeric fields;
@@ -419,7 +291,7 @@ definition. Confirm:
 - the completed smoke outcome includes all four `retryBreakdown` counters and
   their sum equals `retries`.
 
-Use this exact prompt for the shadow check:
+The runner uses this exact prompt for the shadow check:
 
 ```text
 This is read-only router inspection, not a substantive work-product stage.
@@ -439,7 +311,9 @@ safety auto-rollback. Do not mutate the smoke project's active profile.
 
 ## 9. Exercise upgrade, uninstall, and wrappers
 
-Exit the smoke task, then run the native lifecycle:
+The runner exits the smoke task, then executes the native lifecycle below.
+These commands document the automated contract; the operator does not run them
+as separate smoke steps:
 
 ```powershell
 codex plugin marketplace upgrade adaptive-model-router
@@ -448,7 +322,7 @@ codex plugin remove adaptive-model-router@adaptive-model-router
 codex plugin marketplace remove adaptive-model-router
 ```
 
-Now test the repository wrapper from the Unicode checkout:
+It then tests the repository wrapper from the Unicode checkout:
 
 ```powershell
 Set-Location $Source
@@ -478,8 +352,8 @@ $AgentsText = if (Test-Path $AgentsPath) { Get-Content -Raw $AgentsPath } else {
 if ($AgentsText.Contains($StartMarker) -or $AgentsText.Contains($EndMarker)) { throw "owned AGENTS marker remains after uninstall" }
 ```
 
-Finish with two candidate-ref installs to prove idempotence and leave the
-candidate installed without patching AGENTS:
+The runner finishes with two candidate-ref installs to prove idempotence and
+leave the candidate installed without patching AGENTS:
 
 ```powershell
 .\install.ps1 -Ref $CandidateRef
@@ -488,14 +362,14 @@ codex plugin marketplace list
 codex plugin list
 ```
 
-Confirm the wrapper output distinguishes the one-time v0.3.x → v0.4.0
+The runner confirms that wrapper output distinguishes the one-time v0.3.x → v0.4.0
 fresh-task transition from later compatible v0.4.x+ implementation updates.
 The automated `runtime-hot-upgrade.test.mjs` must have demonstrated one
 long-lived MCP process, concurrent old Hook shells, damaged-candidate
 quarantine, active-runtime rollback, and a path-free pointer. Hook JSON, skill,
 MCP-schema, or storage-contract changes remain explicit new-task boundaries.
 
-Start Codex again from a second temporary project without sending
+The runner starts Codex again from a second temporary project without sending
 `router: global on` again:
 
 ```powershell
@@ -506,65 +380,26 @@ git init
 codex
 ```
 
-Trust the current hook hash if Codex asks after reinstall, then send
-`router: status`. Global automatic routing must still be on while this new task
-has its own automatic mode and root-model baseline. This confirms persistence
-across reinstall/restart and isolation of task-specific manual state.
+An unchanged trusted Hook hash must not require another normal operator step.
+If Codex unexpectedly asks again, stop and investigate the installed candidate
+identity or trust record. The runner sends `router: status` and proves global
+automatic routing remains on while the new task has its own automatic mode and
+root-model baseline. This confirms persistence across reinstall/restart and
+isolation of task-specific manual state.
 
-## 10. Report template
+## 10. Canonical report
 
-Return this completed template to the release maintainer:
+Retain the generated `windows.json`, `windows.md`, and
+`windows.json.sha256` files. The validated JSON artifact is the sole
+functional source of truth for sections 5–9. It binds the frozen candidate,
+environment, all 16 blocking checks, route/target/gate summary, settled outcome
+counts, diagnostics, and privacy result. No separate operator-completed report
+or model-selector transcript is required.
 
-```text
-Native Windows 11 smoke: PASS | FAIL
-Windows version:
-Codex surface: Desktop | CLI
-Codex version:
-Node version:
-Git version:
-Candidate ref:
-Candidate commit SHA:
-Native install: PASS | FAIL
-Compatible runtime hot-upgrade/rollback suite: PASS | FAIL
-UserPromptSubmit hook trusted/exercised: PASS | FAIL
-SubagentStart hook trusted/exercised: PASS | FAIL
-Stop hook trusted/exercised: PASS | FAIL
-Global automatic opt-in persisted across project/restart: PASS | FAIL
-First model observation created no pending event: PASS | FAIL
-Route action:
-Observed root model:
-Target model:
-Target effort:
-Codex selector/status line stayed on root model: PASS | FAIL
-Reason codes:
-Verification gate:
-node --test: PASS | FAIL
-record_outcome: PASS | FAIL
-Pending outcomes after record:
-Diagnostics/database health:
-Privacy assertion: PASS | FAIL
-Changed model stayed root-only while pending: PASS | FAIL
-Repeated reminder reused one change event: PASS | FAIL
-Keep-automatic restored next-stage routing: PASS | FAIL
-Manual-root blocked delegation: PASS | FAIL
-Effort-only visibility limitation acknowledged: PASS | FAIL
-Negative control prompt changed state: YES | NO
-Negative control route reason code:
-Learning status/database v3: PASS | FAIL
-Shadow scoring had zero lifecycle side effects: PASS | FAIL
-Typed retry breakdown: PASS | FAIL
-Native upgrade/uninstall: PASS | FAIL
-Wrapper install/upgrade/uninstall/reinstall: PASS | FAIL
-AGENTS marker inserted once and removed cleanly: PASS | FAIL
-Unexpected warnings or sanitized error text:
-```
-
-Also provide the candidate commit without including local paths:
-
-```powershell
-$CandidateRef
-$CandidateCommit
-```
+Record that the three current Hook definitions were reviewed and trusted before
+the run. An optional visual UX note may state whether the Desktop selector or
+CLI model status line was observed, but it is not part of the canonical
+artifact and cannot change the release gate.
 
 ## Stop conditions
 

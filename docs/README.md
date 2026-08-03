@@ -37,7 +37,7 @@ specification.
 - [Changelog](../CHANGELOG.md): release-visible behavior changes.
 
 The release checklist is authoritative for release gates. The platform
-runbooks are authoritative for native Windows and macOS manual smoke procedures.
+runbooks are authoritative for native Windows and macOS smoke procedures.
 
 ## Official Codex references
 
