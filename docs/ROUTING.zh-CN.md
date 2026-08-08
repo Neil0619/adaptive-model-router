@@ -18,6 +18,12 @@ Adaptive Model Router 不是模型代理，也不会热切换根任务模型。�
 `route_stage`，不表示每条消息都会创建 subagent 或切换根模型。每次调用后，skill 必须显示一条可见
 路由提示，明确区分根任务与阶段委派目标。
 
+当宿主策略允许“适用 skill 明确要求的 subagent”时，`delegate` 返回值本身就是该
+skill 的显式授权。它是必须执行的 action，不是建议：根任务必须立即创建且只创建一个
+bounded subagent。不得把它描述为“建议委派”、把条件性策略误读成全面禁止、静默改为
+root-only，或再次要求用户授权。只有宿主工具实际拒绝已声明可用的目标时，才进入文档规定的
+tooling failure 重试流程。
+
 Hook 只保留通过校验的活动根模型 slug；缺失或非法值显示为 host-managed。仅在
 全局自动有效时，slug 变化才会作为手动意图信号。当前任务首次合法观察只建立
 基线；后续 slug 变化会进入 `pending_confirmation`。当前请求继续使用根模型，但用户明确选择

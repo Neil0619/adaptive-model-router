@@ -24,6 +24,14 @@ creates a subagent or changes the root model.
 After each call, the skill must show a visible notice that separates the
 host-managed root task from the bounded-stage target.
 
+A returned `delegate` action is the applicable skill's explicit authorization
+under conditional host policies that permit skill-requested subagents. It is a
+required action, not a recommendation: the root must immediately create exactly
+one bounded subagent. It must not describe the route as merely suggested,
+silently keep the delegated stage root-only, claim that the conditional policy
+is a blanket subagent ban, or ask the user to re-authorize it. Only an actual
+host-tool rejection enters the documented tooling-failure retry flow.
+
 The hook retains only a validated active root-model slug when one is available;
 missing or invalid values display as host-managed. It treats slug changes as
 manual-intent signals only while automatic activation is effective. The first

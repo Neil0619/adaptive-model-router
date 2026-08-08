@@ -5,8 +5,9 @@ lives in [WINDOWS_SMOKE.md](WINDOWS_SMOKE.md). Do not create the release tag
 until every blocking item below has fresh evidence for the exact candidate
 commit. The original `codex/v040-scoring-evolution` candidate was invalidated
 by the read-only-inspection Hook fix. The later shadow-inspection candidate was
-invalidated by the Stop-hook fix; the replacement candidate below includes the
-same reviewed v0.4 runtime plus both fixes.
+invalidated by the Stop-hook fix, and the Stop-hook candidate was invalidated
+by the delegate-authorization contract fix. The replacement candidate below
+includes the same reviewed v0.4 runtime plus all three fixes.
 
 v0.4.0 includes the reviewed v0.3.1 capability fix, which was merged into the
 v0.4.0 main tree and was not published separately. The published `stable`
@@ -18,7 +19,7 @@ it after artifact creation.
 Keep `stable` on the last published release until the release workflow has
 created the new artifacts. For logged-in smoke testing, freeze a dedicated
 candidate ref at the reviewed commit. For v0.4.0 the handoff ref is
-`codex/v040-stop-hook-fix`; do not move it after smoke evidence is
+`codex/v040-delegate-contract-fix`; do not move it after smoke evidence is
 collected.
 
 Record the candidate:
@@ -27,7 +28,7 @@ Record the candidate:
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/main
-git rev-parse origin/codex/v040-stop-hook-fix
+git rev-parse origin/codex/v040-delegate-contract-fix
 git rev-parse origin/stable
 ```
 
@@ -36,7 +37,7 @@ The worktree must be clean. The candidate ref must contain the reviewed tree;
 verify that the release-relevant trees are byte-identical:
 
 ```bash
-git diff --exit-code origin/main origin/codex/v040-stop-hook-fix -- \
+git diff --exit-code origin/main origin/codex/v040-delegate-contract-fix -- \
   .agents plugins install.sh install.ps1 .github/workflows/release.yml
 ```
 

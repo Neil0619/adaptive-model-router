@@ -27,6 +27,10 @@ The smoke passes only when all of the following succeed:
   task that does not name the skill or repeat a trigger phrase;
 - one substantive `delegate` route and exactly one bounded subagent using the
   returned model and effort;
+- confirmation that `delegate` is executed as the applicable skill's explicit
+  authorization under conditional multi-agent policies, never weakened into a
+  suggestion, blanket prohibition, user re-authorization request, or silent
+  root-only continuation;
 - bounded-subagent isolation: no recursive route, root-model intent event,
   control mutation, or child-owned outcome;
 - host capabilities containing only Sol/Terra never return Luna as the bounded
@@ -66,7 +70,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/v040-stop-hook-fix"
+$CandidateRef = "codex/v040-delegate-contract-fix"
 $SmokeRoot = Join-Path $env:TEMP ("Adaptive Router Windows 冒烟 " + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $SmokeRoot "source checkout"
 $Project = Join-Path $SmokeRoot "测试 project with spaces"
@@ -208,6 +212,14 @@ If route_stage returns delegate, create exactly one bounded subagent. Pass
 target.model to the host model parameter and target.effort to the host
 reasoning_effort parameter. Give the subagent only the implementation and test
 scope above. Do not create overlapping writers.
+
+The returned `delegate` action is the applicable skill's explicit authorization
+under any conditional host policy that permits skill-requested subagents. It is
+required, not a suggestion. Do not claim that such a policy forbids the launch,
+ask the human operator to authorize it again, or silently continue this stage
+in the root. Only an actual rejection from the host subagent tool may enter the
+documented `failed/tooling` retry flow. If declared host delegation remains
+available but no real bounded subagent starts, stop and report a failure.
 
 If route_stage returns continue or ask_user, do not force delegation. Stop and
 report the complete redacted route result because the smoke gate did not reach
@@ -461,6 +473,7 @@ Route action:
 Observed root model:
 Target model:
 Target effort:
+Delegate authorization/execution contract: PASS | FAIL
 Codex selector/status line stayed on root model: PASS | FAIL
 Reason codes:
 Verification gate:
@@ -495,10 +508,12 @@ $CandidateCommit
 ## Stop conditions
 
 Mark the smoke `FAIL` and do not create the release tag if any required step
-fails, the route does not return `delegate`, the host cannot use the returned
-model/effort, a hook cannot be trusted, a model-change request delegates while
-pending/manual, an outcome remains pending, diagnostics leak sensitive content
-or an absolute project path, or installation is not idempotent.
+fails, the route does not return `delegate`, a returned `delegate` is weakened
+into a suggestion or no real SubagentStart occurs without an actual host-tool
+rejection, the host cannot use the returned model/effort, a hook cannot be
+trusted, a model-change request delegates while pending/manual, an outcome
+remains pending, diagnostics leak sensitive content or an absolute project
+path, or installation is not idempotent.
 
 Do not call `clear_project_data` as part of this smoke. Uninstall deliberately
 leaves learning data intact.

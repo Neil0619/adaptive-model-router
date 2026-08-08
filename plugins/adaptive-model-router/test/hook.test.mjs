@@ -156,6 +156,15 @@ test("global automatic activation is opt-in, crosses projects, and detects later
     assert.equal(first.status, 0, first.stderr);
     const firstContext = JSON.parse(first.stdout).hookSpecificOutput.additionalContext;
     assert.match(firstContext, /global automatic activation is enabled/);
+    assert.match(
+      firstContext,
+      /action=delegate.*explicit request from the applicable adaptive-model-router skill/i,
+    );
+    assert.match(
+      firstContext,
+      /required, not a suggestion.*exactly one bounded subagent/i,
+    );
+    assert.match(firstContext, /Only an actual host-tool rejection/i);
     assert.match(firstContext, /gpt-5\.6-sol/);
     assert.match(firstContext, /Use "auto-session" as the contextId argument for every Adaptive Model Router MCP call in the current task and never substitute cwd\/project paths\./);
     assert.doesNotMatch(firstContext, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -182,6 +191,7 @@ test("global automatic activation is opt-in, crosses projects, and detects later
     const changedContext = JSON.parse(changed.stdout).hookSpecificOutput.additionalContext;
     assert.match(changedContext, /unresolved active root-model change/);
     assert.match(changedContext, /HOST_MODEL_INTENT_PENDING/);
+    assert.doesNotMatch(changedContext, /required, not a suggestion/i);
     assert.match(changedContext, /Use "auto-session" as the contextId argument for every Adaptive Model Router MCP call in the current task and never substitute cwd\/project paths\./);
     assert.doesNotMatch(changedContext, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.doesNotMatch(changedContext, /Implement a parser|Continue implementing/);
@@ -227,6 +237,7 @@ test("global automatic activation is opt-in, crosses projects, and detects later
     }, project.home);
     assert.match(manualTurn.stdout, /manual_root mode/);
     assert.doesNotMatch(manualTurn.stdout, /meaningful substantive stage boundary/);
+    assert.doesNotMatch(manualTurn.stdout, /required, not a suggestion/i);
     const manualContext = JSON.parse(manualTurn.stdout).hookSpecificOutput.additionalContext;
     assert.match(manualContext, /Use "auto-session" as the contextId argument for every Adaptive Model Router MCP call in the current task and never substitute cwd\/project paths\./);
     assert.doesNotMatch(manualContext, new RegExp(project.root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
@@ -560,6 +571,7 @@ test("proposal listing is guarded as read-only inspection", async () => {
     assert.match(context, /Read-only router inspection/);
     assert.match(context, /list_policy_proposals/);
     assert.doesNotMatch(context, /global automatic activation is enabled/);
+    assert.doesNotMatch(context, /required, not a suggestion/i);
 
     await withRouterEnvironment(project, async () => {
       const store = new RouterStore();

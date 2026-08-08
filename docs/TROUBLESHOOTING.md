@@ -172,6 +172,24 @@ Inspect `reasonCodes`:
 Do not invent a model target after a fail-open result. Diagnose the catalog,
 host capability, settings, or local storage first.
 
+## A `delegate` route is described as blocked by a no-subagent policy
+
+This is an orchestration-contract failure when the host policy only forbids
+unrequested proactive subagents but explicitly permits delegation requested by
+an applicable skill. Adaptive Model Router's returned `delegate` action is that
+explicit skill authorization and must create exactly one bounded subagent. It
+is not a recommendation. Do not ask the user to authorize it again, claim a
+blanket prohibition, or silently continue the delegated stage in the root.
+
+First confirm that the `route_stage` input truthfully declared current bounded
+subagent capability and that the returned target is in that declaration. If the
+host tool actually rejects the target before startup, record `failed/tooling`
+and follow the single automatic retry described below. If no launch was even
+attempted, do not call that a host rejection; upgrade to a runtime whose skill,
+automatic Hook context, and optional managed AGENTS block contain the explicit
+delegate-authorization contract, then start a fresh task so the changed Hook
+and skill are loaded.
+
 ## Luna is recommended but the host rejects it as a subagent
 
 Upgrade to v0.3.1 or newer. v0.3.0 could mistake a root-visible Luna entry for
