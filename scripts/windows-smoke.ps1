@@ -402,6 +402,29 @@ function Assert-InstalledCandidate {
     Invoke-Process -FilePath 'node' -ArgumentList @($verifier, "--ref=$ExpectedRef", "--commit=$ExpectedCommit") -WorkingDirectory $Source | Out-Null
 }
 
+function Assert-InstalledPluginBytes {
+    param([Parameter(Mandatory = $true)][string]$InstalledRoot)
+    $comparator = Join-Path $Source 'scripts\compare-gate-content.mjs'
+    $candidateRoot = Join-Path $Source 'plugins\adaptive-model-router'
+    $relativeFiles = @(
+        '.codex-plugin\plugin.json',
+        '.mcp.json',
+        'hooks\hooks.json',
+        'runtime.json',
+        'scripts\hook.mjs',
+        'skills\adaptive-model-router\SKILL.md'
+    )
+    foreach ($relativeFile in $relativeFiles) {
+        $candidateFile = Join-Path $candidateRoot $relativeFile
+        $installedFile = Join-Path $InstalledRoot $relativeFile
+        if (-not (Test-Path -LiteralPath $candidateFile -PathType Leaf) -or -not (Test-Path -LiteralPath $installedFile -PathType Leaf)) {
+            throw 'installed candidate integrity file is missing'
+        }
+        $comparison = Invoke-Process -FilePath 'node' -ArgumentList @($comparator, $candidateFile, $installedFile) -WorkingDirectory $Source -AllowFailure
+        if ($comparison.ExitCode -ne 0) { throw 'installed Hook, Skill, MCP, manifest, runtime, or hook implementation differs from the frozen candidate' }
+    }
+}
+
 function Invoke-Wrapper {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     $installer = Join-Path $Source 'install.ps1'
@@ -606,6 +629,7 @@ try {
     if (-not (Test-Path -LiteralPath $InstalledRouterLauncher -PathType Leaf) -or -not (Test-Path -LiteralPath $InstalledRouterCli -PathType Leaf)) {
         throw 'installed router state reader files are missing'
     }
+    Assert-InstalledPluginBytes -InstalledRoot $installedPluginRoot
     Add-SmokeCheck -Id 'installed-candidate-integrity' -Blocking $true -Status 'PASS'
 
     $turn = Invoke-CodexTurn -Prompt 'router: global on' -Model 'gpt-5.6-sol'
@@ -810,6 +834,7 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     Invoke-Wrapper -Arguments @('-Ref', $CandidateRef) | Out-Null
     Invoke-Wrapper -Arguments @('-Ref', $CandidateRef) | Out-Null
     Assert-InstalledCandidate -ExpectedRef $CandidateRef -ExpectedCommit $CandidateCommit
+    Assert-InstalledPluginBytes -InstalledRoot $installedPluginRoot
     Add-SmokeCheck -Id 'native-and-wrapper-lifecycle' -Blocking $true -Status 'PASS'
 
     $second = Invoke-Process -FilePath 'codex' -ArgumentList @('exec', '-a', 'never', '-s', 'read-only', '--json', '-C', $Project2, '-m', 'gpt-5.6-sol', 'router: status') -WorkingDirectory $Project2

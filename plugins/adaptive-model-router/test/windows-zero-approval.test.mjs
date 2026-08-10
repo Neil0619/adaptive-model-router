@@ -87,7 +87,7 @@ test("native Windows zero-approval preflight enforces policy and path containmen
     };
     const invoke = (env, output = join(smokeRoot, "evidence")) => spawnSync("pwsh", [
       "-NoProfile", "-File", runner,
-      "-CandidateRef", "codex/windows-zero-approval-smoke",
+      "-CandidateRef", "codex/windows-zero-approval-smoke-v2",
       "-OutputDirectory", output,
       "-ValidateZeroApprovalContract",
     ], { encoding: "utf8", env });

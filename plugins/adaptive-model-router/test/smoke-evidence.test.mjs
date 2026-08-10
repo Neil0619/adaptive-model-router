@@ -58,7 +58,7 @@ function validEvidence() {
     status: "PASS",
     generatedAt: "2026-08-02T12:00:00.000Z",
     candidate: {
-      ref: "codex/windows-zero-approval-smoke",
+      ref: "codex/windows-zero-approval-smoke-v2",
       commitSha: "a".repeat(40),
       pluginTreeSha256: "b".repeat(64),
     },
@@ -208,7 +208,7 @@ test("smoke evidence contract accepts macOS evidence and its checked-in FAIL tem
     macos.environment.platform = "macos";
     macos.environment.osVersion = "macOS 15.6.1";
     const { result } = await runEvidence(project, macos, [
-      "--expected-ref=codex/windows-zero-approval-smoke",
+      "--expected-ref=codex/windows-zero-approval-smoke-v2",
       `--expected-commit=${"a".repeat(40)}`,
     ]);
     assert.equal(result.status, 0, result.stderr);
@@ -233,28 +233,28 @@ test("installed candidate verification binds repository, ref, revision, enabled 
   };
   const identity = {
     source: "https://github.com/Neil0619/adaptive-model-router.git",
-    ref: "codex/windows-zero-approval-smoke",
+    ref: "codex/windows-zero-approval-smoke-v2",
     revision: expectedCommit,
   };
   assert.doesNotThrow(() => verifyInstalledCandidate({
     marketplaceState,
     pluginState,
     identity,
-    expectedRef: "codex/windows-zero-approval-smoke",
+    expectedRef: "codex/windows-zero-approval-smoke-v2",
     expectedCommit,
   }));
   assert.throws(() => verifyInstalledCandidate({
     marketplaceState,
     pluginState,
     identity: { ...identity, revision: "b".repeat(40) },
-    expectedRef: "codex/windows-zero-approval-smoke",
+    expectedRef: "codex/windows-zero-approval-smoke-v2",
     expectedCommit,
   }), /revision differs/u);
   assert.throws(() => verifyInstalledCandidate({
     marketplaceState,
     pluginState,
     identity: { ...identity, source: "https://github.com/example/other.git" },
-    expectedRef: "codex/windows-zero-approval-smoke",
+    expectedRef: "codex/windows-zero-approval-smoke-v2",
     expectedCommit,
   }), /reviewed repository/u);
 });
@@ -266,7 +266,7 @@ test("installed candidate CLI discovers Codex from PATH and verifies a git check
     const bin = join(project.root, "fake verifier bin");
     await mkdir(marketplaceRoot, { recursive: true });
     await mkdir(bin, { recursive: true });
-    assert.equal(spawnSync("git", ["init", "--initial-branch=codex/windows-zero-approval-smoke", marketplaceRoot], { encoding: "utf8" }).status, 0);
+    assert.equal(spawnSync("git", ["init", "--initial-branch=codex/windows-zero-approval-smoke-v2", marketplaceRoot], { encoding: "utf8" }).status, 0);
     assert.equal(spawnSync("git", ["-C", marketplaceRoot, "config", "user.email", "smoke@example.invalid"], { encoding: "utf8" }).status, 0);
     assert.equal(spawnSync("git", ["-C", marketplaceRoot, "config", "user.name", "Smoke Fixture"], { encoding: "utf8" }).status, 0);
     await writeFile(join(marketplaceRoot, "fixture.txt"), "fixture\n");
@@ -306,7 +306,7 @@ process.exit(2);
     env[pathKey] = `${bin}${delimiter}${baseEnv[pathKey] || ""}`;
     const result = spawnSync(process.execPath, [
       join(repoRoot, "scripts", "verify-installed-candidate.mjs"),
-      "--ref=codex/windows-zero-approval-smoke",
+      "--ref=codex/windows-zero-approval-smoke-v2",
       `--commit=${commit}`,
     ], {
       encoding: "utf8",

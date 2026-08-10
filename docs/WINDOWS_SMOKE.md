@@ -13,7 +13,7 @@ The canonical automated entry point is
 [`scripts/windows-smoke.ps1`](../scripts/windows-smoke.ps1):
 
 ```powershell
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke'
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v2'
 ```
 
 It accepts the frozen candidate ref plus one controlled smoke root. It uses
@@ -54,7 +54,7 @@ $env:CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_ROOT = $SmokeRoot
 $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY = 'never'
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke'
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v2'
 ```
 
 All cloned source, projects, raw events, evidence, plugin, marketplace, AGENTS
@@ -147,7 +147,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/windows-zero-approval-smoke"
+$CandidateRef = "codex/windows-zero-approval-smoke-v2"
 $RunRoot = Join-Path $env:ADAPTIVE_ROUTER_SMOKE_ROOT ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $RunRoot "source checkout"
 $Project = Join-Path $RunRoot "测试 project with spaces"
@@ -170,14 +170,15 @@ codex plugin marketplace list
 codex plugin list
 ```
 
-Before replacing an earlier candidate with the same plugin version, fully exit
-Codex Desktop and every Codex CLI session. An active plugin MCP process uses
-the cached plugin directory as its working directory on Windows, so the native
-`plugin add` backup step can otherwise fail with a file-in-use or access-denied
-error. If this runbook was handed to an active Codex task, checkpoint the task,
-exit Codex, run the native remove/add commands below from an external
-PowerShell window, then reopen the task. Run each mutating command separately;
-do not let a later list command hide an earlier nonzero exit status.
+Use a new dedicated Home whenever practical; its target plugin cache must not
+exist before the first install, so no cache process needs to be stopped. When a
+known dedicated Home must be reused, wait for bounded agents to finish and stop
+only launcher/server/MCP descendants proven to belong to that Home's target
+cache. Keep Codex Desktop, the persistent coordinator, and unrelated Node/Codex
+processes alive. If process ownership cannot be proved or the cache remains
+locked, fail closed and provision another new dedicated Home. Run each mutating
+command separately; do not let a later list command hide an earlier nonzero
+exit status.
 
 If a same-name marketplace remains from this repository's earlier `stable`
 smoke, remove only that known plugin and marketplace before adding the
@@ -194,6 +195,11 @@ codex plugin list
 
 If the same-name marketplace points to any other repository, stop and report
 it. Do not silently replace an unrelated marketplace.
+
+After installation, the runner compares the installed Hook definitions, Skill,
+MCP configuration, manifest, runtime descriptor, and Hook implementation with
+the frozen clone, allowing only line-ending normalization. Any other byte
+difference invalidates the install before Hook trust or functional routing.
 
 ## 4. Start a fresh task and trust hooks
 

@@ -74,7 +74,7 @@ assert(Array.isArray(manifest.interface?.defaultPrompt) && manifest.interface.de
 assert(packageJson.version === "0.4.0", "release base version must be 0.4.0");
 const releaseTag = `v${packageJson.version}`;
 const releaseArtifact = `adaptive-model-router-${releaseTag}`;
-const releaseCandidateRef = "codex/windows-zero-approval-smoke";
+const releaseCandidateRef = "codex/windows-zero-approval-smoke-v2";
 for (const [name, document] of [
   ["release checklist", releaseChecklist],
   ["Windows smoke", windowsSmoke],
@@ -120,6 +120,7 @@ assert(windowsSmokeRunner.includes("[Parameter(Mandatory = $true)]"), "Windows s
 assert(windowsSmokeRunner.includes("validate-smoke-evidence.mjs"), "Windows smoke runner must validate its evidence");
 assert(windowsSmokeRunner.includes("candidate-automated-gate"), "Windows smoke runner must repeat the exact candidate automated gate");
 assert(windowsSmokeRunner.includes("Assert-InstalledCandidate"), "Windows smoke runner must verify the installed candidate revision");
+assert(windowsSmokeRunner.includes("Assert-InstalledPluginBytes"), "Windows smoke runner must compare installed Hook, Skill, MCP, manifest, runtime, and hook implementation bytes");
 assert(windowsSmokeRunner.includes("compare-gate-content.mjs"), "Windows smoke runner must compare gate content through the candidate comparator");
 assert(windowsSmokeRunner.includes("$InstalledRouterLauncher"), "Windows smoke runner must resolve router state through the installed runtime launcher");
 assert(windowsSmokeRunner.includes("@($InstalledRouterLauncher, $InstalledRouterCli"), "Windows smoke runner must read the installed plugin data instead of the legacy Codex Home state root");

@@ -2,7 +2,7 @@
 
 This is the blocking logged-in macOS gate for `v0.4.0`. Run it in Codex Desktop
 or CLI on native macOS against the frozen
-`codex/windows-zero-approval-smoke` ref.
+`codex/windows-zero-approval-smoke-v2` ref.
 Do not create or push the release tag from this smoke task.
 
 <!-- smoke-contract: post-trust-agent-owned-v1 selector-optional-v1 -->
@@ -35,7 +35,7 @@ Do not create or push the release tag from this smoke task.
 ## 1. Prepare a Unicode project and candidate checkout
 
 ```bash
-CandidateRef="codex/windows-zero-approval-smoke"
+CandidateRef="codex/windows-zero-approval-smoke-v2"
 SmokeRoot="$(mktemp -d)/Adaptive Router macOS 冒烟"
 Source="$SmokeRoot/source checkout"
 Project="$SmokeRoot/测试 project with spaces"
