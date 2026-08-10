@@ -149,9 +149,9 @@ function Resolve-ProcessCommand {
     # Do not launch npm/codex shims through a Store-installed pwsh.exe. Store
     # PowerShell prepends its WindowsApps package directory to PATH at startup,
     # undoing the managed PATH filter before Codex detects its default shell.
-    $selected = @($commands | Where-Object { $_.Extension -in @('.cmd', '.bat') } | Select-Object -First 1)
+    $selected = @($commands | Where-Object { $_.Extension -eq '.ps1' } | Select-Object -First 1)
     if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -eq '.exe' -and $_.Source -notmatch '(?i)[\\/]WindowsApps(?:[\\/]|$)' } | Select-Object -First 1) }
-    if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -eq '.ps1' } | Select-Object -First 1) }
+    if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -in @('.cmd', '.bat') } | Select-Object -First 1) }
     if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -notin @('.cmd', '.bat', '.exe', '.ps1', '') } | Select-Object -First 1) }
     if ($selected.Count -eq 0) {
         throw "no non-Store executable or script command was found for $Name"
