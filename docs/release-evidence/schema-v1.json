@@ -11,6 +11,7 @@
     "generatedAt",
     "candidate",
     "environment",
+    "permissions",
     "checks",
     "route",
     "diagnostics",
@@ -47,6 +48,30 @@
           ]
         },
         "gitVersion": { "type": "string", "minLength": 1, "maxLength": 120 }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "hostProfile",
+        "hostApprovalPolicy",
+        "managedApprovalPolicy",
+        "managedSandboxMode",
+        "approvalRequests",
+        "sandboxEscalations",
+        "permissionFailures"
+      ],
+      "properties": {
+        "contract": { "enum": ["zero-approval-v1", "unavailable"] },
+        "hostProfile": { "enum": ["danger-full-access", "unavailable"] },
+        "hostApprovalPolicy": { "enum": ["never", "unavailable"] },
+        "managedApprovalPolicy": { "enum": ["never", "unavailable"] },
+        "managedSandboxMode": { "enum": ["read-only", "unavailable"] },
+        "approvalRequests": { "type": "integer", "minimum": 0 },
+        "sandboxEscalations": { "type": "integer", "minimum": 0 },
+        "permissionFailures": { "type": "integer", "minimum": 0 }
       }
     },
     "checks": {

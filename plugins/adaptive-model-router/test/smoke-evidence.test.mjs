@@ -70,6 +70,16 @@ function validEvidence() {
       nodeVersion: "v24.18.0",
       gitVersion: "git version 2.45.1.windows.1",
     },
+    permissions: {
+      contract: "zero-approval-v1",
+      hostProfile: "danger-full-access",
+      hostApprovalPolicy: "never",
+      managedApprovalPolicy: "never",
+      managedSandboxMode: "read-only",
+      approvalRequests: 0,
+      sandboxEscalations: 0,
+      permissionFailures: 0,
+    },
     checks: requiredCheckIds.map((id) => ({ id, blocking: true, status: "PASS" })),
     route: {
       action: "delegate",
@@ -132,6 +142,28 @@ test("smoke evidence validator rejects path leaks and inconsistent PASS claims",
     const inconsistentResult = await runEvidence(project, inconsistent);
     assert.notEqual(inconsistentResult.result.status, 0);
     assert.match(inconsistentResult.result.stderr, /status disagrees/u);
+
+    for (const counter of ["approvalRequests", "sandboxEscalations", "permissionFailures"]) {
+      const permissionFailure = validEvidence();
+      permissionFailure.permissions[counter] = 1;
+      const permissionResult = await runEvidence(project, permissionFailure);
+      assert.notEqual(permissionResult.result.status, 0);
+      assert.match(permissionResult.result.stderr, /status disagrees.*permissions/u);
+    }
+
+    for (const [field, value] of [
+      ["contract", "unavailable"],
+      ["hostProfile", "unavailable"],
+      ["hostApprovalPolicy", "unavailable"],
+      ["managedApprovalPolicy", "unavailable"],
+      ["managedSandboxMode", "unavailable"],
+    ]) {
+      const invalidPermission = validEvidence();
+      invalidPermission.permissions[field] = value;
+      const permissionResult = await runEvidence(project, invalidPermission);
+      assert.notEqual(permissionResult.result.status, 0);
+      assert.match(permissionResult.result.stderr, /status disagrees.*permissions/u);
+    }
 
     const incomplete = validEvidence();
     incomplete.checks.pop();

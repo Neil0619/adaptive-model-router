@@ -11,11 +11,15 @@ const forbiddenKeys = new Set([
   "prompt", "source", "stdout", "stderr", "log", "logs", "sessionId", "contextId", "error", "errors",
 ]);
 const topLevelKeys = [
-  "schemaVersion", "gate", "status", "generatedAt", "candidate", "environment", "checks", "route", "diagnostics", "warnings",
+  "schemaVersion", "gate", "status", "generatedAt", "candidate", "environment", "permissions", "checks", "route", "diagnostics", "warnings",
 ];
 const nestedKeys = {
   candidate: ["ref", "commitSha", "pluginTreeSha256"],
   environment: ["platform", "surface", "osVersion", "codexVersion", "nodeVersion", "gitVersion"],
+  permissions: [
+    "contract", "hostProfile", "hostApprovalPolicy", "managedApprovalPolicy", "managedSandboxMode",
+    "approvalRequests", "sandboxEscalations", "permissionFailures",
+  ],
   check: ["id", "blocking", "status"],
   route: ["action", "targetFamily", "targetEffort", "verificationGate", "pendingOutcomes", "stopHookUnknown"],
   diagnostics: ["databaseHealth", "classifierState", "privacy"],
@@ -156,6 +160,15 @@ function validate(evidence, schema, options = {}) {
   if (evidence.environment.nodeVersion !== "unavailable" && !/^v[0-9]+\.[0-9]+\.[0-9]+/u.test(evidence.environment.nodeVersion)) {
     fail("environment.nodeVersion is invalid");
   }
+  exactKeys(evidence.permissions, nestedKeys.permissions, "permissions");
+  enumValue(evidence.permissions.contract, ["zero-approval-v1", "unavailable"], "permissions.contract");
+  enumValue(evidence.permissions.hostProfile, ["danger-full-access", "unavailable"], "permissions.hostProfile");
+  enumValue(evidence.permissions.hostApprovalPolicy, ["never", "unavailable"], "permissions.hostApprovalPolicy");
+  enumValue(evidence.permissions.managedApprovalPolicy, ["never", "unavailable"], "permissions.managedApprovalPolicy");
+  enumValue(evidence.permissions.managedSandboxMode, ["read-only", "unavailable"], "permissions.managedSandboxMode");
+  for (const key of ["approvalRequests", "sandboxEscalations", "permissionFailures"]) {
+    if (!Number.isInteger(evidence.permissions[key]) || evidence.permissions[key] < 0) fail(`permissions.${key} must be a non-negative integer`);
+  }
 
   if (!Array.isArray(evidence.checks) || evidence.checks.length === 0) fail("checks must not be empty");
   const ids = new Set();
@@ -193,8 +206,19 @@ function validate(evidence, schema, options = {}) {
   if (evidence.environment.platform !== expectedPlatform) fail("gate and environment.platform disagree");
 
   const blockingFailed = evidence.checks.some((check) => check.blocking && check.status !== "PASS");
+  const permissionsPass = evidence.gate !== "windows-native" || (
+    evidence.permissions.contract === "zero-approval-v1" &&
+    evidence.permissions.hostProfile === "danger-full-access" &&
+    evidence.permissions.hostApprovalPolicy === "never" &&
+    evidence.permissions.managedApprovalPolicy === "never" &&
+    evidence.permissions.managedSandboxMode === "read-only" &&
+    evidence.permissions.approvalRequests === 0 &&
+    evidence.permissions.sandboxEscalations === 0 &&
+    evidence.permissions.permissionFailures === 0
+  );
   const passInvariant =
     !blockingFailed &&
+    permissionsPass &&
     evidence.candidate.commitSha !== "0".repeat(40) &&
     evidence.candidate.pluginTreeSha256 !== "0".repeat(64) &&
     ![evidence.environment.osVersion, evidence.environment.codexVersion, evidence.environment.nodeVersion, evidence.environment.gitVersion].includes("unavailable") &&
@@ -208,13 +232,16 @@ function validate(evidence, schema, options = {}) {
     evidence.diagnostics.classifierState === "closed" &&
     evidence.diagnostics.privacy === "PASS" &&
     evidence.warnings.length === 0;
-  if ((evidence.status === "PASS") !== passInvariant) fail("status disagrees with blocking checks, privacy, or pending outcomes");
+  if ((evidence.status === "PASS") !== passInvariant) fail("status disagrees with blocking checks, permissions, privacy, or pending outcomes");
   walk(evidence);
   validateSafeText(JSON.stringify(evidence));
 }
 
 function markdown(evidence) {
   const checks = evidence.checks.map((check) => `| ${check.id} | ${check.blocking ? "yes" : "no"} | ${check.status} |`).join("\n");
+  const permissions = evidence.gate === "windows-native"
+    ? `Permissions: ${evidence.permissions.contract}; host ${evidence.permissions.hostProfile}/${evidence.permissions.hostApprovalPolicy}; managed ${evidence.permissions.managedApprovalPolicy}/${evidence.permissions.managedSandboxMode}; approval requests ${evidence.permissions.approvalRequests}; sandbox escalations ${evidence.permissions.sandboxEscalations}; permission failures ${evidence.permissions.permissionFailures}.  \n`
+    : "";
   return `# ${evidence.gate} smoke evidence\n\n` +
     `Status: **${evidence.status}**  \n` +
     `Generated: ${evidence.generatedAt}  \n` +
@@ -222,6 +249,7 @@ function markdown(evidence) {
     `Plugin tree SHA-256: \`${evidence.candidate.pluginTreeSha256}\`\n\n` +
     `| Check | Blocking | Status |\n|---|---:|---:|\n${checks}\n\n` +
     `Route: ${evidence.route.action}; target ${evidence.route.targetFamily}/${evidence.route.targetEffort}; gate ${evidence.route.verificationGate}.  \n` +
+    permissions +
     `Pending outcomes: ${evidence.route.pendingOutcomes}; Stop-auto-finalized unknown: ${evidence.route.stopHookUnknown}.  \n` +
     `Database: ${evidence.diagnostics.databaseHealth}; classifier: ${evidence.diagnostics.classifierState}; privacy: ${evidence.diagnostics.privacy}.\n`;
 }

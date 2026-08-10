@@ -35,14 +35,14 @@
   includes MCP children started by the persistent orchestrator. Keep the Codex
   Desktop and coordinator process alive, and never terminate unrelated Node or
   Codex processes.
-- When a logged-in smoke must use a disposable Codex CLI target, do not leave
-  it on the interactive `on-request` approval policy. Codex CLI 0.145.0 on
-  Windows and 0.146.0-alpha.9.2 on macOS cancel approval-gated router MCP calls
-  under a never-approve policy; per-tool approval overrides are not reliable on
-  those hosts. Run only that disposable smoke
-  process with `--dangerously-bypass-approvals-and-sandbox`, keep it scoped to
-  the temporary smoke project, and never combine it with
-  `--dangerously-bypass-hook-trust` or a persistent configuration edit.
+- Native Windows smoke uses the `zero-approval-v1` contract. Start the
+  persistent coordinator and disposable target with the host's
+  `danger-full-access` permission profile, never request a sandbox escalation,
+  and make every managed `codex exec` turn explicit with approval policy
+  `never` and sandbox mode `read-only`. The runner must fail closed if
+  the host profile differs, an approval request appears, or a permission failure
+  is observed. Never use either dangerous bypass flag; those flags erase the
+  boundary the smoke is intended to verify.
 - Hook trust remains an explicit host security boundary. Ask for that one-time
   approval only when the current Hook hash is not already trusted; after trust,
   the smoke must run unattended through model restoration and the final report.

@@ -16,6 +16,16 @@
     "nodeVersion": "unavailable",
     "gitVersion": "unavailable"
   },
+  "permissions": {
+    "contract": "unavailable",
+    "hostProfile": "unavailable",
+    "hostApprovalPolicy": "unavailable",
+    "managedApprovalPolicy": "unavailable",
+    "managedSandboxMode": "unavailable",
+    "approvalRequests": 0,
+    "sandboxEscalations": 0,
+    "permissionFailures": 0
+  },
   "checks": [
     { "id": "native-preflight", "blocking": true, "status": "SKIP" },
     { "id": "candidate-frozen", "blocking": true, "status": "SKIP" },

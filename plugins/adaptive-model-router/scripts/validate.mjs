@@ -102,6 +102,10 @@ checkObjectSchemas(smokeEvidenceSchema, "smokeEvidence");
 assert(smokeEvidenceSchema.properties?.schemaVersion?.const === 1, "smoke evidence schema version must be 1");
 assert(smokeEvidenceSchema.properties?.gate?.enum?.includes("macos-native"), "smoke evidence schema must support the blocking macOS gate");
 assert(smokeEvidenceSchema.properties?.route?.properties?.verificationGate?.enum?.includes("structured-check"), "smoke evidence schema must preserve structured review gates");
+assert(smokeEvidenceSchema.properties?.permissions?.properties?.contract?.enum?.includes("zero-approval-v1"), "smoke evidence schema must expose the Windows zero-approval contract");
+for (const counter of ["approvalRequests", "sandboxEscalations", "permissionFailures"]) {
+  assert(smokeEvidenceSchema.properties?.permissions?.properties?.[counter]?.minimum === 0, `smoke evidence schema must constrain ${counter}`);
+}
 assert(macosEvidenceTemplate.gate === "macos-native" && macosEvidenceTemplate.status === "FAIL", "macOS evidence template must fail closed");
 assert(macosEvidenceTemplate.checks?.length === 16, "macOS evidence template must contain all canonical checks");
 assert(
@@ -120,9 +124,14 @@ assert(windowsSmokeRunner.includes("compare-gate-content.mjs"), "Windows smoke r
 assert(windowsSmokeRunner.includes("$InstalledRouterLauncher"), "Windows smoke runner must resolve router state through the installed runtime launcher");
 assert(windowsSmokeRunner.includes("@($InstalledRouterLauncher, $InstalledRouterCli"), "Windows smoke runner must read the installed plugin data instead of the legacy Codex Home state root");
 assert(windowsSmokeRunner.includes("Write-SmokeFixture -Root $Project"), "Windows smoke runner must seed its deterministic fixture outside the managed read-only Codex session");
-assert(windowsSmokeRunner.includes("@('exec', '-s', 'read-only', 'resume'"), "Windows smoke runner must keep resumed turns in the managed read-only sandbox");
-assert(windowsSmokeRunner.includes("@('exec', '-s', 'read-only', '--json'"), "Windows smoke runner must start new turns in the managed read-only sandbox");
-assert(windowsSmokeRunner.includes("@('exec', '-s', 'read-only', '--json', '-C', $Project2"), "Windows smoke runner must keep the cross-project status probe read-only");
+assert(windowsSmokeRunner.includes("@('exec', '-a', 'never', '-s', 'read-only', 'resume'"), "Windows smoke runner must keep resumed turns zero-approval and read-only");
+assert(windowsSmokeRunner.includes("@('exec', '-a', 'never', '-s', 'read-only', '--json'"), "Windows smoke runner must start new turns zero-approval and read-only");
+assert(windowsSmokeRunner.includes("@('exec', '-a', 'never', '-s', 'read-only', '--json', '-C', $Project2"), "Windows smoke runner must keep the cross-project status probe zero-approval and read-only");
+assert(windowsSmokeRunner.includes("ADAPTIVE_ROUTER_SMOKE_ROOT"), "Windows smoke runner must use one controlled smoke root");
+assert(!windowsSmokeRunner.includes("GetTempPath"), "Windows smoke runner must not allocate an undeclared TEMP root");
+assert(windowsSmokeRunner.includes("CODEX_PERMISSION_PROFILE"), "Windows smoke runner must require the host permission profile attestation");
+assert(windowsSmokeRunner.includes("ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY"), "Windows smoke runner must require the host approval-policy attestation");
+assert(windowsSmokeRunner.includes("Register-CodexPermissionTelemetry"), "Windows smoke runner must collect permission telemetry");
 assert(windowsSmokeRunner.includes("the native runner performs the executable test immediately after this read-only review"), "Windows smoke runner must separate model review from host-side executable verification");
 assert(windowsSmokeRunner.includes("phase=review and evidence review=true"), "Windows smoke runner must route the managed task as a structured review");
 assert(windowsSmokeRunner.includes("read-only review did not preserve the structured-check contract"), "Windows smoke runner must bind the review outcome to the structured-check gate");
@@ -136,12 +145,12 @@ assert(windowsSmokeRunner.includes("managed review lifecycle order is not route,
 assert(windowsSmokeRunner.includes("fixture changed during managed read-only review"), "Windows smoke runner must prove the deterministic fixture was not mutated by managed review");
 assert(windowsSmokeRunner.includes("fixture changed during native executable verification"), "Windows smoke runner must prove the deterministic fixture was not mutated by native tests");
 assert(smokeEvidenceValidator.includes('"structured-check"'), "smoke evidence validator must preserve structured review gates");
-assert(windowsSmoke.includes("smoke-contract: post-trust-automatic-v1 selector-optional-v1"), "Windows smoke must declare the post-trust automation contract");
+assert(windowsSmoke.includes("smoke-contract: post-trust-automatic-v1 zero-approval-v1 selector-optional-v1"), "Windows smoke must declare the post-trust zero-approval contract");
 assert(!windowsSmoke.includes("blocking manual Windows gate"), "Windows smoke must not describe the canonical gate as manual");
 assert(!windowsSmoke.includes("The human operator must"), "Windows smoke must not delegate automated prompts or model changes to the operator");
 assert(!windowsSmoke.includes("completed manual report"), "Windows smoke must not require a second manual functional report");
-assert(releaseChecklist.includes("smoke-contract: windows-artifact-authoritative-v1 selector-optional-v1"), "release checklist must make Windows evidence authoritative and selector checks optional");
-assert(smokeEvidenceReadme.includes("smoke-contract: hook-trust-only-human-v1 selector-optional-v1"), "evidence contract must isolate Hook trust from optional selector evidence");
+assert(releaseChecklist.includes("smoke-contract: windows-artifact-authoritative-v1 zero-approval-v1 selector-optional-v1"), "release checklist must make zero-approval Windows evidence authoritative and selector checks optional");
+assert(smokeEvidenceReadme.includes("smoke-contract: hook-trust-only-human-v1 zero-approval-v1 selector-optional-v1"), "evidence contract must isolate Hook trust from the zero-approval runtime and optional selector evidence");
 assert(macosSmoke.includes("smoke-contract: post-trust-agent-owned-v1 selector-optional-v1"), "macOS smoke must use the same post-trust and selector semantics");
 assert(!macosSmoke.includes("human-only witness report"), "macOS smoke must not require a human selector report");
 assert(windowsSmokeRunner.includes("-Model 'gpt-5.6-terra' -ResumeSession"), "Windows smoke runner must automate a distinct host-model slug");

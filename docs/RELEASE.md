@@ -86,14 +86,22 @@ npm run eval
 
 On native Windows, run the canonical orchestrator only after trusting the
 current candidate's three hooks in a dedicated, disposable Codex Home. The
-runner refuses the operator's default Codex Home:
+`zero-approval-v1` host task must use approval policy `never` and the
+`danger-full-access` permission profile; every managed CLI turn remains
+`-a never -s read-only`. The runner refuses the operator's default Codex Home,
+TEMP defaults, broad roots, and any Home or evidence path outside the marked
+workspace:
 
 ```powershell
-$SmokeCodexHome = 'D:\codex-smoke-home'
-New-Item -ItemType Directory -Force -Path $SmokeCodexHome | Out-Null
+$SmokeRoot = 'D:\adaptive-router-smoke'
+$SmokeCodexHome = Join-Path $SmokeRoot '.codex-home'
+New-Item -ItemType Directory -Force -Path $SmokeRoot, $SmokeCodexHome | Out-Null
+Set-Content -LiteralPath (Join-Path $SmokeRoot '.adaptive-router-smoke-root') -Value 'adaptive-model-router smoke root v1' -NoNewline
 Set-Content -LiteralPath (Join-Path $SmokeCodexHome '.adaptive-router-smoke-home') -Value 'adaptive-model-router smoke home v1' -NoNewline
 $env:CODEX_HOME = $SmokeCodexHome
+$env:ADAPTIVE_ROUTER_SMOKE_ROOT = $SmokeRoot
 $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
+$env:ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY = 'never'
 .\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-smoke'
 ```
 
@@ -104,11 +112,14 @@ and restores the full functional lifecycle inside its disposable session.
 Validate and retain `docs/release-evidence/v0.4.0/windows.json`, its generated
 Markdown view, and its `.sha256` sidecar. The JSON must match schema v1, the
 frozen ref and commit, contain no raw operational data, and report `PASS` only
-when every blocking check passes, privacy passes, and pending outcomes are zero.
+when every blocking check passes, privacy passes, pending outcomes are zero,
+and `approvalRequests`, `sandboxEscalations`, and `permissionFailures` are all
+zero. The permissions object must bind the host profile/policy and managed
+policy/sandbox; an unavailable host attestation is a tooling FAIL.
 Record that the current Hook definitions were reviewed and trusted before the
 run. The validated Windows artifact is the blocking functional source of truth;
 visible selector/status-line observations are optional, non-blocking UX notes.
-<!-- smoke-contract: windows-artifact-authoritative-v1 selector-optional-v1 -->
+<!-- smoke-contract: windows-artifact-authoritative-v1 zero-approval-v1 selector-optional-v1 -->
 
 On native macOS, retain `docs/release-evidence/v0.4.0/macos.json`, its generated
 Markdown view and `.sha256` sidecar. It must be produced from the fail-closed

@@ -4,7 +4,11 @@ param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._/-]*$')]
     [string]$CandidateRef,
 
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\docs\release-evidence\v0.4.0')
+    [string]$OutputDirectory,
+
+    [string]$SmokeWorkspaceRoot = [string]$env:ADAPTIVE_ROUTER_SMOKE_ROOT,
+
+    [switch]$ValidateZeroApprovalContract
 )
 
 Set-StrictMode -Version Latest
@@ -12,12 +16,12 @@ $ErrorActionPreference = 'Stop'
 
 $Repository = 'https://github.com/Neil0619/adaptive-model-router.git'
 $SmokeId = [guid]::NewGuid().ToString('N')
-$SmokeRoot = Join-Path ([IO.Path]::GetTempPath()) ('adaptive-router-windows-smoke-' + $SmokeId)
-$Source = Join-Path $SmokeRoot 'source checkout 空格'
-$Project = Join-Path $SmokeRoot '测试 project with spaces'
-$Project2 = Join-Path $SmokeRoot '第二个 project'
-$HookProject = Join-Path $SmokeRoot 'hook verification project'
-$RawRoot = Join-Path $SmokeRoot 'private raw events'
+$SmokeRoot = $null
+$Source = $null
+$Project = $null
+$Project2 = $null
+$HookProject = $null
+$RawRoot = $null
 $CommandShimPath = Join-Path $PSScriptRoot 'invoke-command-shim.ps1'
 $DedicatedCodexHome = [string]$env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME
 $OriginalCodexHome = [string]$env:CODEX_HOME
@@ -67,6 +71,43 @@ $EnvironmentEvidence = [ordered]@{
     codexVersion = 'unavailable'
     nodeVersion = 'unavailable'
     gitVersion = 'unavailable'
+}
+$PermissionEvidence = [ordered]@{
+    contract = 'zero-approval-v1'
+    hostProfile = 'unavailable'
+    hostApprovalPolicy = 'unavailable'
+    managedApprovalPolicy = 'never'
+    managedSandboxMode = 'read-only'
+    approvalRequests = 0
+    sandboxEscalations = 0
+    permissionFailures = 0
+}
+
+function Register-CodexPermissionTelemetry {
+    param(
+        [AllowNull()][object[]]$Events,
+        [AllowNull()][string]$Text
+    )
+    foreach ($event in @($Events)) {
+        $eventType = if ($null -ne $event -and $event.PSObject.Properties.Name -contains 'type') { [string]$event.type } else { '' }
+        $itemType = if ($null -ne $event -and $event.PSObject.Properties.Name -contains 'item' -and $null -ne $event.item -and $event.item.PSObject.Properties.Name -contains 'type') { [string]$event.item.type } else { '' }
+        if ($eventType -match '(?i)(?:approval.*request|request.*approval)' -or $itemType -match '(?i)(?:approval.*request|request.*approval)') {
+            $PermissionEvidence.approvalRequests = [int]$PermissionEvidence.approvalRequests + 1
+            $PermissionEvidence.sandboxEscalations = [int]$PermissionEvidence.sandboxEscalations + 1
+        }
+        elseif ($eventType -match '(?i)(?:sandbox.*escalat|escalat.*sandbox)' -or $itemType -match '(?i)(?:sandbox.*escalat|escalat.*sandbox)') {
+            $PermissionEvidence.sandboxEscalations = [int]$PermissionEvidence.sandboxEscalations + 1
+        }
+        if ($eventType -in @('error', 'turn.failed')) {
+            $eventText = $event | ConvertTo-Json -Depth 30 -Compress
+            if ($eventText -match '(?i)(?:CreateProcessAsUserW failed|windows sandbox: runner failed|access is denied|permission denied|拒绝访问)') {
+                $PermissionEvidence.permissionFailures = [int]$PermissionEvidence.permissionFailures + 1
+            }
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Text) -and $Text -match '(?i)(?:CreateProcessAsUserW failed|windows sandbox: runner failed|access is denied|permission denied|拒绝访问)') {
+        $PermissionEvidence.permissionFailures = [int]$PermissionEvidence.permissionFailures + 1
+    }
 }
 
 function Add-SmokeCheck {
@@ -134,13 +175,20 @@ function Invoke-Process {
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
     try {
-        if (-not $process.Start()) { throw "unable to start process" }
+        try {
+            if (-not $process.Start()) { throw "unable to start process" }
+        }
+        catch {
+            Register-CodexPermissionTelemetry -Text $_.Exception.Message
+            throw
+        }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
         $process.WaitForExit()
         $stdout = $stdoutTask.GetAwaiter().GetResult()
         $stderr = $stderrTask.GetAwaiter().GetResult()
         if ($process.ExitCode -ne 0 -and -not $AllowFailure) {
+            Register-CodexPermissionTelemetry -Text $stderr
             throw "process failed with exit code $($process.ExitCode)"
         }
         return [pscustomobject]@{ ExitCode = $process.ExitCode; Stdout = $stdout; Stderr = $stderr }
@@ -159,10 +207,10 @@ function Invoke-CodexTurn {
     )
     $lastMessage = Join-Path $RawRoot (([guid]::NewGuid().ToString('N')) + '.last.txt')
     if ($ResumeSession) {
-        $arguments = @('exec', '-s', 'read-only', 'resume', '--json', '-o', $lastMessage, '-m', $Model, $ResumeSession, $Prompt)
+        $arguments = @('exec', '-a', 'never', '-s', 'read-only', 'resume', '--json', '-o', $lastMessage, '-m', $Model, $ResumeSession, $Prompt)
     }
     else {
-        $arguments = @('exec', '-s', 'read-only', '--json', '-o', $lastMessage, '-C', $WorkingProject, '-m', $Model, $Prompt)
+        $arguments = @('exec', '-a', 'never', '-s', 'read-only', '--json', '-o', $lastMessage, '-C', $WorkingProject, '-m', $Model, $Prompt)
     }
     $result = Invoke-Process -FilePath 'codex' -ArgumentList $arguments -WorkingDirectory $WorkingProject
     $events = [Collections.Generic.List[object]]::new()
@@ -170,6 +218,7 @@ function Invoke-CodexTurn {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         try { $events.Add(($line | ConvertFrom-Json -Depth 30)) } catch { throw 'Codex emitted a non-JSON event in --json mode' }
     }
+    Register-CodexPermissionTelemetry -Events @($events)
     $thread = @($events | Where-Object { $_.type -eq 'thread.started' } | Select-Object -Last 1)
     $resolvedSession = if ($ResumeSession) { $ResumeSession } elseif ($thread.Count -eq 1) { [string]$thread[0].thread_id } else { $null }
     if ([string]::IsNullOrWhiteSpace($resolvedSession)) { throw 'Codex did not emit thread.started' }
@@ -431,16 +480,67 @@ function Assert-StructuredReviewSummary {
     }
 }
 
-New-Item -ItemType Directory -Force -Path $SmokeRoot, $Project, $Project2, $HookProject, $RawRoot | Out-Null
 $failed = $false
 try {
     if (-not $IsWindows -or $PSVersionTable.PSEdition -ne 'Core') { throw 'native Windows PowerShell 7 is required' }
-    $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem
-    if ([Environment]::OSVersion.Version.Build -lt 22000 -or [int]$operatingSystem.ProductType -ne 1) { throw 'native Windows 11 workstation is required' }
+    if (-not $ValidateZeroApprovalContract) {
+        $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem
+        if ([Environment]::OSVersion.Version.Build -lt 22000 -or [int]$operatingSystem.ProductType -ne 1) { throw 'native Windows 11 workstation is required' }
+    }
+    if ([string]::IsNullOrWhiteSpace($SmokeWorkspaceRoot) -or -not [IO.Path]::IsPathFullyQualified($SmokeWorkspaceRoot)) {
+        throw 'ADAPTIVE_ROUTER_SMOKE_ROOT must name a controlled absolute workspace root'
+    }
+    $SmokeWorkspaceRoot = [IO.Path]::GetFullPath($SmokeWorkspaceRoot)
+    if (-not (Test-Path -LiteralPath $SmokeWorkspaceRoot -PathType Container)) {
+        throw 'the controlled smoke workspace root does not exist'
+    }
+    $workspaceMarker = Join-Path $SmokeWorkspaceRoot '.adaptive-router-smoke-root'
+    if (-not (Test-Path -LiteralPath $workspaceMarker -PathType Leaf) -or (Get-Content -LiteralPath $workspaceMarker -Raw).Trim() -ne 'adaptive-model-router smoke root v1') {
+        throw 'the controlled smoke workspace root is missing its explicit marker'
+    }
+    $unsafeWorkspaceRoots = @(
+        [IO.Path]::GetPathRoot($SmokeWorkspaceRoot),
+        [Environment]::GetFolderPath('UserProfile'),
+        [Environment]::GetFolderPath('Windows'),
+        [Environment]::GetFolderPath('ProgramFiles'),
+        [Environment]::GetFolderPath('CommonApplicationData')
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [IO.Path]::GetFullPath([string]$_) }
+    if (@($unsafeWorkspaceRoots | Where-Object { $SmokeWorkspaceRoot.Equals($_, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) {
+        throw 'the controlled smoke workspace root resolves to a broad system or user directory'
+    }
+    $SmokeRoot = Join-Path $SmokeWorkspaceRoot ('run-' + $SmokeId)
+    $Source = Join-Path $SmokeRoot 'source checkout 空格'
+    $Project = Join-Path $SmokeRoot '测试 project with spaces'
+    $Project2 = Join-Path $SmokeRoot '第二个 project'
+    $HookProject = Join-Path $SmokeRoot 'hook verification project'
+    $RawRoot = Join-Path $SmokeRoot 'private raw events'
+    if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+        $OutputDirectory = Join-Path $SmokeWorkspaceRoot 'evidence\v0.4.0'
+    }
+    $resolvedOutputCandidate = [IO.Path]::GetFullPath($OutputDirectory)
+    $workspacePrefix = $SmokeWorkspaceRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    if (-not $resolvedOutputCandidate.StartsWith($workspacePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        $OutputDirectory = $null
+        throw 'smoke evidence output must be contained by ADAPTIVE_ROUTER_SMOKE_ROOT'
+    }
+    $OutputDirectory = $resolvedOutputCandidate
+    $hostPermissionProfile = ([string]$env:CODEX_PERMISSION_PROFILE).Trim().TrimStart(':')
+    if ($hostPermissionProfile -ne 'danger-full-access') {
+        throw 'host permission profile must be danger-full-access for zero-approval-v1'
+    }
+    $PermissionEvidence.hostProfile = $hostPermissionProfile
+    $hostApprovalPolicy = ([string]$env:ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY).Trim()
+    if ($hostApprovalPolicy -ne 'never') {
+        throw 'host approval policy attestation must be never for zero-approval-v1'
+    }
+    $PermissionEvidence.hostApprovalPolicy = $hostApprovalPolicy
     if ([string]::IsNullOrWhiteSpace($DedicatedCodexHome) -or -not [IO.Path]::IsPathFullyQualified($DedicatedCodexHome)) {
         throw 'ADAPTIVE_ROUTER_SMOKE_CODEX_HOME must name a dedicated absolute Codex Home'
     }
     $DedicatedCodexHome = [IO.Path]::GetFullPath($DedicatedCodexHome)
+    if (-not $DedicatedCodexHome.StartsWith($workspacePrefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'the dedicated Codex Home must be contained by ADAPTIVE_ROUTER_SMOKE_ROOT'
+    }
     $defaultCodexHome = [IO.Path]::GetFullPath((Join-Path ([Environment]::GetFolderPath('UserProfile')) '.codex'))
     if ($DedicatedCodexHome.Equals($defaultCodexHome, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'the smoke runner refuses to mutate the default Codex Home'
@@ -461,6 +561,11 @@ try {
     $homeMarker = Join-Path $DedicatedCodexHome '.adaptive-router-smoke-home'
     if (-not (Test-Path -LiteralPath $homeMarker -PathType Leaf) -or (Get-Content -LiteralPath $homeMarker -Raw).Trim() -ne 'adaptive-model-router smoke home v1') {
         throw 'the dedicated Codex Home is missing its explicit smoke-home marker'
+    }
+    New-Item -ItemType Directory -Force -Path $SmokeRoot, $Project, $Project2, $HookProject, $RawRoot | Out-Null
+    if ($ValidateZeroApprovalContract) {
+        Write-Output 'Windows zero-approval-v1 preflight passed.'
+        return
     }
     $env:CODEX_HOME = $DedicatedCodexHome
     $node = Invoke-Process -FilePath 'node' -ArgumentList @('--version')
@@ -707,8 +812,10 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     Assert-InstalledCandidate -ExpectedRef $CandidateRef -ExpectedCommit $CandidateCommit
     Add-SmokeCheck -Id 'native-and-wrapper-lifecycle' -Blocking $true -Status 'PASS'
 
-    $second = Invoke-Process -FilePath 'codex' -ArgumentList @('exec', '-s', 'read-only', '--json', '-C', $Project2, '-m', 'gpt-5.6-sol', 'router: status') -WorkingDirectory $Project2
-    $secondEvent = @($second.Stdout -split "`r?`n" | ForEach-Object { if ($_){ try { $_ | ConvertFrom-Json -Depth 20 } catch {} } } | Where-Object { $_.type -eq 'thread.started' } | Select-Object -Last 1)
+    $second = Invoke-Process -FilePath 'codex' -ArgumentList @('exec', '-a', 'never', '-s', 'read-only', '--json', '-C', $Project2, '-m', 'gpt-5.6-sol', 'router: status') -WorkingDirectory $Project2
+    $secondEvents = @($second.Stdout -split "`r?`n" | ForEach-Object { if ($_){ try { $_ | ConvertFrom-Json -Depth 20 } catch {} } })
+    Register-CodexPermissionTelemetry -Events $secondEvents
+    $secondEvent = @($secondEvents | Where-Object { $_.type -eq 'thread.started' } | Select-Object -Last 1)
     if ($secondEvent.Count -ne 1) { throw 'second project did not start a Codex session' }
     $secondStatus = Read-RouterState -Command 'status' -Context ([string]$secondEvent[0].thread_id) -WorkingProject $Project2
     if (-not $secondStatus.autoActivation.globalEnabled -or $secondStatus.taskMode -ne 'automatic') { throw 'global activation did not persist into a second project' }
@@ -761,10 +868,12 @@ catch {
 finally {
     if ([string]::IsNullOrWhiteSpace($OriginalCodexHome)) { Remove-Item Env:\CODEX_HOME -ErrorAction SilentlyContinue }
     else { $env:CODEX_HOME = $OriginalCodexHome }
-    $resolvedSmoke = [IO.Path]::GetFullPath($SmokeRoot)
-    $resolvedTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-    if ($resolvedSmoke.StartsWith($resolvedTemp, [StringComparison]::OrdinalIgnoreCase) -and (Split-Path -Leaf $resolvedSmoke).StartsWith('adaptive-router-windows-smoke-')) {
-        Remove-Item -LiteralPath $resolvedSmoke -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not [string]::IsNullOrWhiteSpace($SmokeRoot) -and -not [string]::IsNullOrWhiteSpace($SmokeWorkspaceRoot)) {
+        $resolvedSmoke = [IO.Path]::GetFullPath($SmokeRoot)
+        $resolvedWorkspace = [IO.Path]::GetFullPath($SmokeWorkspaceRoot).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if ($resolvedSmoke.StartsWith($resolvedWorkspace, [StringComparison]::OrdinalIgnoreCase) -and (Split-Path -Leaf $resolvedSmoke).StartsWith('run-')) {
+            Remove-Item -LiteralPath $resolvedSmoke -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -785,6 +894,13 @@ $evidenceStatus = if (
     $DiagnosticEvidence.databaseHealth -eq 'ok' -and
     $DiagnosticEvidence.classifierState -eq 'closed' -and
     $DiagnosticEvidence.privacy -eq 'PASS' -and
+    $PermissionEvidence.hostProfile -eq 'danger-full-access' -and
+    $PermissionEvidence.hostApprovalPolicy -eq 'never' -and
+    $PermissionEvidence.managedApprovalPolicy -eq 'never' -and
+    $PermissionEvidence.managedSandboxMode -eq 'read-only' -and
+    $PermissionEvidence.approvalRequests -eq 0 -and
+    $PermissionEvidence.sandboxEscalations -eq 0 -and
+    $PermissionEvidence.permissionFailures -eq 0 -and
     $Warnings.Count -eq 0
 ) { 'PASS' } else { 'FAIL' }
 $evidence = [ordered]@{
@@ -794,12 +910,14 @@ $evidence = [ordered]@{
     generatedAt = [DateTimeOffset]::UtcNow.ToString('o')
     candidate = [ordered]@{ ref = $CandidateRef; commitSha = $CandidateCommit; pluginTreeSha256 = $PluginTreeSha256 }
     environment = $EnvironmentEvidence
+    permissions = $PermissionEvidence
     checks = @($Checks)
     route = $RouteEvidence
     diagnostics = $DiagnosticEvidence
     warnings = @($Warnings)
 }
 
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { throw 'smoke preflight failed before a safe evidence output was established' }
 $resolvedOutput = [IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Force -Path $resolvedOutput | Out-Null
 $evidencePath = Join-Path $resolvedOutput 'windows.json'

@@ -4,7 +4,7 @@ This is the blocking automated Windows gate for `v0.4.0`. Run it in native
 Windows 11 with PowerShell, not inside WSL2. WSL2 is a separate non-blocking
 smoke target.
 
-<!-- smoke-contract: post-trust-automatic-v1 selector-optional-v1 -->
+<!-- smoke-contract: post-trust-automatic-v1 zero-approval-v1 selector-optional-v1 -->
 
 The operator may give this entire document to Codex on the Windows machine.
 Do not create or push the release tag from the smoke task.
@@ -16,11 +16,12 @@ The canonical automated entry point is
 .\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-smoke'
 ```
 
-It accepts only the frozen candidate ref and an optional evidence output
-directory. It uses native `codex exec --json`/`resume` turns, never bypasses
-Hook trust, independently reads router status/history/diagnostics, exercises
-the lifecycle in this runbook, and emits a strict redacted JSON artifact plus
-derived Markdown and SHA-256 files under `docs/release-evidence/v0.4.0/`.
+It accepts the frozen candidate ref plus one controlled smoke root. It uses
+native `codex exec -a never -s read-only --json`/`resume` turns, never bypasses
+approvals, sandboxing, or Hook trust, independently reads router
+status/history/diagnostics, exercises the lifecycle in this runbook, and emits
+a strict redacted JSON artifact plus derived Markdown and SHA-256 files below
+the controlled root.
 Its candidate gate normalizes only CRLF/CR versus LF when comparing tracked
 text files, so ordinary Windows checkout conversion is accepted while every
 other byte change remains blocking.
@@ -31,24 +32,36 @@ Hook trust is the only required interactive action. After trust, the canonical
 runner owns every prompt, control message, model-slug transition, verification,
 and final restoration; it must not ask the operator to repeat sections 5 or 6.
 
-The runner refuses to use the default Codex Home. Prepare a disposable Windows
-test account or dedicated Codex Home, add the explicit smoke marker, log in
-there, install the exact candidate once, and trust its three Hook hashes. Then
-expose only that directory to the runner:
+The `zero-approval-v1` contract separates the host task from managed CLI turns.
+Create the coordinator and target with host approval policy `never` and the
+`danger-full-access` permission profile. The host must expose that profile as
+`CODEX_PERMISSION_PROFILE`; after reading the task metadata, the coordinator
+attests the matching approval policy through
+`ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY=never`. Do not synthesize either
+value when the host metadata is unavailable: fail preflight instead.
+
+The runner refuses the default Codex Home, TEMP defaults, broad roots, and paths
+outside one marked workspace. Prepare the workspace and dedicated Home, log in
+there, install the exact candidate once, and trust its three Hook hashes:
 
 ```powershell
-$SmokeCodexHome = 'D:\codex-smoke-home'
-New-Item -ItemType Directory -Force -Path $SmokeCodexHome | Out-Null
+$SmokeRoot = 'D:\adaptive-router-smoke'
+$SmokeCodexHome = Join-Path $SmokeRoot '.codex-home'
+New-Item -ItemType Directory -Force -Path $SmokeRoot, $SmokeCodexHome | Out-Null
+Set-Content -LiteralPath (Join-Path $SmokeRoot '.adaptive-router-smoke-root') -Value 'adaptive-model-router smoke root v1' -NoNewline
 Set-Content -LiteralPath (Join-Path $SmokeCodexHome '.adaptive-router-smoke-home') -Value 'adaptive-model-router smoke home v1' -NoNewline
 $env:CODEX_HOME = $SmokeCodexHome
+$env:ADAPTIVE_ROUTER_SMOKE_ROOT = $SmokeRoot
 $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
+$env:ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY = 'never'
 .\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-smoke'
 ```
 
-All plugin, marketplace, AGENTS marker, global-routing, session, and learning
-mutations are confined to this dedicated home. Delete it after retaining the
-validated evidence. The runner intentionally will not copy authentication or
-trust state out of the operator's normal Codex Home.
+All cloned source, projects, raw events, evidence, plugin, marketplace, AGENTS
+marker, session, and learning state is confined to the marked workspace. Delete
+it only after copying the validated evidence into
+`docs/release-evidence/v0.4.0/`. The runner intentionally will not copy
+authentication or trust state out of the operator's normal Codex Home.
 It also rejects filesystem roots and broad system/user directories even when a
 marker is present. The marker explicitly declares that the directory may be
 mutated by install, upgrade, uninstall, AGENTS, session, and learning tests.
@@ -72,6 +85,9 @@ The smoke passes only when all of the following succeed:
   `npm run eval`, and the installed marketplace metadata or Git checkout
   identity equals the reviewed repository, ref, and cloned 40-character commit
   SHA before and after lifecycle testing;
+- `zero-approval-v1`: host profile `danger-full-access`, host and managed
+  approval policy `never`, managed sandbox `read-only`, and exact
+  `approvalRequests=0`, `sandboxEscalations=0`, `permissionFailures=0` evidence;
 - review and trust of all three plugin-bundled command hooks;
 - one persisted global automatic-routing opt-in and an ordinary substantive
   task that does not name the skill or repeat a trigger phrase;
@@ -105,6 +121,10 @@ The smoke passes only when all of the following succeed:
 - A logged-in current Codex Desktop or CLI session.
 - A dedicated, disposable Codex Home named by
   `ADAPTIVE_ROUTER_SMOKE_CODEX_HOME`; the default `~/.codex` is rejected.
+- A marked controlled root named by `ADAPTIVE_ROUTER_SMOKE_ROOT`, containing
+  that Home and the evidence output.
+- Host task metadata showing permission profile `danger-full-access` and
+  approval policy `never`; missing metadata is a preflight failure.
 - Git.
 - Node.js 24.15.0 or newer.
 - PowerShell as the agent/terminal environment.
@@ -114,6 +134,8 @@ Record the environment evidence:
 ```powershell
 $DedicatedCodexHome = [IO.Path]::GetFullPath($env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME)
 $env:CODEX_HOME = $DedicatedCodexHome
+$env:CODEX_PERMISSION_PROFILE
+$env:ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY
 [System.Environment]::OSVersion.VersionString
 node --version
 git --version
@@ -126,11 +148,11 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 
 ```powershell
 $CandidateRef = "codex/windows-smoke"
-$SmokeRoot = Join-Path $env:TEMP ("Adaptive Router Windows 冒烟 " + (Get-Date -Format "yyyyMMdd-HHmmss"))
-$Source = Join-Path $SmokeRoot "source checkout"
-$Project = Join-Path $SmokeRoot "测试 project with spaces"
+$RunRoot = Join-Path $env:ADAPTIVE_ROUTER_SMOKE_ROOT ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+$Source = Join-Path $RunRoot "source checkout"
+$Project = Join-Path $RunRoot "测试 project with spaces"
 
-New-Item -ItemType Directory -Force -Path $SmokeRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $RunRoot | Out-Null
 git clone --branch $CandidateRef --single-branch https://github.com/Neil0619/adaptive-model-router.git $Source
 $CandidateCommit = (git -C $Source rev-parse HEAD).Trim()
 New-Item -ItemType Directory -Force -Path $Project | Out-Null
@@ -403,9 +425,11 @@ isolation of task-specific manual state.
 Retain the generated `windows.json`, `windows.md`, and
 `windows.json.sha256` files. The validated JSON artifact is the sole
 functional source of truth for sections 5–9. It binds the frozen candidate,
-environment, all 16 blocking checks, route/target/gate summary, settled outcome
-counts, diagnostics, and privacy result. No separate operator-completed report
-or model-selector transcript is required.
+environment, the `zero-approval-v1` permissions object, all 16 blocking checks,
+route/target/gate summary, settled outcome counts, diagnostics, and privacy
+result. A Windows PASS requires `approvalRequests`, `sandboxEscalations`, and
+`permissionFailures` all to be zero. No separate operator-completed report or
+model-selector transcript is required.
 
 Record that the three current Hook definitions were reviewed and trusted before
 the run. An optional visual UX note may state whether the Desktop selector or
@@ -420,7 +444,9 @@ into a suggestion or no real SubagentStart occurs without an actual host-tool
 rejection, the host cannot use the returned model/effort, a hook cannot be
 trusted, a model-change request delegates while pending/manual, an outcome
 remains pending, diagnostics leak sensitive content or an absolute project
-path, or installation is not idempotent.
+path, installation is not idempotent, the host policy/profile attestation is
+unavailable, or any approval request, sandbox escalation, or permission failure
+is observed. Never recover by requesting approval or enabling a bypass.
 
 Do not call `clear_project_data` as part of this smoke. Uninstall deliberately
 leaves learning data intact.

@@ -30,6 +30,20 @@ jobs:
           check-latest: true
       - name: Test
         run: npm test
+      - name: Exercise Windows zero-approval preflight
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |-
+          $smokeRoot = Join-Path $env:RUNNER_TEMP 'adaptive-router-zero-approval-contract'
+          $smokeHome = Join-Path $smokeRoot '.codex-home'
+          New-Item -ItemType Directory -Force -Path $smokeRoot, $smokeHome | Out-Null
+          Set-Content -LiteralPath (Join-Path $smokeRoot '.adaptive-router-smoke-root') -Value 'adaptive-model-router smoke root v1' -NoNewline
+          Set-Content -LiteralPath (Join-Path $smokeHome '.adaptive-router-smoke-home') -Value 'adaptive-model-router smoke home v1' -NoNewline
+          $env:CODEX_PERMISSION_PROFILE = ':danger-full-access'
+          $env:ADAPTIVE_ROUTER_SMOKE_ROOT = $smokeRoot
+          $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $smokeHome
+          $env:ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY = 'never'
+          & '..\..\scripts\windows-smoke.ps1' -CandidateRef 'codex/windows-smoke' -ValidateZeroApprovalContract
       - name: Validate syntax, contracts, manifest, and marketplace
         run: npm run validate
       - name: Run bilingual routing benchmark
