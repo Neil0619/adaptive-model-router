@@ -24,6 +24,7 @@ $HookProject = $null
 $RawRoot = $null
 $ManagedCodexPath = $null
 $ManagedShellPathConfig = $null
+$CommandShimPath = Join-Path $PSScriptRoot 'invoke-command-shim.ps1'
 $DedicatedCodexHome = [string]$env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME
 $OriginalCodexHome = [string]$env:CODEX_HOME
 $Checks = [Collections.Generic.List[object]]::new()
@@ -163,11 +164,11 @@ function Resolve-ProcessCommand {
         return [pscustomobject]@{ FilePath = $systemPowerShell; Prefix = @('-NoProfile', '-File', [string]$selected[0].Source) }
     }
     if ($selected[0].Extension -in @('.cmd', '.bat')) {
-        $commandProcessor = Join-Path $env:SystemRoot 'System32\cmd.exe'
-        if (-not (Test-Path -LiteralPath $commandProcessor -PathType Leaf)) {
-            throw 'system command processor is required to launch command shims without WindowsApps PATH reinjection'
+        $systemPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (-not (Test-Path -LiteralPath $systemPowerShell -PathType Leaf)) {
+            throw 'system Windows PowerShell is required to launch command shims without WindowsApps PATH reinjection'
         }
-        return [pscustomobject]@{ FilePath = $commandProcessor; Prefix = @('/d', '/s', '/c', [string]$selected[0].Source) }
+        return [pscustomobject]@{ FilePath = $systemPowerShell; Prefix = @('-NoProfile', '-File', $CommandShimPath, [string]$selected[0].Source) }
     }
     return [pscustomobject]@{ FilePath = [string]$selected[0].Source; Prefix = @() }
 }

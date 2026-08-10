@@ -43,8 +43,8 @@ test("native Windows smoke has one fail-closed zero-approval contract", async ()
   assert.match(runner, /ManagedCodexPath/u);
   assert.match(runner, /shell_environment_policy\.set\.PATH=/u);
   assert.match(runner, /WindowsApps/u);
-  assert.match(runner, /System32\\cmd\.exe/u);
   assert.match(runner, /System32\\WindowsPowerShell\\v1\.0\\powershell\.exe/u);
+  assert.match(runner, /invoke-command-shim\.ps1/u);
   assert.match(runner, /managed command launch reintroduced a WindowsApps PATH entry/u);
   assert.doesNotMatch(runner, /Get-Command -Name 'pwsh'/u);
   assert.match(runner, /EnvironmentOverrides @\{ PATH = \$ManagedCodexPath \}/u);
@@ -149,7 +149,7 @@ test("native Windows zero-approval preflight enforces policy and path containmen
     };
     const invoke = (env, output = join(smokeRoot, "evidence")) => spawnSync("pwsh", [
       "-NoProfile", "-File", runner,
-      "-CandidateRef", "codex/windows-zero-approval-smoke-v7",
+      "-CandidateRef", "codex/windows-zero-approval-smoke-v8",
       "-OutputDirectory", output,
       "-ValidateZeroApprovalContract",
     ], { encoding: "utf8", env });

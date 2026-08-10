@@ -13,7 +13,7 @@ The canonical automated entry point is
 [`scripts/windows-smoke.ps1`](../scripts/windows-smoke.ps1):
 
 ```powershell
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v7'
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v8'
 ```
 
 It accepts the frozen candidate ref plus one controlled smoke root. It uses
@@ -25,9 +25,10 @@ the controlled root.
 Its candidate gate normalizes only CRLF/CR versus LF when comparing tracked
 text files, so ordinary Windows checkout conversion is accepted while every
 other byte change remains blocking.
-For managed sandbox turns only, the runner launches npm/Codex command shims
-through system `cmd.exe` and unavoidable PowerShell scripts through system
-Windows PowerShell, never through a Microsoft Store `pwsh.exe` parent. A Store
+For managed sandbox turns only, the runner launches npm/Codex command shims and
+unavoidable PowerShell scripts through system Windows PowerShell, never through
+a Microsoft Store `pwsh.exe` parent. The command-shim adapter preserves
+argument boundaries, including commands installed below paths with spaces. A Store
 PowerShell parent reinjects its own WindowsApps package directory at startup,
 which would undo a later child-only filter. The runner then removes all
 `WindowsApps` entries from the child `PATH` so Codex selects the system Windows
@@ -71,7 +72,7 @@ $env:CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_ROOT = $SmokeRoot
 $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY = 'never'
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v7'
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v8'
 ```
 
 All cloned source, projects, raw events, evidence, plugin, marketplace, AGENTS
@@ -164,7 +165,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/windows-zero-approval-smoke-v7"
+$CandidateRef = "codex/windows-zero-approval-smoke-v8"
 $RunRoot = Join-Path $env:ADAPTIVE_ROUTER_SMOKE_ROOT ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $RunRoot "source checkout"
 $Project = Join-Path $RunRoot "测试 project with spaces"

@@ -75,7 +75,7 @@ assert(Array.isArray(manifest.interface?.defaultPrompt) && manifest.interface.de
 assert(packageJson.version === "0.4.0", "release base version must be 0.4.0");
 const releaseTag = `v${packageJson.version}`;
 const releaseArtifact = `adaptive-model-router-${releaseTag}`;
-const releaseCandidateRef = "codex/windows-zero-approval-smoke-v7";
+const releaseCandidateRef = "codex/windows-zero-approval-smoke-v8";
 for (const [name, document] of [
   ["release checklist", releaseChecklist],
   ["Windows smoke", windowsSmoke],
@@ -172,8 +172,8 @@ assert(windowsSmokeRunner.includes("$postKeepAutomatic.taskMode -ne 'automatic'"
 assert(windowsSmokeRunner.includes("[string]$finalStatus.rootTask.model -ne $InitialRootModel"), "Windows smoke runner must verify initial-model restoration");
 assert(!windowsSmokeRunner.includes("--dangerously-bypass-approvals-and-sandbox"), "Windows smoke runner must not bypass command approvals or the managed sandbox");
 assert(!windowsSmokeRunner.includes("--dangerously-bypass-hook-trust"), "Windows smoke runner must not bypass Hook trust");
-assert(windowsSmokeRunner.includes("System32\\cmd.exe"), "Windows smoke runner must launch command shims without a Store PowerShell parent");
 assert(windowsSmokeRunner.includes("System32\\WindowsPowerShell\\v1.0\\powershell.exe"), "Windows smoke runner must use the system script host when a PowerShell script is unavoidable");
+assert(windowsSmokeRunner.includes("invoke-command-shim.ps1"), "Windows smoke runner must preserve command-shim argument boundaries under the system script host");
 assert(!windowsSmokeRunner.includes("Get-Command -Name 'pwsh'"), "Windows smoke runner must not resolve its script host through a Store pwsh alias");
 assert(windowsCommandShim.includes("ValueFromRemainingArguments"), "Windows command shim must preserve argument boundaries");
 assert(smokeEvidenceValidator.includes("status disagrees with blocking checks"), "smoke evidence validator must enforce PASS consistency");
