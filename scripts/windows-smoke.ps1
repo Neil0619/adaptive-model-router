@@ -207,10 +207,10 @@ function Invoke-CodexTurn {
     )
     $lastMessage = Join-Path $RawRoot (([guid]::NewGuid().ToString('N')) + '.last.txt')
     if ($ResumeSession) {
-        $arguments = @('exec', '-a', 'never', '-s', 'read-only', 'resume', '--json', '-o', $lastMessage, '-m', $Model, $ResumeSession, $Prompt)
+        $arguments = @('-a', 'never', '-s', 'read-only', 'exec', 'resume', '--json', '-o', $lastMessage, '-m', $Model, $ResumeSession, $Prompt)
     }
     else {
-        $arguments = @('exec', '-a', 'never', '-s', 'read-only', '--json', '-o', $lastMessage, '-C', $WorkingProject, '-m', $Model, $Prompt)
+        $arguments = @('-a', 'never', '-s', 'read-only', 'exec', '--json', '-o', $lastMessage, '-C', $WorkingProject, '-m', $Model, $Prompt)
     }
     $result = Invoke-Process -FilePath 'codex' -ArgumentList $arguments -WorkingDirectory $WorkingProject
     $events = [Collections.Generic.List[object]]::new()
@@ -837,7 +837,7 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     Assert-InstalledPluginBytes -InstalledRoot $installedPluginRoot
     Add-SmokeCheck -Id 'native-and-wrapper-lifecycle' -Blocking $true -Status 'PASS'
 
-    $second = Invoke-Process -FilePath 'codex' -ArgumentList @('exec', '-a', 'never', '-s', 'read-only', '--json', '-C', $Project2, '-m', 'gpt-5.6-sol', 'router: status') -WorkingDirectory $Project2
+    $second = Invoke-Process -FilePath 'codex' -ArgumentList @('-a', 'never', '-s', 'read-only', 'exec', '--json', '-C', $Project2, '-m', 'gpt-5.6-sol', 'router: status') -WorkingDirectory $Project2
     $secondEvents = @($second.Stdout -split "`r?`n" | ForEach-Object { if ($_){ try { $_ | ConvertFrom-Json -Depth 20 } catch {} } })
     Register-CodexPermissionTelemetry -Events $secondEvents
     $secondEvent = @($secondEvents | Where-Object { $_.type -eq 'thread.started' } | Select-Object -Last 1)

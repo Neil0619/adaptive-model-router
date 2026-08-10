@@ -33,7 +33,9 @@ test("native Windows smoke has one fail-closed zero-approval contract", async ()
   assert.match(runner, /ADAPTIVE_ROUTER_SMOKE_ROOT/u);
   assert.match(runner, /CODEX_PERMISSION_PROFILE/u);
   assert.match(runner, /host permission profile must be danger-full-access/u);
-  assert.match(runner, /@\('exec', '-a', 'never', '-s', 'read-only'/u);
+  assert.match(runner, /@\('-a', 'never', '-s', 'read-only', 'exec', 'resume'/u);
+  assert.match(runner, /@\('-a', 'never', '-s', 'read-only', 'exec', '--json'/u);
+  assert.doesNotMatch(runner, /@\('exec', '-a'/u);
   assert.match(runner, /Register-CodexPermissionTelemetry/u);
   assert.match(runner, /ValidateZeroApprovalContract/u);
 
@@ -87,7 +89,7 @@ test("native Windows zero-approval preflight enforces policy and path containmen
     };
     const invoke = (env, output = join(smokeRoot, "evidence")) => spawnSync("pwsh", [
       "-NoProfile", "-File", runner,
-      "-CandidateRef", "codex/windows-zero-approval-smoke-v2",
+      "-CandidateRef", "codex/windows-zero-approval-smoke-v3",
       "-OutputDirectory", output,
       "-ValidateZeroApprovalContract",
     ], { encoding: "utf8", env });

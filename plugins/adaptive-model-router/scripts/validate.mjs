@@ -74,7 +74,7 @@ assert(Array.isArray(manifest.interface?.defaultPrompt) && manifest.interface.de
 assert(packageJson.version === "0.4.0", "release base version must be 0.4.0");
 const releaseTag = `v${packageJson.version}`;
 const releaseArtifact = `adaptive-model-router-${releaseTag}`;
-const releaseCandidateRef = "codex/windows-zero-approval-smoke-v2";
+const releaseCandidateRef = "codex/windows-zero-approval-smoke-v3";
 for (const [name, document] of [
   ["release checklist", releaseChecklist],
   ["Windows smoke", windowsSmoke],
@@ -125,9 +125,10 @@ assert(windowsSmokeRunner.includes("compare-gate-content.mjs"), "Windows smoke r
 assert(windowsSmokeRunner.includes("$InstalledRouterLauncher"), "Windows smoke runner must resolve router state through the installed runtime launcher");
 assert(windowsSmokeRunner.includes("@($InstalledRouterLauncher, $InstalledRouterCli"), "Windows smoke runner must read the installed plugin data instead of the legacy Codex Home state root");
 assert(windowsSmokeRunner.includes("Write-SmokeFixture -Root $Project"), "Windows smoke runner must seed its deterministic fixture outside the managed read-only Codex session");
-assert(windowsSmokeRunner.includes("@('exec', '-a', 'never', '-s', 'read-only', 'resume'"), "Windows smoke runner must keep resumed turns zero-approval and read-only");
-assert(windowsSmokeRunner.includes("@('exec', '-a', 'never', '-s', 'read-only', '--json'"), "Windows smoke runner must start new turns zero-approval and read-only");
-assert(windowsSmokeRunner.includes("@('exec', '-a', 'never', '-s', 'read-only', '--json', '-C', $Project2"), "Windows smoke runner must keep the cross-project status probe zero-approval and read-only");
+assert(windowsSmokeRunner.includes("@('-a', 'never', '-s', 'read-only', 'exec', 'resume'"), "Windows smoke runner must keep resumed turns zero-approval and read-only");
+assert(windowsSmokeRunner.includes("@('-a', 'never', '-s', 'read-only', 'exec', '--json'"), "Windows smoke runner must start new turns zero-approval and read-only");
+assert(windowsSmokeRunner.includes("@('-a', 'never', '-s', 'read-only', 'exec', '--json', '-C', $Project2"), "Windows smoke runner must keep the cross-project status probe zero-approval and read-only");
+assert(!windowsSmokeRunner.includes("@('exec', '-a'"), "Windows smoke runner must place global approval flags before the exec subcommand");
 assert(windowsSmokeRunner.includes("ADAPTIVE_ROUTER_SMOKE_ROOT"), "Windows smoke runner must use one controlled smoke root");
 assert(!windowsSmokeRunner.includes("GetTempPath"), "Windows smoke runner must not allocate an undeclared TEMP root");
 assert(windowsSmokeRunner.includes("CODEX_PERMISSION_PROFILE"), "Windows smoke runner must require the host permission profile attestation");
