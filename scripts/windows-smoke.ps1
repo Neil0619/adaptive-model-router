@@ -182,7 +182,12 @@ function Invoke-Process {
     $startInfo.RedirectStandardError = $true
     if ($EnvironmentOverrides) {
         foreach ($entry in $EnvironmentOverrides.GetEnumerator()) {
-            $startInfo.Environment[[string]$entry.Key] = [string]$entry.Value
+            if ($null -eq $entry.Value) {
+                [void]$startInfo.Environment.Remove([string]$entry.Key)
+            }
+            else {
+                $startInfo.Environment[[string]$entry.Key] = [string]$entry.Value
+            }
         }
     }
     foreach ($argument in (@($resolvedCommand.Prefix) + $ArgumentList)) { [void]$startInfo.ArgumentList.Add($argument) }
@@ -639,9 +644,10 @@ try {
     Add-SmokeCheck -Id 'candidate-frozen' -Blocking $true -Status 'PASS'
 
     $candidatePluginRoot = Join-Path $Source 'plugins\adaptive-model-router'
-    Invoke-Process -FilePath 'npm' -ArgumentList @('test') -WorkingDirectory $candidatePluginRoot | Out-Null
-    Invoke-Process -FilePath 'npm' -ArgumentList @('run', 'validate') -WorkingDirectory $candidatePluginRoot | Out-Null
-    Invoke-Process -FilePath 'npm' -ArgumentList @('run', 'eval') -WorkingDirectory $candidatePluginRoot | Out-Null
+    $automatedGateEnvironment = @{ CODEX_HOME = $null }
+    Invoke-Process -FilePath 'npm' -ArgumentList @('test') -WorkingDirectory $candidatePluginRoot -EnvironmentOverrides $automatedGateEnvironment | Out-Null
+    Invoke-Process -FilePath 'npm' -ArgumentList @('run', 'validate') -WorkingDirectory $candidatePluginRoot -EnvironmentOverrides $automatedGateEnvironment | Out-Null
+    Invoke-Process -FilePath 'npm' -ArgumentList @('run', 'eval') -WorkingDirectory $candidatePluginRoot -EnvironmentOverrides $automatedGateEnvironment | Out-Null
     Add-SmokeCheck -Id 'candidate-automated-gate' -Blocking $true -Status 'PASS'
 
     $manager = Join-Path $Source 'plugins\adaptive-model-router\scripts\manage-install.mjs'

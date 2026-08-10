@@ -75,7 +75,7 @@ assert(Array.isArray(manifest.interface?.defaultPrompt) && manifest.interface.de
 assert(packageJson.version === "0.4.0", "release base version must be 0.4.0");
 const releaseTag = `v${packageJson.version}`;
 const releaseArtifact = `adaptive-model-router-${releaseTag}`;
-const releaseCandidateRef = "codex/windows-zero-approval-smoke-v5";
+const releaseCandidateRef = "codex/windows-zero-approval-smoke-v6";
 for (const [name, document] of [
   ["release checklist", releaseChecklist],
   ["Windows smoke", windowsSmoke],
@@ -136,6 +136,9 @@ assert(codexRouteCli.includes("stop-probe requires exact confirmation"), "develo
 assert(windowsSmokeRunner.includes("$ManagedCodexPath"), "Windows smoke runner must isolate the managed Codex PATH");
 assert(windowsSmokeRunner.includes("shell_environment_policy.set.PATH="), "Windows smoke runner must propagate the managed PATH through Codex turn configuration for bounded subagents");
 assert(windowsSmokeRunner.includes("WindowsApps"), "Windows smoke runner must exclude Store app aliases from the managed Codex PATH");
+assert(windowsSmokeRunner.includes("$automatedGateEnvironment = @{ CODEX_HOME = $null }"), "Windows smoke runner must isolate the automated gate from the logged-in Codex Home");
+assert((windowsSmokeRunner.match(/-EnvironmentOverrides \$automatedGateEnvironment/gu) || []).length === 3, "Windows smoke runner must isolate test, validation, and evaluation from CODEX_HOME");
+assert(windowsSmokeRunner.includes(".Environment.Remove([string]$entry.Key)"), "Windows smoke process launcher must support removing inherited environment values");
 assert(windowsSmokeRunner.includes("itemType -eq 'command_execution'"), "Windows smoke runner must count structured sandbox command failures");
 assert(windowsSmokeRunner.includes("ADAPTIVE_ROUTER_SMOKE_ROOT"), "Windows smoke runner must use one controlled smoke root");
 assert(!windowsSmokeRunner.includes("GetTempPath"), "Windows smoke runner must not allocate an undeclared TEMP root");
