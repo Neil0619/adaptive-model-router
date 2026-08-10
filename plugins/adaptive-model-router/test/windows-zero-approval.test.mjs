@@ -34,13 +34,14 @@ test("native Windows smoke has one fail-closed zero-approval contract", async ()
   assert.match(runner, /ADAPTIVE_ROUTER_SMOKE_ROOT/u);
   assert.match(runner, /CODEX_PERMISSION_PROFILE/u);
   assert.match(runner, /host permission profile must be danger-full-access/u);
-  assert.match(runner, /@\('-a', 'never', '-s', 'read-only', 'exec', 'resume'/u);
-  assert.match(runner, /@\('-a', 'never', '-s', 'read-only', 'exec', '--json'/u);
+  assert.match(runner, /@\('-a', 'never', '-s', 'read-only', 'exec', '-c', \$ManagedShellPathConfig, 'resume'/u);
+  assert.match(runner, /@\('-a', 'never', '-s', 'read-only', 'exec', '-c', \$ManagedShellPathConfig, '--json'/u);
   assert.doesNotMatch(runner, /@\('exec', '-a'/u);
   assert.doesNotMatch(runner, /deliberately do not spawn/u);
   assert.match(runner, /@\(\$InstalledRouterLauncher, \$InstalledRouterCli, 'stop-probe', '--confirm', 'STOP_HOOK_SMOKE'/u);
   assert.match(codexRoute, /stop-probe requires exact confirmation/u);
   assert.match(runner, /ManagedCodexPath/u);
+  assert.match(runner, /shell_environment_policy\.set\.PATH=/u);
   assert.match(runner, /WindowsApps/u);
   assert.match(runner, /EnvironmentOverrides @\{ PATH = \$ManagedCodexPath \}/u);
   assert.match(runner, /itemType -eq 'command_execution'/u);
@@ -140,7 +141,7 @@ test("native Windows zero-approval preflight enforces policy and path containmen
     };
     const invoke = (env, output = join(smokeRoot, "evidence")) => spawnSync("pwsh", [
       "-NoProfile", "-File", runner,
-      "-CandidateRef", "codex/windows-zero-approval-smoke-v4",
+      "-CandidateRef", "codex/windows-zero-approval-smoke-v5",
       "-OutputDirectory", output,
       "-ValidateZeroApprovalContract",
     ], { encoding: "utf8", env });

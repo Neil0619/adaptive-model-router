@@ -23,6 +23,7 @@ $Project2 = $null
 $HookProject = $null
 $RawRoot = $null
 $ManagedCodexPath = $null
+$ManagedShellPathConfig = $null
 $CommandShimPath = Join-Path $PSScriptRoot 'invoke-command-shim.ps1'
 $DedicatedCodexHome = [string]$env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME
 $OriginalCodexHome = [string]$env:CODEX_HOME
@@ -220,10 +221,10 @@ function Invoke-CodexTurn {
     )
     $lastMessage = Join-Path $RawRoot (([guid]::NewGuid().ToString('N')) + '.last.txt')
     if ($ResumeSession) {
-        $arguments = @('-a', 'never', '-s', 'read-only', 'exec', 'resume', '--json', '-o', $lastMessage, '-m', $Model, $ResumeSession, $Prompt)
+        $arguments = @('-a', 'never', '-s', 'read-only', 'exec', '-c', $ManagedShellPathConfig, 'resume', '--json', '-o', $lastMessage, '-m', $Model, $ResumeSession, $Prompt)
     }
     else {
-        $arguments = @('-a', 'never', '-s', 'read-only', 'exec', '--json', '-o', $lastMessage, '-C', $WorkingProject, '-m', $Model, $Prompt)
+        $arguments = @('-a', 'never', '-s', 'read-only', 'exec', '-c', $ManagedShellPathConfig, '--json', '-o', $lastMessage, '-C', $WorkingProject, '-m', $Model, $Prompt)
     }
     $result = Invoke-Process -FilePath 'codex' -ArgumentList $arguments -WorkingDirectory $WorkingProject -EnvironmentOverrides @{ PATH = $ManagedCodexPath }
     $events = [Collections.Generic.List[object]]::new()
@@ -606,6 +607,8 @@ try {
         throw 'managed Codex PATH is empty after excluding WindowsApps entries'
     }
     $ManagedCodexPath = $managedPathEntries -join [IO.Path]::PathSeparator
+    $escapedManagedCodexPath = $ManagedCodexPath.Replace('\', '\\').Replace('"', '\"')
+    $ManagedShellPathConfig = 'shell_environment_policy.set.PATH="' + $escapedManagedCodexPath + '"'
     if (-not (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -PathType Leaf)) {
         throw 'system Windows PowerShell is required for managed sandbox turns'
     }
@@ -862,7 +865,7 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     Assert-InstalledPluginBytes -InstalledRoot $installedPluginRoot
     Add-SmokeCheck -Id 'native-and-wrapper-lifecycle' -Blocking $true -Status 'PASS'
 
-    $second = Invoke-Process -FilePath 'codex' -ArgumentList @('-a', 'never', '-s', 'read-only', 'exec', '--json', '-C', $Project2, '-m', 'gpt-5.6-sol', 'router: status') -WorkingDirectory $Project2 -EnvironmentOverrides @{ PATH = $ManagedCodexPath }
+    $second = Invoke-Process -FilePath 'codex' -ArgumentList @('-a', 'never', '-s', 'read-only', 'exec', '-c', $ManagedShellPathConfig, '--json', '-C', $Project2, '-m', 'gpt-5.6-sol', 'router: status') -WorkingDirectory $Project2 -EnvironmentOverrides @{ PATH = $ManagedCodexPath }
     $secondEvents = @($second.Stdout -split "`r?`n" | ForEach-Object { if ($_){ try { $_ | ConvertFrom-Json -Depth 20 } catch {} } })
     Register-CodexPermissionTelemetry -Events $secondEvents -Text $second.Stderr
     $secondEvent = @($secondEvents | Where-Object { $_.type -eq 'thread.started' } | Select-Object -Last 1)

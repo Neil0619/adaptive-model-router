@@ -13,7 +13,7 @@ The canonical automated entry point is
 [`scripts/windows-smoke.ps1`](../scripts/windows-smoke.ps1):
 
 ```powershell
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v4'
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v5'
 ```
 
 It accepts the frozen candidate ref plus one controlled smoke root. It uses
@@ -29,8 +29,10 @@ For managed sandbox turns only, the runner removes `WindowsApps` entries from
 the child `PATH` so Codex selects the system Windows PowerShell executable
 instead of a Microsoft Store `pwsh.exe` alias that the sandbox user may be
 unable to launch. The coordinator, Desktop process, and operator environment
-remain unchanged; any structured sandbox command failure still increments
-`permissionFailures` and blocks PASS.
+remain unchanged. The same filtered PATH is also injected through
+`shell_environment_policy.set.PATH` on every managed Codex turn so host-created
+bounded subagents inherit it; any structured sandbox command failure still
+increments `permissionFailures` and blocks PASS.
 Review and trust the three hooks before running it. A failure produces only
 stable warning codes in the artifact; raw prompts, events, session/context
 identifiers, errors, source, secrets, logs, and absolute paths are excluded.
@@ -60,7 +62,7 @@ $env:CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_ROOT = $SmokeRoot
 $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY = 'never'
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v4'
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v5'
 ```
 
 All cloned source, projects, raw events, evidence, plugin, marketplace, AGENTS
@@ -153,7 +155,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/windows-zero-approval-smoke-v4"
+$CandidateRef = "codex/windows-zero-approval-smoke-v5"
 $RunRoot = Join-Path $env:ADAPTIVE_ROUTER_SMOKE_ROOT ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $RunRoot "source checkout"
 $Project = Join-Path $RunRoot "测试 project with spaces"

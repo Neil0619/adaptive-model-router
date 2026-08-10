@@ -75,7 +75,7 @@ assert(Array.isArray(manifest.interface?.defaultPrompt) && manifest.interface.de
 assert(packageJson.version === "0.4.0", "release base version must be 0.4.0");
 const releaseTag = `v${packageJson.version}`;
 const releaseArtifact = `adaptive-model-router-${releaseTag}`;
-const releaseCandidateRef = "codex/windows-zero-approval-smoke-v4";
+const releaseCandidateRef = "codex/windows-zero-approval-smoke-v5";
 for (const [name, document] of [
   ["release checklist", releaseChecklist],
   ["Windows smoke", windowsSmoke],
@@ -126,14 +126,15 @@ assert(windowsSmokeRunner.includes("compare-gate-content.mjs"), "Windows smoke r
 assert(windowsSmokeRunner.includes("$InstalledRouterLauncher"), "Windows smoke runner must resolve router state through the installed runtime launcher");
 assert(windowsSmokeRunner.includes("@($InstalledRouterLauncher, $InstalledRouterCli"), "Windows smoke runner must read the installed plugin data instead of the legacy Codex Home state root");
 assert(windowsSmokeRunner.includes("Write-SmokeFixture -Root $Project"), "Windows smoke runner must seed its deterministic fixture outside the managed read-only Codex session");
-assert(windowsSmokeRunner.includes("@('-a', 'never', '-s', 'read-only', 'exec', 'resume'"), "Windows smoke runner must keep resumed turns zero-approval and read-only");
-assert(windowsSmokeRunner.includes("@('-a', 'never', '-s', 'read-only', 'exec', '--json'"), "Windows smoke runner must start new turns zero-approval and read-only");
-assert(windowsSmokeRunner.includes("@('-a', 'never', '-s', 'read-only', 'exec', '--json', '-C', $Project2"), "Windows smoke runner must keep the cross-project status probe zero-approval and read-only");
+assert(windowsSmokeRunner.includes("@('-a', 'never', '-s', 'read-only', 'exec', '-c', $ManagedShellPathConfig, 'resume'"), "Windows smoke runner must keep resumed turns zero-approval, read-only, and on the inherited managed PATH");
+assert(windowsSmokeRunner.includes("@('-a', 'never', '-s', 'read-only', 'exec', '-c', $ManagedShellPathConfig, '--json'"), "Windows smoke runner must start new turns zero-approval, read-only, and on the inherited managed PATH");
+assert(windowsSmokeRunner.includes("@('-a', 'never', '-s', 'read-only', 'exec', '-c', $ManagedShellPathConfig, '--json', '-C', $Project2"), "Windows smoke runner must keep the cross-project status probe zero-approval and read-only");
 assert(!windowsSmokeRunner.includes("@('exec', '-a'"), "Windows smoke runner must place global approval flags before the exec subcommand");
 assert(!windowsSmokeRunner.includes("deliberately do not spawn"), "Windows Stop-hook smoke must not ask the model to violate delegated execution");
 assert(windowsSmokeRunner.includes("@($InstalledRouterLauncher, $InstalledRouterCli, 'stop-probe', '--confirm', 'STOP_HOOK_SMOKE'"), "Windows smoke runner must seed the Stop-hook route through the installed launcher and plugin-data root");
 assert(codexRouteCli.includes("stop-probe requires exact confirmation"), "developer CLI must confirmation-gate the Stop-hook probe");
 assert(windowsSmokeRunner.includes("$ManagedCodexPath"), "Windows smoke runner must isolate the managed Codex PATH");
+assert(windowsSmokeRunner.includes("shell_environment_policy.set.PATH="), "Windows smoke runner must propagate the managed PATH through Codex turn configuration for bounded subagents");
 assert(windowsSmokeRunner.includes("WindowsApps"), "Windows smoke runner must exclude Store app aliases from the managed Codex PATH");
 assert(windowsSmokeRunner.includes("itemType -eq 'command_execution'"), "Windows smoke runner must count structured sandbox command failures");
 assert(windowsSmokeRunner.includes("ADAPTIVE_ROUTER_SMOKE_ROOT"), "Windows smoke runner must use one controlled smoke root");
