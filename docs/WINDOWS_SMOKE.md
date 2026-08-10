@@ -13,7 +13,7 @@ The canonical automated entry point is
 [`scripts/windows-smoke.ps1`](../scripts/windows-smoke.ps1):
 
 ```powershell
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-smoke'
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke'
 ```
 
 It accepts the frozen candidate ref plus one controlled smoke root. It uses
@@ -54,7 +54,7 @@ $env:CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_ROOT = $SmokeRoot
 $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY = 'never'
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-smoke'
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke'
 ```
 
 All cloned source, projects, raw events, evidence, plugin, marketplace, AGENTS
@@ -147,7 +147,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/windows-smoke"
+$CandidateRef = "codex/windows-zero-approval-smoke"
 $RunRoot = Join-Path $env:ADAPTIVE_ROUTER_SMOKE_ROOT ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $RunRoot "source checkout"
 $Project = Join-Path $RunRoot "测试 project with spaces"

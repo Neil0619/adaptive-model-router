@@ -21,7 +21,7 @@ it after artifact creation.
 Keep `stable` on the last published release until the release workflow has
 created the new artifacts. For logged-in smoke testing, freeze a dedicated
 candidate ref at the reviewed commit. For v0.4.0 the handoff ref is
-`codex/windows-smoke`; do not move it after smoke evidence is
+`codex/windows-zero-approval-smoke`; do not move it after smoke evidence is
 collected.
 
 Record the candidate:
@@ -30,7 +30,7 @@ Record the candidate:
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/main
-git rev-parse origin/codex/windows-smoke
+git rev-parse origin/codex/windows-zero-approval-smoke
 git rev-parse origin/stable
 ```
 
@@ -39,7 +39,7 @@ The worktree must be clean. The candidate ref must contain the reviewed tree;
 verify that the release-relevant trees are byte-identical:
 
 ```bash
-git diff --exit-code origin/main origin/codex/windows-smoke -- \
+git diff --exit-code origin/main origin/codex/windows-zero-approval-smoke -- \
   .agents plugins scripts docs/release-evidence/schema-v1.json \
   docs/release-evidence/templates/macos-v1.json \
   docs/WINDOWS_SMOKE.md docs/MACOS_SMOKE.md docs/RELEASE.md \
@@ -102,7 +102,7 @@ $env:CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_ROOT = $SmokeRoot
 $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY = 'never'
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-smoke'
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke'
 ```
 
 After Hook trust, the runner requires no operator-entered prompts, control
