@@ -43,6 +43,10 @@ test("native Windows smoke has one fail-closed zero-approval contract", async ()
   assert.match(runner, /ManagedCodexPath/u);
   assert.match(runner, /shell_environment_policy\.set\.PATH=/u);
   assert.match(runner, /WindowsApps/u);
+  assert.match(runner, /System32\\cmd\.exe/u);
+  assert.match(runner, /System32\\WindowsPowerShell\\v1\.0\\powershell\.exe/u);
+  assert.match(runner, /managed command launch reintroduced a WindowsApps PATH entry/u);
+  assert.doesNotMatch(runner, /Get-Command -Name 'pwsh'/u);
   assert.match(runner, /EnvironmentOverrides @\{ PATH = \$ManagedCodexPath \}/u);
   assert.match(runner, /\$automatedGateEnvironment = @\{ CODEX_HOME = \$null \}/u);
   assert.equal((runner.match(/-EnvironmentOverrides \$automatedGateEnvironment/gu) || []).length, 3);
@@ -114,7 +118,8 @@ test("Stop-hook probe seeds a pending route outside the model turn and finalizes
     });
     assert.equal(history.status, 0, history.stderr);
     const routes = JSON.parse(history.stdout).routes;
-    assert.equal(routes.length, 1);
+    assert.equal(routes.length, 1, stopped.stderr || history.stderr);
+    assert.ok(routes[0].outcome, stopped.stderr || history.stderr || "Stop hook left the probe route pending");
     assert.equal(routes[0].outcome.status, "unknown");
     assert.equal(routes[0].outcome.source, "stop_hook");
   } finally {
@@ -144,7 +149,7 @@ test("native Windows zero-approval preflight enforces policy and path containmen
     };
     const invoke = (env, output = join(smokeRoot, "evidence")) => spawnSync("pwsh", [
       "-NoProfile", "-File", runner,
-      "-CandidateRef", "codex/windows-zero-approval-smoke-v6",
+      "-CandidateRef", "codex/windows-zero-approval-smoke-v7",
       "-OutputDirectory", output,
       "-ValidateZeroApprovalContract",
     ], { encoding: "utf8", env });

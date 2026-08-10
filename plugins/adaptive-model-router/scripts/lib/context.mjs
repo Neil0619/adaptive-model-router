@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 export function stateRoot(env = process.env) {
@@ -33,8 +33,38 @@ export function normalizeIdentityPath(path, platform = process.platform) {
   return normalized.replace(/\/$/, "");
 }
 
+function gitCommonDirectoryFromMetadata(workingDirectory) {
+  let cursor = workingDirectory;
+  while (true) {
+    const marker = join(cursor, ".git");
+    try {
+      const metadata = statSync(marker);
+      if (metadata.isDirectory()) return realpathOrResolve(marker);
+      if (metadata.isFile()) {
+        const match = /^gitdir:\s*(.+)$/iu.exec(readFileSync(marker, "utf8").trim());
+        if (!match) return null;
+        const gitDirectory = isAbsolute(match[1]) ? match[1] : resolve(cursor, match[1]);
+        try {
+          const common = readFileSync(join(gitDirectory, "commondir"), "utf8").trim();
+          return realpathOrResolve(resolve(gitDirectory, common));
+        } catch {
+          return realpathOrResolve(gitDirectory);
+        }
+      }
+      return null;
+    } catch (error) {
+      if (error?.code !== "ENOENT" && error?.code !== "ENOTDIR") return null;
+    }
+    const parent = dirname(cursor);
+    if (parent === cursor) return null;
+    cursor = parent;
+  }
+}
+
 export function projectIdentityMaterial(cwd = process.cwd()) {
   const workingDirectory = realpathOrResolve(cwd);
+  const metadataDirectory = gitCommonDirectoryFromMetadata(workingDirectory);
+  if (metadataDirectory) return `git:${normalizeIdentityPath(metadataDirectory)}`;
   const result = spawnSync("git", ["-C", workingDirectory, "rev-parse", "--git-common-dir"], {
     encoding: "utf8",
     windowsHide: true,

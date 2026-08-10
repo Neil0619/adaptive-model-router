@@ -14,7 +14,7 @@ export async function temporaryProject(label = "adaptive-router-test-") {
     root,
     home: join(root, "state"),
     async cleanup() {
-      await rm(root, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     },
   };
 }

@@ -41,6 +41,16 @@ test("Git worktrees share a project ID while nested repositories remain independ
     await mkdir(nested);
     git(nested, "init");
 
+    const originalPath = process.env.PATH;
+    try {
+      process.env.PATH = "";
+      assert.equal(projectIdentityMaterial(main), projectIdentityMaterial(worktree));
+      assert.notEqual(projectIdentityMaterial(main), projectIdentityMaterial(nested));
+    } finally {
+      if (originalPath == null) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+    }
+
     await withRouterEnvironment(project, async () => {
       const store = new RouterStore();
       const mainContext = store.context({ cwd: main, contextId: "same" });

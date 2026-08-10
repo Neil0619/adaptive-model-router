@@ -15,10 +15,15 @@ bounded subagents did not inherit it. The replacement candidate below injects
 the filtered PATH through Codex's turn configuration so root and bounded turns
 share it. That candidate was invalidated because the automated gate inherited
 the logged-in smoke `CODEX_HOME`, which made the test process fail to settle.
-The replacement candidate isolates that gate from `CODEX_HOME` and includes the
-same reviewed v0.4 runtime plus all fixes, Windows
-cache-replacement integrity checks, explicit Stop-finalization observability,
-and the canonical redacted smoke-evidence gate.
+That isolated-gate candidate was invalidated because its Store PowerShell
+parent reinserted WindowsApps before Codex selected the managed shell, and
+because a two-second Git process timeout could split one project's identity
+between route and Stop processes under sustained Windows load. The replacement
+candidate launches command shims without a Store PowerShell parent, derives
+ordinary repository/worktree identity directly from `.git` metadata, isolates
+the automated gate from `CODEX_HOME`, and includes the same reviewed v0.4
+runtime plus all fixes, Windows cache-replacement integrity checks, explicit
+Stop-finalization observability, and the canonical redacted smoke-evidence gate.
 
 v0.4.0 includes the reviewed v0.3.1 capability fix, which was merged into the
 v0.4.0 main tree and was not published separately. The published `stable`
@@ -30,7 +35,7 @@ it after artifact creation.
 Keep `stable` on the last published release until the release workflow has
 created the new artifacts. For logged-in smoke testing, freeze a dedicated
 candidate ref at the reviewed commit. For v0.4.0 the handoff ref is
-`codex/windows-zero-approval-smoke-v6`; do not move it after smoke evidence is
+`codex/windows-zero-approval-smoke-v7`; do not move it after smoke evidence is
 collected.
 
 Record the candidate:
@@ -39,7 +44,7 @@ Record the candidate:
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/main
-git rev-parse origin/codex/windows-zero-approval-smoke-v6
+git rev-parse origin/codex/windows-zero-approval-smoke-v7
 git rev-parse origin/stable
 ```
 
@@ -48,7 +53,7 @@ The worktree must be clean. The candidate ref must contain the reviewed tree;
 verify that the release-relevant trees are byte-identical:
 
 ```bash
-git diff --exit-code origin/main origin/codex/windows-zero-approval-smoke-v6 -- \
+git diff --exit-code origin/main origin/codex/windows-zero-approval-smoke-v7 -- \
   .agents plugins scripts docs/release-evidence/schema-v1.json \
   docs/release-evidence/templates/macos-v1.json \
   docs/WINDOWS_SMOKE.md docs/MACOS_SMOKE.md docs/RELEASE.md \
@@ -111,7 +116,7 @@ $env:CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_ROOT = $SmokeRoot
 $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY = 'never'
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v6'
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v7'
 ```
 
 After Hook trust, the runner requires no operator-entered prompts, control

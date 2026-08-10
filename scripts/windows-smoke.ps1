@@ -24,7 +24,6 @@ $HookProject = $null
 $RawRoot = $null
 $ManagedCodexPath = $null
 $ManagedShellPathConfig = $null
-$CommandShimPath = Join-Path $PSScriptRoot 'invoke-command-shim.ps1'
 $DedicatedCodexHome = [string]$env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME
 $OriginalCodexHome = [string]$env:CODEX_HOME
 $Checks = [Collections.Generic.List[object]]::new()
@@ -146,20 +145,29 @@ function Resolve-ProcessCommand {
                 ForEach-Object { [pscustomobject]@{ Source = $_.Source; Extension = [IO.Path]::GetExtension($_.Source) } }
         )
     }
-    $selected = @($commands | Where-Object { $_.Extension -eq '.ps1' } | Select-Object -First 1)
-    if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -eq '.exe' } | Select-Object -First 1) }
-    if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -in @('.cmd', '.bat') } | Select-Object -First 1) }
-    if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -notin @('.cmd', '.bat', '') } | Select-Object -First 1) }
+    # Do not launch npm/codex shims through a Store-installed pwsh.exe. Store
+    # PowerShell prepends its WindowsApps package directory to PATH at startup,
+    # undoing the managed PATH filter before Codex detects its default shell.
+    $selected = @($commands | Where-Object { $_.Extension -in @('.cmd', '.bat') } | Select-Object -First 1)
+    if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -eq '.exe' -and $_.Source -notmatch '(?i)[\\/]WindowsApps(?:[\\/]|$)' } | Select-Object -First 1) }
+    if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -eq '.ps1' } | Select-Object -First 1) }
+    if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -notin @('.cmd', '.bat', '.exe', '.ps1', '') } | Select-Object -First 1) }
     if ($selected.Count -eq 0) {
-        throw "no directly executable or PowerShell command was found for $Name"
+        throw "no non-Store executable or script command was found for $Name"
     }
     if ($selected[0].Extension -eq '.ps1') {
-        $pwsh = [string]@(Get-Command -Name 'pwsh' -CommandType Application -ErrorAction Stop)[0].Source
-        return [pscustomobject]@{ FilePath = $pwsh; Prefix = @('-NoProfile', '-File', [string]$selected[0].Source) }
+        $systemPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (-not (Test-Path -LiteralPath $systemPowerShell -PathType Leaf)) {
+            throw 'system Windows PowerShell is required to launch PowerShell scripts without WindowsApps PATH reinjection'
+        }
+        return [pscustomobject]@{ FilePath = $systemPowerShell; Prefix = @('-NoProfile', '-File', [string]$selected[0].Source) }
     }
     if ($selected[0].Extension -in @('.cmd', '.bat')) {
-        $pwsh = [string]@(Get-Command -Name 'pwsh' -CommandType Application -ErrorAction Stop)[0].Source
-        return [pscustomobject]@{ FilePath = $pwsh; Prefix = @('-NoProfile', '-File', $CommandShimPath, [string]$selected[0].Source) }
+        $commandProcessor = Join-Path $env:SystemRoot 'System32\cmd.exe'
+        if (-not (Test-Path -LiteralPath $commandProcessor -PathType Leaf)) {
+            throw 'system command processor is required to launch command shims without WindowsApps PATH reinjection'
+        }
+        return [pscustomobject]@{ FilePath = $commandProcessor; Prefix = @('/d', '/s', '/c', [string]$selected[0].Source) }
     }
     return [pscustomobject]@{ FilePath = [string]$selected[0].Source; Prefix = @() }
 }
@@ -448,7 +456,7 @@ function Assert-InstalledPluginBytes {
 function Invoke-Wrapper {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     $installer = Join-Path $Source 'install.ps1'
-    return Invoke-Process -FilePath 'pwsh' -ArgumentList (@('-NoProfile', '-File', $installer) + $Arguments) -WorkingDirectory $Source
+    return Invoke-Process -FilePath $installer -ArgumentList $Arguments -WorkingDirectory $Source
 }
 
 function Write-SmokeFixture {
@@ -617,6 +625,10 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -PathType Leaf)) {
         throw 'system Windows PowerShell is required for managed sandbox turns'
     }
+    $pathProbe = Invoke-Process -FilePath 'cmd' -ArgumentList @('/d', '/c', 'echo %PATH%') -EnvironmentOverrides @{ PATH = $ManagedCodexPath }
+    if ($pathProbe.Stdout -match '(?i)[\\/]WindowsApps(?:[\\/]|;|$)') {
+        throw 'managed command launch reintroduced a WindowsApps PATH entry'
+    }
     if ($ValidateZeroApprovalContract) {
         Write-Output 'Windows zero-approval-v1 preflight passed.'
         return
@@ -691,7 +703,7 @@ try {
     $sessionTraceBeforeCount = @(Read-CodexSessionTrace -Context $SessionId).Count
     $reviewStartedAt = [DateTime]::UtcNow
     $implementationPrompt = @'
-Review the existing dependency-free Node.js 24 line-normalization utility and tests in this temporary project without modifying files. Follow the trusted fixed-context automatic-router instruction injected for this turn. Call route_stage exactly once for a bounded review stage with phase=review and evidence review=true, workProduct=true, requirementsSettled=true, strongVerification=true, batchSize=2 plus the host's actual bounded-subagent capabilities. A Sol/Terra-only host must omit Luna. The root task and exactly one bounded subagent must independently inspect the existing source and tests against this fixed checklist: CRLF normalization, CR normalization, trailing spaces/tabs removal, exactly one final LF for non-empty input, empty input preservation, existing final newline handling, Chinese text preservation, and no runtime dependencies. When the route delegates, call the spawn_agent collaboration tool exactly once using target.model and target.effort; the subagent must return only its structured checklist and must not route recursively or own record_outcome. The root must complete its own checklist, call wait_agent until the subagent's final checklist is available, compare both results, and call record_outcome exactly once using the returned structured-check gate. Pass only when both reviews pass and agree. Do not run Node tests or any write command; the native runner performs the executable test immediately after this read-only review. Then call status, history, diagnose, and learning status. Return only one redacted JSON object with exactly rootReview, subagentReview, agreement, and testExecution. Each review must contain exactly verdict and checks; verdict must be passed, and checks must contain exactly the boolean keys crlf, cr, trailingWhitespace, nonEmptyFinalLf, emptyInput, existingFinalNewline, chineseText, dependencyFree. Set agreement to true and testExecution to deferred-to-native-runner. Never expose source, prompt text, environment values, secrets, paths, session/context identifiers, or raw logs.
+Review the existing dependency-free Node.js 24 line-normalization utility and tests in this temporary project without modifying files. Follow the trusted fixed-context automatic-router instruction injected for this turn. For every shell tool call in this smoke, request at least a 30-second initial yield and, if it still returns a running cell, call the wait tool until that cell completes; include this same rule in the bounded subagent task. Call route_stage exactly once for a bounded review stage with phase=review and evidence review=true, workProduct=true, requirementsSettled=true, strongVerification=true, batchSize=2 plus the host's actual bounded-subagent capabilities. A Sol/Terra-only host must omit Luna. The root task and exactly one bounded subagent must independently inspect the existing source and tests against this fixed checklist: CRLF normalization, CR normalization, trailing spaces/tabs removal, exactly one final LF for non-empty input, empty input preservation, existing final newline handling, Chinese text preservation, and no runtime dependencies. When the route delegates, call the spawn_agent collaboration tool exactly once using target.model and target.effort; the subagent must return only its structured checklist and must not route recursively or own record_outcome. The root must complete its own checklist, call wait_agent until the subagent's final checklist is available, compare both results, and call record_outcome exactly once using the returned structured-check gate. Pass only when both reviews pass and agree. Do not run Node tests or any write command; the native runner performs the executable test immediately after this read-only review. Then call status, history, diagnose, and learning status. Return only one redacted JSON object with exactly rootReview, subagentReview, agreement, and testExecution. Each review must contain exactly verdict and checks; verdict must be passed, and checks must contain exactly the boolean keys crlf, cr, trailingWhitespace, nonEmptyFinalLf, emptyInput, existingFinalNewline, chineseText, dependencyFree. Set agreement to true and testExecution to deferred-to-native-runner. Never expose source, prompt text, environment values, secrets, paths, session/context identifiers, or raw logs.
 '@
     $implementationTurn = Invoke-CodexTurn -Prompt $implementationPrompt -Model 'gpt-5.6-sol' -ResumeSession $SessionId
     $implementationTrace = @(Read-CodexSessionTrace -Context $SessionId | Select-Object -Skip $sessionTraceBeforeCount)
