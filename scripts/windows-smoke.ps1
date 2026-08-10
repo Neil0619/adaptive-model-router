@@ -22,6 +22,7 @@ $Project = $null
 $Project2 = $null
 $HookProject = $null
 $RawRoot = $null
+$ManagedCodexPath = $null
 $CommandShimPath = Join-Path $PSScriptRoot 'invoke-command-shim.ps1'
 $DedicatedCodexHome = [string]$env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME
 $OriginalCodexHome = [string]$env:CODEX_HOME
@@ -104,6 +105,12 @@ function Register-CodexPermissionTelemetry {
                 $PermissionEvidence.permissionFailures = [int]$PermissionEvidence.permissionFailures + 1
             }
         }
+        elseif ($eventType -eq 'item.completed' -and $itemType -eq 'command_execution' -and [string]$event.item.status -eq 'failed') {
+            $commandFailure = [string]$event.item.aggregated_output
+            if ($commandFailure -match '(?i)(?:CreateProcessAsUserW failed|windows sandbox: runner failed|access is denied|permission denied|拒绝访问)') {
+                $PermissionEvidence.permissionFailures = [int]$PermissionEvidence.permissionFailures + 1
+            }
+        }
     }
     if (-not [string]::IsNullOrWhiteSpace($Text) -and $Text -match '(?i)(?:CreateProcessAsUserW failed|windows sandbox: runner failed|access is denied|permission denied|拒绝访问)') {
         $PermissionEvidence.permissionFailures = [int]$PermissionEvidence.permissionFailures + 1
@@ -161,6 +168,7 @@ function Invoke-Process {
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][string[]]$ArgumentList,
         [string]$WorkingDirectory = $PWD.Path,
+        [hashtable]$EnvironmentOverrides,
         [switch]$AllowFailure
     )
     $resolvedCommand = Resolve-ProcessCommand -Name $FilePath
@@ -171,6 +179,11 @@ function Invoke-Process {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    if ($EnvironmentOverrides) {
+        foreach ($entry in $EnvironmentOverrides.GetEnumerator()) {
+            $startInfo.Environment[[string]$entry.Key] = [string]$entry.Value
+        }
+    }
     foreach ($argument in (@($resolvedCommand.Prefix) + $ArgumentList)) { [void]$startInfo.ArgumentList.Add($argument) }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
@@ -212,13 +225,13 @@ function Invoke-CodexTurn {
     else {
         $arguments = @('-a', 'never', '-s', 'read-only', 'exec', '--json', '-o', $lastMessage, '-C', $WorkingProject, '-m', $Model, $Prompt)
     }
-    $result = Invoke-Process -FilePath 'codex' -ArgumentList $arguments -WorkingDirectory $WorkingProject
+    $result = Invoke-Process -FilePath 'codex' -ArgumentList $arguments -WorkingDirectory $WorkingProject -EnvironmentOverrides @{ PATH = $ManagedCodexPath }
     $events = [Collections.Generic.List[object]]::new()
     foreach ($line in ($result.Stdout -split "`r?`n")) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         try { $events.Add(($line | ConvertFrom-Json -Depth 30)) } catch { throw 'Codex emitted a non-JSON event in --json mode' }
     }
-    Register-CodexPermissionTelemetry -Events @($events)
+    Register-CodexPermissionTelemetry -Events @($events) -Text $result.Stderr
     $thread = @($events | Where-Object { $_.type -eq 'thread.started' } | Select-Object -Last 1)
     $resolvedSession = if ($ResumeSession) { $ResumeSession } elseif ($thread.Count -eq 1) { [string]$thread[0].thread_id } else { $null }
     if ([string]::IsNullOrWhiteSpace($resolvedSession)) { throw 'Codex did not emit thread.started' }
@@ -411,6 +424,7 @@ function Assert-InstalledPluginBytes {
         '.mcp.json',
         'hooks\hooks.json',
         'runtime.json',
+        'scripts\codex-route.mjs',
         'scripts\hook.mjs',
         'skills\adaptive-model-router\SKILL.md'
     )
@@ -586,6 +600,15 @@ try {
         throw 'the dedicated Codex Home is missing its explicit smoke-home marker'
     }
     New-Item -ItemType Directory -Force -Path $SmokeRoot, $Project, $Project2, $HookProject, $RawRoot | Out-Null
+    $pathEntries = @([string]$env:PATH -split [regex]::Escape([string][IO.Path]::PathSeparator) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $managedPathEntries = @($pathEntries | Where-Object { $_ -notmatch '(?i)[\\/]WindowsApps(?:[\\/]|$)' })
+    if ($managedPathEntries.Count -eq 0) {
+        throw 'managed Codex PATH is empty after excluding WindowsApps entries'
+    }
+    $ManagedCodexPath = $managedPathEntries -join [IO.Path]::PathSeparator
+    if (-not (Test-Path -LiteralPath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -PathType Leaf)) {
+        throw 'system Windows PowerShell is required for managed sandbox turns'
+    }
     if ($ValidateZeroApprovalContract) {
         Write-Output 'Windows zero-approval-v1 preflight passed.'
         return
@@ -641,9 +664,11 @@ try {
     $InitialRootModel = [string]$baseline.rootTask.model
     if ([string]::IsNullOrWhiteSpace($InitialRootModel)) { throw 'the initial root-model baseline is unavailable' }
 
-    $hookTurn = Invoke-CodexTurn -WorkingProject $HookProject -Model 'gpt-5.6-sol' -Prompt @'
-Follow the trusted automatic-router context for this turn. Call route_stage exactly once for an implementation stage with workProduct=true, requirementsSettled=true, strongVerification=true, batchSize=2 and the host's actual Sol/Terra bounded-subagent capabilities. If it delegates, deliberately do not spawn a subagent and do not call record_outcome; return the redacted route and end the turn so the trusted Stop hook must finalize it as unknown.
-'@
+    $hookSeedTurn = Invoke-CodexTurn -WorkingProject $HookProject -Model 'gpt-5.6-sol' -Prompt 'Return only: stop-hook-probe-ready. This is a simple lifecycle acknowledgement with no work product. Do not call router tools, create a subagent, or record an outcome.'
+    $probe = Invoke-Process -FilePath 'node' -ArgumentList @($InstalledRouterLauncher, $InstalledRouterCli, 'stop-probe', '--confirm', 'STOP_HOOK_SMOKE', '--context', $hookSeedTurn.SessionId) -WorkingDirectory $HookProject
+    $probeRoute = $probe.Stdout | ConvertFrom-Json -Depth 30
+    if ($probeRoute.action -ne 'delegate') { throw 'the external Stop-hook probe did not create one pending delegated route' }
+    $hookTurn = Invoke-CodexTurn -WorkingProject $HookProject -Model 'gpt-5.6-sol' -ResumeSession $hookSeedTurn.SessionId -Prompt 'Return only: stop-hook-probe-complete. This is a simple lifecycle acknowledgement with no work product. Do not call router tools, create a subagent, or record an outcome.'
     $hookHistory = Read-RouterState -Command 'history' -Context $hookTurn.SessionId -WorkingProject $HookProject
     $hookUnknown = @($hookHistory.routes | Where-Object { $_.action -eq 'delegate' -and $_.outcome.status -eq 'unknown' -and $_.outcome.source -eq 'stop_hook' })
     $hookStatus = Read-RouterState -Command 'status' -Context $hookTurn.SessionId -WorkingProject $HookProject
@@ -837,9 +862,9 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     Assert-InstalledPluginBytes -InstalledRoot $installedPluginRoot
     Add-SmokeCheck -Id 'native-and-wrapper-lifecycle' -Blocking $true -Status 'PASS'
 
-    $second = Invoke-Process -FilePath 'codex' -ArgumentList @('-a', 'never', '-s', 'read-only', 'exec', '--json', '-C', $Project2, '-m', 'gpt-5.6-sol', 'router: status') -WorkingDirectory $Project2
+    $second = Invoke-Process -FilePath 'codex' -ArgumentList @('-a', 'never', '-s', 'read-only', 'exec', '--json', '-C', $Project2, '-m', 'gpt-5.6-sol', 'router: status') -WorkingDirectory $Project2 -EnvironmentOverrides @{ PATH = $ManagedCodexPath }
     $secondEvents = @($second.Stdout -split "`r?`n" | ForEach-Object { if ($_){ try { $_ | ConvertFrom-Json -Depth 20 } catch {} } })
-    Register-CodexPermissionTelemetry -Events $secondEvents
+    Register-CodexPermissionTelemetry -Events $secondEvents -Text $second.Stderr
     $secondEvent = @($secondEvents | Where-Object { $_.type -eq 'thread.started' } | Select-Object -Last 1)
     if ($secondEvent.Count -ne 1) { throw 'second project did not start a Codex session' }
     $secondStatus = Read-RouterState -Command 'status' -Context ([string]$secondEvent[0].thread_id) -WorkingProject $Project2

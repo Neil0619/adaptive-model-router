@@ -58,6 +58,7 @@ const installedCandidateVerifier = await readFile(join(repoRoot, "scripts", "ver
 const gateContentComparator = await readFile(join(repoRoot, "scripts", "compare-gate-content.mjs"), "utf8");
 const windowsSmokeRunnerPath = "scripts/windows-smoke.ps1";
 const windowsSmokeRunner = await readFile(join(repoRoot, ...windowsSmokeRunnerPath.split("/")), "utf8");
+const codexRouteCli = await readFile(join(pluginRoot, "scripts", "codex-route.mjs"), "utf8");
 const windowsCommandShim = await readFile(join(repoRoot, "scripts", "invoke-command-shim.ps1"), "utf8");
 const skill = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8");
 const skillUi = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "agents", "openai.yaml"), "utf8");
@@ -74,7 +75,7 @@ assert(Array.isArray(manifest.interface?.defaultPrompt) && manifest.interface.de
 assert(packageJson.version === "0.4.0", "release base version must be 0.4.0");
 const releaseTag = `v${packageJson.version}`;
 const releaseArtifact = `adaptive-model-router-${releaseTag}`;
-const releaseCandidateRef = "codex/windows-zero-approval-smoke-v3";
+const releaseCandidateRef = "codex/windows-zero-approval-smoke-v4";
 for (const [name, document] of [
   ["release checklist", releaseChecklist],
   ["Windows smoke", windowsSmoke],
@@ -129,6 +130,12 @@ assert(windowsSmokeRunner.includes("@('-a', 'never', '-s', 'read-only', 'exec', 
 assert(windowsSmokeRunner.includes("@('-a', 'never', '-s', 'read-only', 'exec', '--json'"), "Windows smoke runner must start new turns zero-approval and read-only");
 assert(windowsSmokeRunner.includes("@('-a', 'never', '-s', 'read-only', 'exec', '--json', '-C', $Project2"), "Windows smoke runner must keep the cross-project status probe zero-approval and read-only");
 assert(!windowsSmokeRunner.includes("@('exec', '-a'"), "Windows smoke runner must place global approval flags before the exec subcommand");
+assert(!windowsSmokeRunner.includes("deliberately do not spawn"), "Windows Stop-hook smoke must not ask the model to violate delegated execution");
+assert(windowsSmokeRunner.includes("@($InstalledRouterLauncher, $InstalledRouterCli, 'stop-probe', '--confirm', 'STOP_HOOK_SMOKE'"), "Windows smoke runner must seed the Stop-hook route through the installed launcher and plugin-data root");
+assert(codexRouteCli.includes("stop-probe requires exact confirmation"), "developer CLI must confirmation-gate the Stop-hook probe");
+assert(windowsSmokeRunner.includes("$ManagedCodexPath"), "Windows smoke runner must isolate the managed Codex PATH");
+assert(windowsSmokeRunner.includes("WindowsApps"), "Windows smoke runner must exclude Store app aliases from the managed Codex PATH");
+assert(windowsSmokeRunner.includes("itemType -eq 'command_execution'"), "Windows smoke runner must count structured sandbox command failures");
 assert(windowsSmokeRunner.includes("ADAPTIVE_ROUTER_SMOKE_ROOT"), "Windows smoke runner must use one controlled smoke root");
 assert(!windowsSmokeRunner.includes("GetTempPath"), "Windows smoke runner must not allocate an undeclared TEMP root");
 assert(windowsSmokeRunner.includes("CODEX_PERMISSION_PROFILE"), "Windows smoke runner must require the host permission profile attestation");

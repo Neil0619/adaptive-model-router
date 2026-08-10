@@ -33,6 +33,7 @@ Usage:
   node scripts/codex-route.mjs catalog
   node scripts/codex-route.mjs proposals [--context ID]
   node scripts/codex-route.mjs learning [--context ID]
+  node scripts/codex-route.mjs stop-probe --confirm STOP_HOOK_SMOKE [--context ID]
   node scripts/codex-route.mjs approve PROPOSAL_ID [--context ID]
   node scripts/codex-route.mjs reject PROPOSAL_ID [--context ID]
   node scripts/codex-route.mjs rebase PROPOSAL_ID [--context ID]
@@ -66,6 +67,32 @@ async function main() {
       }, { store }));
     }
     if (command === "catalog") return print(await getModelCatalog({ store }));
+    if (command === "stop-probe") {
+      if (args.confirm !== "STOP_HOOK_SMOKE") throw new Error("stop-probe requires exact confirmation");
+      const result = await callRouterTool("route_stage", {
+        contextId,
+        goal: "Verify trusted Stop-hook finalization.",
+        phase: "review",
+        evidence: {
+          review: true,
+          workProduct: true,
+          requirementsSettled: true,
+          strongVerification: true,
+          batchSize: 2,
+        },
+        hostCapabilities: {
+          delegation: {
+            available: true,
+            targets: [
+              { model: "gpt-5.6-sol", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+              { model: "gpt-5.6-terra", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
+            ],
+          },
+        },
+      }, { store });
+      if (result.action !== "delegate") throw new Error("stop-probe did not create a delegated route");
+      return print(result);
+    }
     if (command === "proposals") return print(await callRouterTool("list_policy_proposals", { contextId }, { store }));
     if (command === "learning") return print(await callRouterTool("get_learning_status", { contextId }, { store }));
     if (command === "approve" || command === "reject" || command === "rebase") {

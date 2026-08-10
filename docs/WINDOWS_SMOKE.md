@@ -13,7 +13,7 @@ The canonical automated entry point is
 [`scripts/windows-smoke.ps1`](../scripts/windows-smoke.ps1):
 
 ```powershell
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v3'
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v4'
 ```
 
 It accepts the frozen candidate ref plus one controlled smoke root. It uses
@@ -25,6 +25,12 @@ the controlled root.
 Its candidate gate normalizes only CRLF/CR versus LF when comparing tracked
 text files, so ordinary Windows checkout conversion is accepted while every
 other byte change remains blocking.
+For managed sandbox turns only, the runner removes `WindowsApps` entries from
+the child `PATH` so Codex selects the system Windows PowerShell executable
+instead of a Microsoft Store `pwsh.exe` alias that the sandbox user may be
+unable to launch. The coordinator, Desktop process, and operator environment
+remain unchanged; any structured sandbox command failure still increments
+`permissionFailures` and blocks PASS.
 Review and trust the three hooks before running it. A failure produces only
 stable warning codes in the artifact; raw prompts, events, session/context
 identifiers, errors, source, secrets, logs, and absolute paths are excluded.
@@ -54,7 +60,7 @@ $env:CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_ROOT = $SmokeRoot
 $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY = 'never'
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v3'
+.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-zero-approval-smoke-v4'
 ```
 
 All cloned source, projects, raw events, evidence, plugin, marketplace, AGENTS
@@ -147,7 +153,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/windows-zero-approval-smoke-v3"
+$CandidateRef = "codex/windows-zero-approval-smoke-v4"
 $RunRoot = Join-Path $env:ADAPTIVE_ROUTER_SMOKE_ROOT ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $RunRoot "source checkout"
 $Project = Join-Path $RunRoot "测试 project with spaces"
@@ -234,7 +240,16 @@ The trusted `UserPromptSubmit` Hook must process the control. The runner then
 sends `router: status`, independently reads installed router state, and proves
 that global automatic routing is on, task mode is automatic, and the first
 valid host model establishes only a baseline. No manual prompt, `/statusline`
-configuration, or `/status` transcription is part of the blocking gate.
+configuration, `/status` transcription, or selector action is required.
+
+To verify Stop finalization without contradicting the mandatory delegate
+contract, the host-side runner creates one confirmation-gated pending route for
+a known test session through the installed runtime launcher and developer CLI,
+so the probe and Hook use the same installed plugin-data database. It then
+resumes that session with a simple no-work-product acknowledgement that calls
+no router or subagent tools. The trusted `Stop` Hook must finalize the pending
+route as one `unknown` outcome with source `stop_hook`. The model is never
+instructed to ignore a returned delegate action.
 
 An operator may optionally watch the Desktop selector or CLI model status line
 while the runner executes. This is a non-blocking UX observation only; absence

@@ -4,7 +4,7 @@
   "status": "FAIL",
   "generatedAt": "2026-01-01T00:00:00.000Z",
   "candidate": {
-    "ref": "codex/windows-zero-approval-smoke-v3",
+    "ref": "codex/windows-zero-approval-smoke-v4",
     "commitSha": "0000000000000000000000000000000000000000",
     "pluginTreeSha256": "0000000000000000000000000000000000000000000000000000000000000000"
   },

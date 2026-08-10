@@ -13,7 +13,7 @@ async function source(path) {
 }
 
 test("native Windows smoke has one fail-closed zero-approval contract", async () => {
-  const [agents, runner, runbook, release, evidenceReadme, validator, schema, workflow, packageJson] = await Promise.all([
+  const [agents, runner, runbook, release, evidenceReadme, validator, schema, workflow, packageJson, codexRoute] = await Promise.all([
     source("AGENTS.md"),
     source("scripts/windows-smoke.ps1"),
     source("docs/WINDOWS_SMOKE.md"),
@@ -23,6 +23,7 @@ test("native Windows smoke has one fail-closed zero-approval contract", async ()
     source("docs/release-evidence/schema-v1.json"),
     source(".github/workflows/ci.yml"),
     source("plugins/adaptive-model-router/package.json"),
+    source("plugins/adaptive-model-router/scripts/codex-route.mjs"),
   ]);
 
   for (const document of [agents, runner, runbook, release]) {
@@ -36,6 +37,13 @@ test("native Windows smoke has one fail-closed zero-approval contract", async ()
   assert.match(runner, /@\('-a', 'never', '-s', 'read-only', 'exec', 'resume'/u);
   assert.match(runner, /@\('-a', 'never', '-s', 'read-only', 'exec', '--json'/u);
   assert.doesNotMatch(runner, /@\('exec', '-a'/u);
+  assert.doesNotMatch(runner, /deliberately do not spawn/u);
+  assert.match(runner, /@\(\$InstalledRouterLauncher, \$InstalledRouterCli, 'stop-probe', '--confirm', 'STOP_HOOK_SMOKE'/u);
+  assert.match(codexRoute, /stop-probe requires exact confirmation/u);
+  assert.match(runner, /ManagedCodexPath/u);
+  assert.match(runner, /WindowsApps/u);
+  assert.match(runner, /EnvironmentOverrides @\{ PATH = \$ManagedCodexPath \}/u);
+  assert.match(runner, /itemType -eq 'command_execution'/u);
   assert.match(runner, /Register-CodexPermissionTelemetry/u);
   assert.match(runner, /ValidateZeroApprovalContract/u);
 
@@ -67,6 +75,49 @@ test("native Windows smoke has one fail-closed zero-approval contract", async ()
   assert.match(workflow, /Exercise Windows zero-approval preflight/u);
 });
 
+test("Stop-hook probe seeds a pending route outside the model turn and finalizes it once", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "adaptive-router-stop-probe-test-"));
+  const project = join(fixture, "probe project");
+  const routerHome = join(fixture, "router home");
+  const codexRoute = join(repoRoot, "plugins", "adaptive-model-router", "scripts", "codex-route.mjs");
+  const hook = join(repoRoot, "plugins", "adaptive-model-router", "scripts", "hook.mjs");
+  const contextId = "stop-probe-context";
+  const env = {
+    ...process.env,
+    ADAPTIVE_ROUTER_HOME: routerHome,
+    ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
+  };
+  try {
+    await mkdir(project, { recursive: true });
+    await mkdir(routerHome, { recursive: true });
+    assert.equal(spawnSync("git", ["init", project], { encoding: "utf8" }).status, 0);
+    const probe = spawnSync(process.execPath, [
+      codexRoute, "stop-probe", "--confirm", "STOP_HOOK_SMOKE", "--context", contextId,
+    ], { cwd: project, encoding: "utf8", env });
+    assert.equal(probe.status, 0, probe.stderr);
+    assert.equal(JSON.parse(probe.stdout).action, "delegate");
+
+    const stopped = spawnSync(process.execPath, [hook, "stop"], {
+      cwd: project,
+      input: JSON.stringify({ cwd: project, session_id: contextId, hook_event_name: "Stop", stop_hook_active: false }),
+      encoding: "utf8",
+      env,
+    });
+    assert.equal(stopped.status, 0, stopped.stderr);
+
+    const history = spawnSync(process.execPath, [codexRoute, "history", "--context", contextId], {
+      cwd: project, encoding: "utf8", env,
+    });
+    assert.equal(history.status, 0, history.stderr);
+    const routes = JSON.parse(history.stdout).routes;
+    assert.equal(routes.length, 1);
+    assert.equal(routes[0].outcome.status, "unknown");
+    assert.equal(routes[0].outcome.source, "stop_hook");
+  } finally {
+    await rm(fixture, { recursive: true, force: true });
+  }
+});
+
 test("native Windows zero-approval preflight enforces policy and path containment", { skip: process.platform !== "win32" }, async () => {
   const fixture = await mkdtemp(join(tmpdir(), "adaptive-router-zero-approval-test-"));
   const smokeRoot = join(fixture, "controlled root");
@@ -89,7 +140,7 @@ test("native Windows zero-approval preflight enforces policy and path containmen
     };
     const invoke = (env, output = join(smokeRoot, "evidence")) => spawnSync("pwsh", [
       "-NoProfile", "-File", runner,
-      "-CandidateRef", "codex/windows-zero-approval-smoke-v3",
+      "-CandidateRef", "codex/windows-zero-approval-smoke-v4",
       "-OutputDirectory", output,
       "-ValidateZeroApprovalContract",
     ], { encoding: "utf8", env });
