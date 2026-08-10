@@ -270,7 +270,7 @@ function agentsPath() {
   return join(codexHome(), "AGENTS.md");
 }
 
-const AGENTS_INSTRUCTION = "When adaptive routing context is present, route only bounded task stages to a subagent using the model and reasoning effort returned by route_stage. Keep the root task as orchestrator, avoid overlapping writers, verify the delegated work, and record exactly one final outcome.";
+const AGENTS_INSTRUCTION = "When adaptive routing context is present and route_stage returns action=delegate, the applicable router skill explicitly authorizes and requires exactly one bounded subagent under conditional policies that allow skill-requested delegation; this action is not a suggestion. Use the returned model and reasoning effort, keep the root task as orchestrator, avoid overlapping writers, never silently continue the delegated stage in the root task or ask the user to re-authorize it, verify the delegated work, and record exactly one final outcome. Only an actual host-tool rejection enters the documented failed/tooling flow.";
 const AGENTS_RESTORE_PATTERN = /<!-- adaptive-model-router:restore separator=([012]) created=([01]) -->/;
 
 function agentsBlock({ separatorLength, created }) {

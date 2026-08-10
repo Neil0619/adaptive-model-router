@@ -345,6 +345,11 @@ test("install, upgrade, optional AGENTS patch, and uninstall are idempotent in a
     const patched = await readFile(agents, "utf8");
     assert.equal(patched.split(AGENTS_MARKER_START).length - 1, 1);
     assert.equal(patched.split(AGENTS_MARKER_END).length - 1, 1);
+    assert.match(
+      patched,
+      /action=delegate.*explicitly authorizes and requires exactly one bounded subagent/i,
+    );
+    assert.match(patched, /not a suggestion/i);
 
     const removed = runManager(project, fake, ["uninstall", "--non-interactive"]);
     assert.equal(removed.status, 0, removed.stderr);

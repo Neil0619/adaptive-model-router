@@ -5,10 +5,11 @@ lives in [WINDOWS_SMOKE.md](WINDOWS_SMOKE.md). Do not create the release tag
 until every blocking item below has fresh evidence for the exact candidate
 commit. The original `codex/v040-scoring-evolution` candidate was invalidated
 by the read-only-inspection Hook fix. The later shadow-inspection candidate was
-invalidated by the Stop-hook fix; the replacement candidate below includes the
-same reviewed v0.4 runtime plus both fixes, Windows cache-replacement integrity
-checks, explicit Stop-finalization observability, and the canonical redacted
-smoke-evidence gate.
+invalidated by the Stop-hook fix, and the Stop-hook candidate was invalidated
+by the delegate-authorization contract fix. The replacement candidate below
+includes the same reviewed v0.4 runtime plus all three fixes, Windows
+cache-replacement integrity checks, explicit Stop-finalization observability,
+and the canonical redacted smoke-evidence gate.
 
 v0.4.0 includes the reviewed v0.3.1 capability fix, which was merged into the
 v0.4.0 main tree and was not published separately. The published `stable`

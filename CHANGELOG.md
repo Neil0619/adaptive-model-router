@@ -55,6 +55,13 @@ All notable changes to this project are documented here.
   path, and reports `CACHE_DAMAGED: RECOVERY_REQUIRED` when a locked Windows
   replacement leaves an incomplete cache.
 
+- A returned `delegate` action is now explicitly identified in the skill,
+  automatic Hook context, and optional managed AGENTS block as the applicable
+  skill authorization required by conditional multi-agent policies. Agents
+  must launch exactly one bounded subagent instead of presenting delegation as
+  a suggestion, silently continuing root-only, or asking the user to authorize
+  the route again; actual host-tool rejection still uses the bounded tooling
+  failure flow.
 - Missing delegated outcomes no longer make the Stop hook inject a continuation
   prompt that can displace the user-facing final reply. The hook now records all
   remaining outcomes as learning-ineligible `unknown` values in one transaction

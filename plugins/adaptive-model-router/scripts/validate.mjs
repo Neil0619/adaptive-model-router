@@ -85,13 +85,17 @@ for (const [name, document] of [
     !document.includes("codex/v040-shadow-inspection-fix"),
     `${name} still uses the invalidated shadow-inspection candidate`,
   );
+  assert(
+    !document.includes("codex/v040-stop-hook-fix"),
+    `${name} still uses the invalidated Stop-hook candidate`,
+  );
 }
 assert(
-  windowsSmoke.includes("published `stable` remains on v0.3.0"),
+  /published\s+`stable`\s+remains\s+on\s+v0\.3\.0/u.test(windowsSmoke),
   "Windows smoke must state the published stable version",
 );
 assert(
-  releaseChecklist.includes("published `stable` remains on v0.3.0"),
+  /published\s+`stable`\s+remains\s+on\s+v0\.3\.0/u.test(releaseChecklist),
   "release checklist must state the published stable version",
 );
 checkObjectSchemas(smokeEvidenceSchema, "smokeEvidence");
@@ -154,6 +158,15 @@ assert(macosSmoke.includes("--expected-ref=\"$CandidateRef\"") && macosSmoke.inc
 assert(releaseChecklist.includes("docs/release-evidence/v0.4.0/macos.json"), "release checklist must retain canonical macOS evidence");
 assert(installedCandidateVerifier.includes(".codex-marketplace-install.json"), "installed candidate verifier must inspect marketplace metadata");
 assert(gateContentComparator.includes("normalizeLineEndings"), "gate comparator must normalize line endings explicitly");
+assert(
+  /applicable\s+skill's\s+explicit\s+authorization/u.test(windowsSmoke) &&
+    /no\s+real\s+SubagentStart\s+occurs/u.test(windowsSmoke),
+  "Windows smoke must block unexecuted delegate routes",
+);
+assert(
+  /explicit\s+authorization\s+under\s+conditional\s+multi-agent\s+policies/u.test(macosSmoke),
+  "macOS smoke must preserve the shared delegate-authorization contract",
+);
 const releaseVersions = [...releaseWorkflow.matchAll(/\bv\d+\.\d+\.\d+\b/gu)].map(
   (match) => match[0],
 );
@@ -205,6 +218,12 @@ assert(skill.includes("`target.effort` value to the current Codex subagent `reas
 assert(!skill.includes("using exactly `target.model` and `target.effort`"), "skill must not present router output fields as host parameter names");
 assert(skill.includes("root-task model is unchanged and host-managed"), "skill must require a visible root/stage model boundary");
 assert(skill.includes("global automatic activation"), "skill must document opt-in automatic activation");
+assert(!skill.includes("can recommend one bounded subagent model"), "skill must not weaken delegate into a recommendation");
+assert(skill.includes("`delegate` is a required action, not a suggestion"), "skill must make delegate mandatory");
+assert(
+  skill.includes("satisfies conditional multi-agent policies"),
+  "skill must treat delegate as explicit authorization under conditional multi-agent policies",
+);
 assert(skill.includes("`resolve_host_model_intent`"), "skill must document host-model intent resolution");
 assert(skill.includes("`get_route_history`"), "skill must expose the route history workflow");
 assert(skill.includes("already a bounded subagent"), "skill must prevent recursive subagent routing");

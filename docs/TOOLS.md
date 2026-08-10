@@ -96,8 +96,14 @@ returns `continue` with `HOST_MODEL_INTENT_PENDING` or
 If the action is `delegate`, create exactly one bounded subagent using
 `target.model` and map `target.effort` to the host's `reasoning_effort`
 parameter. The root integrates the result and runs the returned verification
-gate. If the host cannot express those parameters, continue in the root and do
-not claim the root model changed.
+gate. `delegate` is an instruction, not a recommendation. Under a conditional
+host policy that permits subagents when an applicable skill explicitly requests
+them, the Adaptive Model Router skill's `delegate` action is that authorization.
+Do not reinterpret the conditional policy as a blanket prohibition, silently
+continue the delegated stage in the root, or ask the user to authorize it again.
+If the host cannot express those parameters, report delegation as unavailable
+before routing; if the host tool rejects a declared target at startup, use the
+tooling-failure flow below. Do not claim the root model changed.
 
 The root-visible catalog, bounded delegate catalog, and classifier catalog are
 independent. A Luna entry in the root picker does not authorize Luna as a

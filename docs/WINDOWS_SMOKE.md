@@ -77,6 +77,10 @@ The smoke passes only when all of the following succeed:
   task that does not name the skill or repeat a trigger phrase;
 - one substantive `delegate` route and exactly one bounded subagent using the
   returned model and effort;
+- confirmation that `delegate` is executed as the applicable skill's explicit
+  authorization under conditional multi-agent policies, never weakened into a
+  suggestion, blanket prohibition, user re-authorization request, or silent
+  root-only continuation;
 - bounded-subagent isolation: no recursive route, root-model intent event,
   control mutation, or child-owned outcome;
 - host capabilities containing only Sol/Terra never return Luna as the bounded
@@ -230,6 +234,13 @@ remain redacted and show a healthy database, a versioned scoring profile, zero
 pending outcomes, and zero unexpected Stop-finalized unknown outcomes. These
 assertions are blocking and are derived from JSONL lifecycle and
 installed-router state, not from an operator transcription.
+
+The returned `delegate` action is the applicable skill's explicit authorization
+under conditional multi-agent policies and must produce the one bounded
+SubagentStart recorded by the canonical runner. It is required, not a
+suggestion: a blanket prohibition, user re-authorization request, or silent
+root-only continuation fails the gate unless the host subagent tool actually
+rejects the declared target and the documented tooling-failure flow runs.
 
 ## 6. Exercise host-model intent protection
 
@@ -404,10 +415,12 @@ artifact and cannot change the release gate.
 ## Stop conditions
 
 Mark the smoke `FAIL` and do not create the release tag if any required step
-fails, the route does not return `delegate`, the host cannot use the returned
-model/effort, a hook cannot be trusted, a model-change request delegates while
-pending/manual, an outcome remains pending, diagnostics leak sensitive content
-or an absolute project path, or installation is not idempotent.
+fails, the route does not return `delegate`, a returned `delegate` is weakened
+into a suggestion or no real SubagentStart occurs without an actual host-tool
+rejection, the host cannot use the returned model/effort, a hook cannot be
+trusted, a model-change request delegates while pending/manual, an outcome
+remains pending, diagnostics leak sensitive content or an absolute project
+path, or installation is not idempotent.
 
 Do not call `clear_project_data` as part of this smoke. Uninstall deliberately
 leaves learning data intact.

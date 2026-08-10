@@ -13,6 +13,10 @@ Do not create or push the release tag from this smoke task.
 - Global automatic activation persists across a new project/task.
 - An ordinary substantive prompt, without a skill trigger phrase, produces one
   `delegate` route, one bounded subagent, root verification, and one outcome.
+- The returned `delegate` is executed as the applicable skill's explicit
+  authorization under conditional multi-agent policies, never weakened into a
+  suggestion, blanket prohibition, user re-authorization request, or silent
+  root-only continuation.
 - The bounded subagent receives the isolation context, completes only its
   assigned scope, and never creates a pending root-model event or recursively
   calls `route_stage`.
@@ -115,6 +119,12 @@ metadata keep the root task unchanged and record the bounded target separately.
 The subagent must execute only its assigned scope and return to
 the root without calling `route_stage`, asking for a manual/automatic decision,
 or creating a host-model change event.
+
+Treat `delegate` as the applicable skill's explicit authorization under any
+conditional host policy that permits skill-requested subagents. It is required,
+not a suggestion. A blanket-ban explanation, user re-authorization request, or
+silent root-only continuation fails this gate unless the host subagent tool
+actually rejects the declared target and the tooling-failure flow is followed.
 
 Run `router: status` and `router: history 10`. Each route must distinguish its
 root-model snapshot from its bounded target. Run `diagnose_router` with the same
