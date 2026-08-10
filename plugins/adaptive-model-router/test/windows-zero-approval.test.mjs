@@ -54,6 +54,8 @@ test("native Windows smoke has one fail-closed zero-approval contract", async ()
   assert.match(runner, /\.Environment\.Remove\(\[string\]\$entry\.Key\)/u);
   assert.match(runner, /itemType -eq 'command_execution'/u);
   assert.match(runner, /Register-CodexPermissionTelemetry/u);
+  assert.match(runner, /-Text \$result\.Stderr -ManagedTurnStderr/u);
+  assert.match(runner, /if \(\$ManagedTurnStderr\)[\s\S]*CreateProcessAsUserW failed\|windows sandbox: runner failed/u);
   assert.match(runner, /ValidateZeroApprovalContract/u);
 
   for (const document of [runbook, release, evidenceReadme]) {
@@ -150,7 +152,7 @@ test("native Windows zero-approval preflight enforces policy and path containmen
     };
     const invoke = (env, output = join(smokeRoot, "evidence")) => spawnSync("pwsh", [
       "-NoProfile", "-File", runner,
-      "-CandidateRef", "codex/windows-zero-approval-smoke-v9",
+      "-CandidateRef", "codex/windows-zero-approval-smoke-v10",
       "-OutputDirectory", output,
       "-ValidateZeroApprovalContract",
     ], { encoding: "utf8", env });

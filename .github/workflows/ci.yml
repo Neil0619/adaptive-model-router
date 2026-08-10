@@ -43,7 +43,7 @@ jobs:
           $env:ADAPTIVE_ROUTER_SMOKE_ROOT = $smokeRoot
           $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $smokeHome
           $env:ADAPTIVE_ROUTER_SMOKE_HOST_APPROVAL_POLICY = 'never'
-          & '..\..\scripts\windows-smoke.ps1' -CandidateRef 'codex/windows-zero-approval-smoke-v9' -ValidateZeroApprovalContract
+          & '..\..\scripts\windows-smoke.ps1' -CandidateRef 'codex/windows-zero-approval-smoke-v10' -ValidateZeroApprovalContract
       - name: Validate syntax, contracts, manifest, and marketplace
         run: npm run validate
       - name: Run bilingual routing benchmark

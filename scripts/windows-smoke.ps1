@@ -88,7 +88,8 @@ $PermissionEvidence = [ordered]@{
 function Register-CodexPermissionTelemetry {
     param(
         [AllowNull()][object[]]$Events,
-        [AllowNull()][string]$Text
+        [AllowNull()][string]$Text,
+        [switch]$ManagedTurnStderr
     )
     foreach ($event in @($Events)) {
         $eventType = if ($null -ne $event -and $event.PSObject.Properties.Name -contains 'type') { [string]$event.type } else { '' }
@@ -113,7 +114,13 @@ function Register-CodexPermissionTelemetry {
             }
         }
     }
-    if (-not [string]::IsNullOrWhiteSpace($Text) -and $Text -match '(?i)(?:CreateProcessAsUserW failed|windows sandbox: runner failed|access is denied|permission denied|拒绝访问)') {
+    $textPattern = if ($ManagedTurnStderr) {
+        '(?i)(?:CreateProcessAsUserW failed|windows sandbox: runner failed)'
+    }
+    else {
+        '(?i)(?:CreateProcessAsUserW failed|windows sandbox: runner failed|access is denied|permission denied|拒绝访问)'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Text) -and $Text -match $textPattern) {
         $PermissionEvidence.permissionFailures = [int]$PermissionEvidence.permissionFailures + 1
     }
 }
@@ -246,7 +253,7 @@ function Invoke-CodexTurn {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         try { $events.Add(($line | ConvertFrom-Json -Depth 30)) } catch { throw 'Codex emitted a non-JSON event in --json mode' }
     }
-    Register-CodexPermissionTelemetry -Events @($events) -Text $result.Stderr
+    Register-CodexPermissionTelemetry -Events @($events) -Text $result.Stderr -ManagedTurnStderr
     $thread = @($events | Where-Object { $_.type -eq 'thread.started' } | Select-Object -Last 1)
     $resolvedSession = if ($ResumeSession) { $ResumeSession } elseif ($thread.Count -eq 1) { [string]$thread[0].thread_id } else { $null }
     if ([string]::IsNullOrWhiteSpace($resolvedSession)) { throw 'Codex did not emit thread.started' }
