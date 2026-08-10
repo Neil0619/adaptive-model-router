@@ -114,6 +114,7 @@ test("smoke evidence validator accepts a strict redacted PASS and writes determi
     await writeFile(output, canonical.replaceAll("\n", "\r\n"));
     const crlfResult = spawnSync(process.execPath, [validator, output, "--write-derivatives"], { encoding: "utf8" });
     assert.equal(crlfResult.status, 0, crlfResult.stderr);
+    assert.equal(await readFile(output, "utf8"), canonical);
     assert.equal(await readFile(`${output}.sha256`, "utf8"), expectedChecksum);
   } finally {
     await project.cleanup();

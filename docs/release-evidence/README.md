@@ -9,6 +9,10 @@ human-readable Markdown view and SHA-256 sidecar with:
 node scripts/validate-smoke-evidence.mjs <evidence.json> --write-derivatives
 ```
 
+The derivative write normalizes the JSON artifact to LF line endings first, so
+the generated `.sha256` sidecar verifies the exact retained JSON bytes on every
+platform.
+
 Evidence must be collected from the exact frozen candidate commit. A `PASS`
 is invalid unless all 16 canonical blocking checks pass, diagnostics are
 healthy, the bounded target is Sol/Terra, privacy passes, and delegated/Stop

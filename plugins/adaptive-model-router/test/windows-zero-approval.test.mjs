@@ -55,6 +55,7 @@ test("native Windows smoke has one fail-closed zero-approval contract", async ()
   assert.match(runner, /itemType -eq 'command_execution'/u);
   assert.match(runner, /Register-CodexPermissionTelemetry/u);
   assert.match(runner, /-Text \$result\.Stderr -ManagedTurnStderr/u);
+  assert.match(runner, /if \(\$process\.ExitCode -ne 0\) \{\s+Register-CodexPermissionTelemetry -Text \$stderr/u);
   assert.match(runner, /if \(\$ManagedTurnStderr\)[\s\S]*CreateProcessAsUserW failed\|windows sandbox: runner failed/u);
   assert.match(runner, /ValidateZeroApprovalContract/u);
 

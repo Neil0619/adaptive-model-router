@@ -275,6 +275,7 @@ validate(evidence, schema, args);
 if (args.writeDerivatives) {
   const stem = basename(args.path, ".json");
   const canonicalBytes = Buffer.from(bytes.toString("utf8").replace(/\r\n?/gu, "\n"), "utf8");
+  await writeFile(args.path, canonicalBytes);
   await writeFile(join(dirname(args.path), `${stem}.md`), markdown(evidence), "utf8");
   await writeFile(join(dirname(args.path), `${stem}.json.sha256`), `${createHash("sha256").update(canonicalBytes).digest("hex")}  ${basename(args.path)}\n`, "utf8");
 }

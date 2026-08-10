@@ -222,9 +222,11 @@ function Invoke-Process {
         $process.WaitForExit()
         $stdout = $stdoutTask.GetAwaiter().GetResult()
         $stderr = $stderrTask.GetAwaiter().GetResult()
-        if ($process.ExitCode -ne 0 -and -not $AllowFailure) {
+        if ($process.ExitCode -ne 0) {
             Register-CodexPermissionTelemetry -Text $stderr
-            throw "process failed with exit code $($process.ExitCode)"
+            if (-not $AllowFailure) {
+                throw "process failed with exit code $($process.ExitCode)"
+            }
         }
         return [pscustomobject]@{ ExitCode = $process.ExitCode; Stdout = $stdout; Stderr = $stderr }
     }
