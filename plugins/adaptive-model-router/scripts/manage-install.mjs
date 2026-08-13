@@ -9,7 +9,7 @@ import {
   AGENTS_MARKER_START,
   ROUTER_VERSION,
 } from "./lib/constants.mjs";
-import { spawnSpec } from "./lib/app-server.mjs";
+import { resolveCodexCommandSync, spawnSpec } from "./lib/codex-command.mjs";
 import { sanitizedError } from "./lib/io.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
 
@@ -21,9 +21,10 @@ const LEGACY_MARKETPLACE = "adaptive-local";
 const LEGACY_PLUGIN_ID = "adaptive-model-router@adaptive-local";
 
 class InstallError extends Error {
-  constructor(message, exitCode) {
+  constructor(message, exitCode, errorCode = null) {
     super(message);
     this.exitCode = exitCode;
+    this.errorCode = errorCode;
   }
 }
 
@@ -57,7 +58,7 @@ function parseArgs(values) {
 }
 
 function codexExecutable() {
-  return process.env.CODEX_BIN || "codex";
+  return resolveCodexCommandSync().path;
 }
 
 function commandSpec(command, args) {
@@ -76,6 +77,17 @@ function run(command, args, { json = false, quiet = false } = {}) {
     env: process.env,
   });
   if (result.error || result.status !== 0) {
+    const failureText = `${result.error?.message || ""}\n${result.stderr || ""}`;
+    if (
+      args[0] === "plugin" &&
+      /failed to (?:back up|remove) (?:existing )?plugin cache entry|used by another process/iu.test(failureText)
+    ) {
+      throw new InstallError(
+        "CACHE_LOCKED: Codex plugin cache is in use on Windows; fully exit Codex Desktop and every Codex CLI session, then retry",
+        5,
+        "CACHE_LOCKED",
+      );
+    }
     throw new InstallError(`${command} ${args.join(" ")} failed`, 5);
   }
   if (!quiet && result.stdout) process.stdout.write(result.stdout);
@@ -111,6 +123,87 @@ function entryName(entry) {
 
 function pluginId(entry) {
   return entry.pluginId || `${entry.name}@${entry.marketplaceName}`;
+}
+
+function installedPluginHealth(state) {
+  const entry = state.installed.find((candidate) => pluginId(candidate) === PLUGIN_ID);
+  if (!entry) return { state: "missing" };
+  const root = entry?.source?.path;
+  if (typeof root !== "string" || root.length === 0) return { state: "unverifiable" };
+  try {
+    const manifest = JSON.parse(readFileSync(join(root, ".codex-plugin", "plugin.json"), "utf8"));
+    const runtime = JSON.parse(readFileSync(join(root, "runtime.json"), "utf8"));
+    JSON.parse(readFileSync(join(root, ".mcp.json"), "utf8"));
+    JSON.parse(readFileSync(join(root, "hooks", "hooks.json"), "utf8"));
+    readFileSync(join(root, "skills", "adaptive-model-router", "SKILL.md"), "utf8");
+    if (
+      manifest?.name !== "adaptive-model-router" ||
+      manifest?.version !== ROUTER_VERSION ||
+      runtime?.runtimeVersion !== manifest.version
+    ) {
+      return { state: "damaged" };
+    }
+    return { state: "healthy" };
+  } catch {
+    return { state: "damaged" };
+  }
+}
+
+function verifyInstalledPlugin(state) {
+  const health = installedPluginHealth(state);
+  if (health.state === "missing") {
+    throw new InstallError(
+      "PLUGIN_INSTALL_INCOMPLETE: Codex did not report Adaptive Model Router as installed after plugin add",
+      5,
+      "PLUGIN_INSTALL_INCOMPLETE",
+    );
+  }
+  if (health.state === "unverifiable") {
+    throw new InstallError(
+      "PLUGIN_INSTALL_INCOMPLETE: Codex reported Adaptive Model Router as installed but did not expose a verifiable cache path",
+      5,
+      "PLUGIN_INSTALL_INCOMPLETE",
+    );
+  }
+  if (health.state === "damaged") {
+    throw new InstallError(
+      "CACHE_DAMAGED: RECOVERY_REQUIRED: Adaptive Model Router is listed as installed but required plugin files are missing or invalid; fully exit Codex and reinstall the exact reviewed ref",
+      5,
+      "CACHE_DAMAGED",
+    );
+  }
+}
+
+function addPluginWithIntegrityCheck(beforeState) {
+  const beforeHealth = installedPluginHealth(beforeState);
+  try {
+    codex(["plugin", "add", PLUGIN_ID]);
+  } catch (error) {
+    if (error?.errorCode === "CACHE_LOCKED") {
+      try {
+        const afterHealth = installedPluginHealth(loadState());
+        if (
+          ["damaged", "unverifiable"].includes(afterHealth.state) ||
+          (beforeHealth.state !== "missing" && ["missing", "unverifiable"].includes(afterHealth.state))
+        ) {
+          throw new InstallError(
+            "CACHE_DAMAGED: RECOVERY_REQUIRED: plugin replacement failed after the existing Adaptive Model Router cache became incomplete; fully exit Codex and reinstall the exact reviewed ref",
+            5,
+            "CACHE_DAMAGED",
+          );
+        }
+      } catch (inspectionError) {
+        if (inspectionError?.errorCode === "CACHE_DAMAGED") throw inspectionError;
+        throw new InstallError(
+          "CACHE_DAMAGED: RECOVERY_REQUIRED: plugin replacement failed and the resulting cache state could not be verified; fully exit Codex and reinstall the exact reviewed ref",
+          5,
+          "CACHE_DAMAGED",
+        );
+      }
+    }
+    throw error;
+  }
+  verifyInstalledPlugin(loadState());
 }
 
 function canonicalRepository(source) {
@@ -177,7 +270,7 @@ function agentsPath() {
   return join(codexHome(), "AGENTS.md");
 }
 
-const AGENTS_INSTRUCTION = "When adaptive routing context is present, route only bounded task stages to a subagent using the model and reasoning effort returned by route_stage. Keep the root task as orchestrator, avoid overlapping writers, verify the delegated work, and record exactly one final outcome.";
+const AGENTS_INSTRUCTION = "When adaptive routing context is present and route_stage returns action=delegate, the applicable router skill explicitly authorizes and requires exactly one bounded subagent under conditional policies that allow skill-requested delegation; this action is not a suggestion. Use the returned model and reasoning effort, keep the root task as orchestrator, avoid overlapping writers, never silently continue the delegated stage in the root task or ask the user to re-authorize it, verify the delegated work, and record exactly one final outcome. Only an actual host-tool rejection enters the documented failed/tooling flow.";
 const AGENTS_RESTORE_PATTERN = /<!-- adaptive-model-router:restore separator=([012]) created=([01]) -->/;
 
 function agentsBlock({ separatorLength, created }) {
@@ -278,7 +371,7 @@ async function installOrUpgrade(args, state) {
   }
   if (currentMarketplace) codex(["plugin", "marketplace", "upgrade", MARKETPLACE]);
   else codex(["plugin", "marketplace", "add", REPOSITORY, "--ref", args.ref]);
-  codex(["plugin", "add", PLUGIN_ID]);
+  addPluginWithIntegrityCheck(state);
   if (args.patchAgents) patchAgents();
   process.stdout.write(`Adaptive Model Router ${ROUTER_VERSION} is installed.\n`);
   process.stdout.write("On first install, or when upgrading from v0.3.x, trust the plugin hooks and start one new task.\n");

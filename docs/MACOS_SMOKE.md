@@ -2,8 +2,10 @@
 
 This is the blocking logged-in macOS gate for `v0.4.0`. Run it in Codex Desktop
 or CLI on native macOS against the frozen
-`codex/v040-shadow-inspection-fix` ref.
+`codex/windows-smoke` ref.
 Do not create or push the release tag from this smoke task.
+
+<!-- smoke-contract: post-trust-agent-owned-v1 selector-optional-v1 -->
 
 ## Pass criteria
 
@@ -11,13 +13,17 @@ Do not create or push the release tag from this smoke task.
 - Global automatic activation persists across a new project/task.
 - An ordinary substantive prompt, without a skill trigger phrase, produces one
   `delegate` route, one bounded subagent, root verification, and one outcome.
+- The returned `delegate` is executed as the applicable skill's explicit
+  authorization under conditional multi-agent policies, never weakened into a
+  suggestion, blanket prohibition, user re-authorization request, or silent
+  root-only continuation.
 - The bounded subagent receives the isolation context, completes only its
   assigned scope, and never creates a pending root-model event or recursively
   calls `route_stage`.
 - A Sol/Terra-only bounded capability never returns Luna; an explicit Luna
   override asks the user without starting a subagent.
-- The Codex model selector remains the root model while Subagents shows the
-  bounded target.
+- Route and execution metadata keep the root boundary unchanged while recording
+  the bounded target separately. A visible selector check is optional UX only.
 - A changed model slug stays root-only while pending; keep-automatic resumes on
   the next stage, and current-task manual mode prevents delegation.
 - Status, history, diagnostics, Hook output, and SQLite contain no prompt,
@@ -29,7 +35,7 @@ Do not create or push the release tag from this smoke task.
 ## 1. Prepare a Unicode project and candidate checkout
 
 ```bash
-CandidateRef="codex/v040-shadow-inspection-fix"
+CandidateRef="codex/windows-smoke"
 SmokeRoot="$(mktemp -d)/Adaptive Router macOS 冒烟"
 Source="$SmokeRoot/source checkout"
 Project="$SmokeRoot/测试 project with spaces"
@@ -37,6 +43,7 @@ mkdir -p "$Project"
 git clone --branch "$CandidateRef" --single-branch \
   https://github.com/Neil0619/adaptive-model-router.git "$Source"
 CandidateCommit="$(git -C "$Source" rev-parse HEAD)"
+PluginTreeSha256="$(git -C "$Source" ls-tree -r --full-tree "$CandidateCommit" plugins/adaptive-model-router | shasum -a 256 | awk '{print $1}')"
 git -C "$Project" init
 node --version
 git --version
@@ -45,6 +52,15 @@ codex --version
 
 Stop if Node is older than `24.15.0`, Codex is not logged in, or the candidate
 ref does not resolve to the reviewed commit.
+
+Run the complete automated gate from the exact clone before installation:
+
+```bash
+cd "$Source/plugins/adaptive-model-router"
+npm test
+npm run validate
+npm run eval
+```
 
 ## 2. Install and trust the candidate
 
@@ -69,49 +85,71 @@ Then install the candidate:
 ```bash
 codex plugin marketplace add Neil0619/adaptive-model-router --ref "$CandidateRef"
 codex plugin add adaptive-model-router@adaptive-model-router
+node "$Source/scripts/verify-installed-candidate.mjs" \
+  --ref="$CandidateRef" --commit="$CandidateCommit"
 ```
+
+The verifier binds Codex marketplace metadata when present, otherwise the
+marketplace Git checkout, to the reviewed repository, cloned ref, and full
+revision. It also requires the installed, enabled plugin to report version `0.4.0`.
+Stop if it fails. Run it again after the final lifecycle reinstall in section 6.
 
 Open `$Project` in Codex, start a new task, review `/hooks`, and trust the
 current `SubagentStart`, `UserPromptSubmit`, and `Stop` definitions. Never
 bypass Hook trust.
 
-Send `router: global on` once, then `router: status`. Confirm global automatic
-activation is on, task mode is automatic, and the first observed model only
-establishes a baseline without a pending question.
+After this trust step, the smoke agent owns every remaining prompt, control
+message, host-managed model transition, verification, and restoration. It must
+not ask the operator to retype controls or change the model selector.
+
+The smoke agent submits `router: global on` once, then `router: status`.
+Confirm global automatic activation is on, task mode is automatic, and the
+first observed model only establishes a baseline without a pending question.
 
 ## 3. Run the automatic route lifecycle
 
-Use the exact ordinary implementation prompt in section 5 of the
-[Windows smoke runbook](WINDOWS_SMOKE.md).
-It intentionally does not name the skill or use `$adaptive-model-router`.
+Use the managed route-lifecycle contract in section 5 of the
+[Windows smoke runbook](WINDOWS_SMOKE.md). The ordinary managed prompt must not
+name the skill, use `$adaptive-model-router`, or contain a router control prefix.
 
 The result must include one `delegate` route, exactly one bounded subagent using
 the returned model and `reasoning_effort`, successful root verification, and
-exactly one strict `record_outcome`. Confirm the Codex model selector still
-shows the root task during delegation; inspect the Subagents view for the
-bounded target. The subagent must execute only its assigned scope and return to
+exactly one strict `record_outcome`. Machine-verify that route and execution
+metadata keep the root task unchanged and record the bounded target separately.
+The subagent must execute only its assigned scope and return to
 the root without calling `route_stage`, asking for a manual/automatic decision,
 or creating a host-model change event.
+
+Treat `delegate` as the applicable skill's explicit authorization under any
+conditional host policy that permits skill-requested subagents. It is required,
+not a suggestion. A blanket-ban explanation, user re-authorization request, or
+silent root-only continuation fails this gate unless the host subagent tool
+actually rejects the declared target and the tooling-failure flow is followed.
 
 Run `router: status` and `router: history 10`. Each route must distinguish its
 root-model snapshot from its bounded target. Run `diagnose_router` with the same
 host task ID and assert that all projections exclude the prompt, source, secret,
-and absolute project path. The Stop hook must report no missing outcome.
+and absolute project path. The Stop hook must not create outcome-bookkeeping
+feedback or replace the final user-facing reply.
 
 ## 4. Exercise both host-model decisions
 
-Follow section 6 of the [Windows smoke runbook](WINDOWS_SMOKE.md) on macOS:
+Use a dedicated persistent CLI session and host-managed `codex exec`/`resume`
+model arguments to automate the section 6 contract from the
+[Windows smoke runbook](WINDOWS_SMOKE.md):
 
-1. Change to a different model slug, not only a different effort.
+1. Establish an initial model slug, then select a different slug on a resumed
+   turn, not only a different effort.
 2. Submit the ordinary review prompt and confirm `continue` with
    `HOST_MODEL_INTENT_PENDING`, no subagent, and one stable change ID across an
    unanswered reminder.
-3. Send `router: auto session`; confirm automatic mode resumes from the next
+3. Submit `router: auto session`; confirm automatic mode resumes from the next
    substantive stage.
-4. Change the slug again, create a new pending event, send `router: manual`, and
-   confirm a substantive `route_stage` returns `continue` with
-   `MANUAL_ROOT_SELECTED` and no target.
-5. Restore with `router: auto session`.
+4. Return to the initial slug, prove a distinct pending event, submit
+   `router: manual`, and confirm a substantive `route_stage` returns `continue`
+   with `MANUAL_ROOT_SELECTED` and no target.
+5. Submit `router: auto session`, then verify automatic mode, no pending change,
+   and the initial root-model slug.
 
 Record that effort-only changes are not visible to the Hook and require an
 explicit `router: manual` when they mean root-only intent.
@@ -166,6 +204,8 @@ cd "$Source"
 ./install.sh uninstall --ref="$CandidateRef"
 ./install.sh --ref="$CandidateRef"
 ./install.sh --ref="$CandidateRef"
+node "$Source/scripts/verify-installed-candidate.mjs" \
+  --ref="$CandidateRef" --commit="$CandidateCommit"
 ```
 
 Confirm the owned AGENTS marker was inserted once and removed completely while
@@ -180,10 +220,53 @@ this release; changes to Hook JSON, skill instructions, MCP schemas, or the
 storage contract still require a new task.
 
 Start Codex from a second temporary project without repeating `router: global
-on`. Trust the current Hook hash if asked, then use `router: status` to confirm
-the global setting persisted while task-specific manual state did not.
+on`. An unchanged Hook hash must not create a routine second trust step; if it
+does, investigate the installed candidate identity or trust record. Use
+`router: status` to confirm the global setting persisted while task-specific
+manual state did not.
 
-## 7. Report
+## 7. Produce canonical evidence and report
+
+Copy the checked-in fail-closed template only after completing every preceding
+step:
+
+```bash
+EvidenceDir="$Source/docs/release-evidence/v0.4.0"
+mkdir -p "$EvidenceDir"
+cp "$Source/docs/release-evidence/templates/macos-v1.json" "$EvidenceDir/macos.json"
+```
+
+Populate `macos.json` only from observed results. Replace the timestamp,
+candidate commit/tree hash, environment versions, route target/gate and final
+diagnostics. Map the 16 checks as follows:
+
+- preflight, frozen commit, exact-clone test/validate/eval, native install and
+  both installed-revision verifications cover the first five IDs;
+- Hook trust/global activation, delegate/outcome, root/target separation, Luna
+  guard, privacy, learning/shadow, host-model intent and negative control cover
+  the next eight IDs;
+- native/wrapper lifecycle, second-project persistence and settled final status
+  cover the final three IDs.
+
+Change a check from `SKIP` to `PASS` only when its corresponding observation
+passed. For an overall PASS, set `warnings` to `[]`, set the strict route and
+healthy diagnostic fields, and change top-level `status` last. Then validate and
+generate the only derived views:
+
+```bash
+node "$Source/scripts/validate-smoke-evidence.mjs" "$EvidenceDir/macos.json" \
+  --write-derivatives --expected-ref="$CandidateRef" \
+  --expected-commit="$CandidateCommit"
+```
+
+Retain `macos.json`, `macos.md`, and `macos.json.sha256`. The validator rejects
+placeholders, incomplete checks, mismatched platform/ref/commit, pending or
+Stop-finalized unknown outcomes, unhealthy diagnostics, and private path-like
+data from any `PASS` artifact.
+
+Record that the current Hook definitions were reviewed and trusted before the
+run. The JSON is the blocking functional source of truth. The summary below is
+agent-produced; its selector field is optional, non-blocking UX information.
 
 Return:
 
@@ -199,7 +282,7 @@ Global automatic persisted: PASS | FAIL
 Ordinary prompt delegate lifecycle: PASS | FAIL
 Observed root model:
 Bounded target model/effort:
-Codex selector stayed on root: PASS | FAIL
+Optional selector UX observation: NOT OBSERVED | PASS | FAIL
 Verification and record_outcome: PASS | FAIL
 Pending keep-automatic behavior: PASS | FAIL
 Manual-root behavior: PASS | FAIL

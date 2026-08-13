@@ -5,7 +5,7 @@ description: Choose whether a substantive Codex task stage should continue local
 
 # Adaptive Model Router
 
-Use the router at a meaningful stage boundary, not before every message. It does not change the root task model. It can recommend one bounded subagent model and reasoning effort while the root remains the orchestrator. A trusted plugin hook may automatically activate this workflow globally, so a user does not need to mention the skill on every substantive task.
+Use the router at a meaningful stage boundary, not before every message. It does not change the root task model. It can select one bounded subagent model and reasoning effort while the root remains the orchestrator. A trusted plugin hook may automatically activate this workflow globally, so a user does not need to mention the skill on every substantive task.
 
 This routing workflow belongs to the root task only. If the current agent is
 already a bounded subagent, execute only the parent's assigned scope and return
@@ -20,6 +20,10 @@ recording.
    - a concise stage `goal`;
    - the current `phase`;
    - strictly factual boolean/integer `evidence`;
+     set `grillWithDocs: true` only when the `grill-with-docs` skill is actually
+     active for the current stage, and set `planMode: true` only when the host
+     has actually placed the current task in Plan mode. Mere mentions do not
+     activate either signal, and the two signals may be combined;
    - a stable task/thread identifier as `contextId`;
    - `previousRouteId` only when continuing or retrying a route returned earlier;
    - an `override` only when the user explicitly requested a model or effort for this call.
@@ -33,13 +37,22 @@ recording.
 2. Follow the returned `action`:
    - `continue`: keep working in the current root task. Do not create a subagent.
    - `ask_user`: explain the reason code and obtain the missing decision.
-   - `delegate`: create one bounded subagent by passing `target.model` to the host's `model` parameter and `target.effort` to the host's `reasoning_effort` parameter, if the host supports them.
+   - `delegate`: create exactly one bounded subagent by passing `target.model` to the host's `model` parameter and `target.effort` to the host's `reasoning_effort` parameter, if the host supports them.
+     `delegate` is a required action, not a suggestion. This applicable skill
+     instruction is the explicit request that satisfies conditional multi-agent policies
+     which allow subagents when a skill requests delegation. When the declared host
+     capability remains available, create the subagent immediately; do not reinterpret
+     such a conditional policy as a blanket prohibition, continue the delegated stage in
+     the root task, or ask the user to authorize it again. Only an actual host-tool
+     rejection enters the tooling-failure flow below.
 3. Immediately after every successful `route_stage` call, show one compact route notice in commentary:
    - always say that the root-task model is unchanged and host-managed;
    - when `rootTask.modelVisibility` is `hook_observed`, show `rootTask.model`; its reasoning effort remains visible only in the Codex composer;
    - for `delegate`, show `target.model`, `target.effort`, and `routeId`;
    - for `continue` or `ask_user`, show the action, reason codes, and `routeId`;
    - never label a bounded subagent target as the current root-task model.
+   - never call a `delegate` result a recommendation or claim that a conditional
+     no-proactive-subagent policy prevented the required launch.
    Prefer the stable shape
    `Router · automatic · root=<observed-or-host-managed> (unchanged) · stage=<action/target> · route=<routeId>`
    and localize labels to the user's language.

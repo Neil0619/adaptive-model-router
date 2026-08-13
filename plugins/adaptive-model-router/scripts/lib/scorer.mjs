@@ -39,9 +39,15 @@ export function isTrivialTask(goal, evidence = {}) {
 }
 
 function scoringProfile(profile = {}) {
+  const profileVersion = Number(profile.profileVersion || DEFAULT_SCORING_PROFILE.profileVersion);
+  const weights = { ...DEFAULT_SCORING_PROFILE.weights, ...(profile.weights || {}) };
+  if (profileVersion < 2) {
+    weights.grillWithDocs = 0;
+    weights.planMode = 0;
+  }
   return {
-    profileVersion: Number(profile.profileVersion || DEFAULT_SCORING_PROFILE.profileVersion),
-    weights: { ...DEFAULT_SCORING_PROFILE.weights, ...(profile.weights || {}) },
+    profileVersion,
+    weights,
     thresholds: { ...DEFAULT_SCORING_PROFILE.thresholds, ...(profile.thresholds || {}) },
   };
 }
@@ -54,6 +60,8 @@ export function scoreTask({ goal, phase = "", evidence = {}, policy = {}, profil
   const generalRisk = evidence.highRisk === true || includesAny(text, PATTERNS.risk);
   const signals = {
     ambiguity: evidence.ambiguous === true || includesAny(text, PATTERNS.ambiguity),
+    grillWithDocs: evidence.grillWithDocs === true,
+    planMode: evidence.planMode === true,
     risk: generalRisk || evidence.highFailureCost === true || evidence.irreversible === true,
     highFailureCost: evidence.highFailureCost === true,
     irreversible: evidence.irreversible === true,
@@ -72,6 +80,8 @@ export function scoreTask({ goal, phase = "", evidence = {}, policy = {}, profil
   };
   let score = weights.base;
   if (signals.ambiguity) score += weights.ambiguity;
+  if (signals.grillWithDocs) score += weights.grillWithDocs;
+  if (signals.planMode) score += weights.planMode;
   if (signals.risk) score += weights.risk;
   if (signals.security || signals.migration) score += weights.safety;
   if (signals.crossCutting) score += weights.crossCutting;

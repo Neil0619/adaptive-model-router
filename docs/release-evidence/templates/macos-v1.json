@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "gate": "macos-native",
+  "status": "FAIL",
+  "generatedAt": "2026-01-01T00:00:00.000Z",
+  "candidate": {
+    "ref": "codex/windows-smoke",
+    "commitSha": "0000000000000000000000000000000000000000",
+    "pluginTreeSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "environment": {
+    "platform": "macos",
+    "surface": "cli",
+    "osVersion": "unavailable",
+    "codexVersion": "unavailable",
+    "nodeVersion": "unavailable",
+    "gitVersion": "unavailable"
+  },
+  "checks": [
+    { "id": "native-preflight", "blocking": true, "status": "SKIP" },
+    { "id": "candidate-frozen", "blocking": true, "status": "SKIP" },
+    { "id": "candidate-automated-gate", "blocking": true, "status": "SKIP" },
+    { "id": "native-install", "blocking": true, "status": "SKIP" },
+    { "id": "installed-candidate-integrity", "blocking": true, "status": "SKIP" },
+    { "id": "hook-trust-and-global-on", "blocking": true, "status": "SKIP" },
+    { "id": "route-subagent-outcome", "blocking": true, "status": "SKIP" },
+    { "id": "root-target-boundary", "blocking": true, "status": "SKIP" },
+    { "id": "capability-boundary", "blocking": true, "status": "SKIP" },
+    { "id": "redacted-observability", "blocking": true, "status": "SKIP" },
+    { "id": "learning-and-shadow", "blocking": true, "status": "SKIP" },
+    { "id": "host-model-intent", "blocking": true, "status": "SKIP" },
+    { "id": "negative-control", "blocking": true, "status": "SKIP" },
+    { "id": "native-and-wrapper-lifecycle", "blocking": true, "status": "SKIP" },
+    { "id": "cross-project-persistence", "blocking": true, "status": "SKIP" },
+    { "id": "final-state-settled", "blocking": true, "status": "SKIP" }
+  ],
+  "route": {
+    "action": "unavailable",
+    "targetFamily": "none",
+    "targetEffort": "none",
+    "verificationGate": "unavailable",
+    "pendingOutcomes": 0,
+    "stopHookUnknown": 0
+  },
+  "diagnostics": {
+    "databaseHealth": "unavailable",
+    "classifierState": "unavailable",
+    "privacy": "FAIL"
+  },
+  "warnings": ["TEMPLATE_NOT_EVIDENCE"]
+}

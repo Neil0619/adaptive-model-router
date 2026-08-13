@@ -115,7 +115,10 @@ does not expose Luna for bounded delegation, automatic routing falls back to
 Terra and reports `MODEL_FAMILY_FALLBACK`. An explicit Luna target instead
 returns `ask_user`.
 
-Every delegated route has a verification gate and one strict final outcome. Missing outcomes are reminded once by the Stop hook; on the continued stop they become `unknown`, which is excluded from learning.
+Every delegated route has a verification gate and one strict final outcome. If
+the root still omits an outcome, the Stop hook records `unknown` and allows the
+user-facing reply to finish without creating a continuation prompt. Unknown
+outcomes are excluded from learning.
 
 `continue` and `ask_user` routes do not accept outcomes. See the
 [tool reference](docs/TOOLS.md) for the strict route and outcome contracts, all

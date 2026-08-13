@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Neil0619/adaptive-model-router/docs/release-evidence/schema-v1.json",
+  "title": "Adaptive Model Router smoke evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "gate",
+    "status",
+    "generatedAt",
+    "candidate",
+    "environment",
+    "checks",
+    "route",
+    "diagnostics",
+    "warnings"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "gate": { "enum": ["windows-native", "macos-native"] },
+    "status": { "enum": ["PASS", "FAIL"] },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "commitSha", "pluginTreeSha256"],
+      "properties": {
+        "ref": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "commitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "pluginTreeSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "surface", "osVersion", "codexVersion", "nodeVersion", "gitVersion"],
+      "properties": {
+        "platform": { "enum": ["windows", "macos"] },
+        "surface": { "enum": ["cli", "desktop"] },
+        "osVersion": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "codexVersion": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "nodeVersion": {
+          "anyOf": [
+            { "const": "unavailable" },
+            { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+" }
+          ]
+        },
+        "gitVersion": { "type": "string", "minLength": 1, "maxLength": 120 }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 16,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "blocking", "status"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" },
+          "blocking": { "const": true },
+          "status": { "enum": ["PASS", "FAIL", "SKIP"] }
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action", "targetFamily", "targetEffort", "verificationGate", "pendingOutcomes", "stopHookUnknown"],
+      "properties": {
+        "action": { "enum": ["delegate", "continue", "ask_user", "unavailable"] },
+        "targetFamily": { "enum": ["sol", "terra", "luna", "none"] },
+        "targetEffort": { "enum": ["low", "medium", "high", "xhigh", "max", "ultra", "none"] },
+        "verificationGate": { "enum": ["light-checks", "targeted-tests", "structured-check", "full-checks", "unavailable"] },
+        "pendingOutcomes": { "type": "integer", "minimum": 0 },
+        "stopHookUnknown": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["databaseHealth", "classifierState", "privacy"],
+      "properties": {
+        "databaseHealth": { "enum": ["ok", "degraded", "unavailable"] },
+        "classifierState": { "enum": ["closed", "open", "unavailable"] },
+        "privacy": { "enum": ["PASS", "FAIL"] }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$" }
+    }
+  }
+}

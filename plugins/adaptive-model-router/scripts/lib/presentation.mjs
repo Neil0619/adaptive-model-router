@@ -41,6 +41,9 @@ function transitionText(transition, locale) {
 
 function outcomeText(outcome, locale) {
   if (!outcome) return locale === "zh" ? "待记录" : "pending";
+  if (outcome.status === "unknown" && outcome.source === "stop_hook") {
+    return locale === "zh" ? "unknown（Stop 自动收敛）" : "unknown (auto-finalized by Stop)";
+  }
   return outcome.status;
 }
 
@@ -77,7 +80,7 @@ export function formatRouteStatus(status, { locale = "en" } = {}) {
       lines.push(`原因：${latest.reasonCodes.join(", ")}。`);
       lines.push(`结果：${outcomeText(latest.outcome, "zh")}。`);
     }
-    lines.push(`待记录结果：${status.pendingOutcomes}；待审批策略：${status.pendingProposals}。`);
+    lines.push(`待记录结果：${status.pendingOutcomes}；Stop 自动收敛 unknown：${status.outcomeObservability?.stopHookUnknown ?? 0}；待审批策略：${status.pendingProposals}。`);
     lines.push("查看记录：发送“路由器：历史 10”。");
     return lines.join("\n");
   }
@@ -101,7 +104,7 @@ export function formatRouteStatus(status, { locale = "en" } = {}) {
     lines.push(`Reasons: ${latest.reasonCodes.join(", ")}.`);
     lines.push(`Outcome: ${outcomeText(latest.outcome, "en")}.`);
   }
-  lines.push(`Pending outcomes: ${status.pendingOutcomes}; pending policy proposals: ${status.pendingProposals}.`);
+  lines.push(`Pending outcomes: ${status.pendingOutcomes}; Stop-auto-finalized unknown outcomes: ${status.outcomeObservability?.stopHookUnknown ?? 0}; pending policy proposals: ${status.pendingProposals}.`);
   lines.push('View records: send "router: history 10".');
   return lines.join("\n");
 }

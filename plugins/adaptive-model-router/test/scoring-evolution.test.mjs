@@ -59,7 +59,7 @@ test("database v3 stores redacted immutable score snapshots and excludes overrid
       assert.equal(JSON.stringify(automaticRow).includes(project.root), false);
       const profile = store.ensureScoringProfile(store.context({ cwd: project.root, contextId: "snapshot-auto" }));
       assert.equal(automaticRow.profile_id, profile.profileId);
-      assert.equal(profile.profileVersion, 1);
+      assert.equal(profile.profileVersion, DEFAULT_SCORING_PROFILE.profileVersion);
       recordOutcome(passedOutcome(automatic, "snapshot-auto"), { store, cwd: project.root });
       const status = await callRouterTool("get_learning_status", {
         contextId: "snapshot-auto",
@@ -223,18 +223,19 @@ test("offline profiles are immutable and a hard risk-floor violation rolls back 
       const contextId = "profile";
       const context = store.context({ cwd: project.root, contextId });
       const baseline = store.ensureScoringProfile(context);
+      const reanchoredVersion = DEFAULT_SCORING_PROFILE.profileVersion + 1;
       const reanchored = await callRouterTool("reanchor_scoring_profile", {
         contextId,
-        profileVersion: 2,
+        profileVersion: reanchoredVersion,
         definition: profileDefinition({ weights: { ambiguity: 20 } }),
         confirm: "REANCHOR_SCORING_PROFILE",
       }, { store, cwd: project.root });
       assert.equal(reanchored.parentProfileId, baseline.profileId);
-      assert.equal(store.ensureScoringProfile(context).profileVersion, 2);
+      assert.equal(store.ensureScoringProfile(context).profileVersion, reanchoredVersion);
       await assert.rejects(
         callRouterTool("reanchor_scoring_profile", {
           contextId,
-          profileVersion: 2,
+          profileVersion: reanchoredVersion,
           definition: profileDefinition(),
           confirm: "REANCHOR_SCORING_PROFILE",
         }, { store, cwd: project.root }),

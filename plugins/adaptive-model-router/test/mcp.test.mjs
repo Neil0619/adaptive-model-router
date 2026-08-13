@@ -1,12 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { temporaryProject } from "./fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const serverPath = join(pluginRoot, "scripts", "mcp-server.mjs");
+const runtimeVersion = JSON.parse(readFileSync(join(pluginRoot, "runtime.json"), "utf8")).runtimeVersion;
 
 function checkClosed(schema, path = "schema") {
   if (schema.type === "object") assert.equal(schema.additionalProperties, false, path);
@@ -59,7 +61,7 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
     const responses = result.stdout.trim().split(/\r?\n/).map(JSON.parse);
     assert.equal(responses.length, 9);
     assert.equal(responses[0].error.code, -32700);
-    assert.equal(responses[1].result.serverInfo.version, "0.4.0");
+    assert.equal(responses[1].result.serverInfo.version, runtimeVersion);
     const tools = responses[2].result.tools;
     assert.deepEqual(tools.map((tool) => tool.name), [
       "route_stage",

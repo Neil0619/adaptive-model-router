@@ -6,7 +6,19 @@
         "./scripts/node-launcher.mjs",
         "./scripts/mcp-server.mjs"
       ],
-      "cwd": "."
+      "cwd": ".",
+      "default_tools_approval_mode": "prompt",
+      "tools": {
+        "route_stage": { "approval_mode": "approve" },
+        "record_outcome": { "approval_mode": "approve" },
+        "get_route_status": { "approval_mode": "approve" },
+        "get_route_history": { "approval_mode": "approve" },
+        "list_policy_proposals": { "approval_mode": "approve" },
+        "get_learning_status": { "approval_mode": "approve" },
+        "shadow_route_stage": { "approval_mode": "approve" },
+        "resolve_host_model_intent": { "approval_mode": "approve" },
+        "diagnose_router": { "approval_mode": "approve" }
+      }
     }
   }
 }

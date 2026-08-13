@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { EFFORT_ORDER } from "../scripts/lib/constants.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
-import { desiredRoute } from "../scripts/lib/scorer.mjs";
+import { desiredRoute, scoreTask } from "../scripts/lib/scorer.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const SOL_TERRA_CAPABILITIES = {
@@ -62,6 +62,66 @@ test("deterministic score bands map to the documented family and effort", () => 
       { family, effort },
       `score=${score}, hardSignalCount=${hardSignalCount}`,
     );
+  }
+});
+
+test("active Grill with Docs and Plan mode each add 18 points and stack without hard signals", () => {
+  const base = { goal: "Prepare a work product.", phase: "implementation", evidence: {} };
+  const plainMention = scoreTask({
+    ...base,
+    goal: "Discuss Grill with Docs and Plan mode without activating either workflow.",
+  });
+  const grill = scoreTask({ ...base, evidence: { grillWithDocs: true } });
+  const plan = scoreTask({ ...base, evidence: { planMode: true } });
+  const stacked = scoreTask({
+    ...base,
+    evidence: { grillWithDocs: true, planMode: true },
+  });
+  const legacy = scoreTask({
+    ...base,
+    evidence: { grillWithDocs: true, planMode: true },
+    profile: { profileVersion: 1 },
+  });
+
+  assert.equal(plainMention.score, 40);
+  assert.equal(grill.score, 58);
+  assert.equal(plan.score, 58);
+  assert.equal(stacked.score, 76);
+  assert.equal(stacked.hardSignalCount, 0);
+  assert.equal(legacy.score, 40);
+});
+
+test("workflow evidence changes routed effort only when the actual modes are active", async () => {
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const input = {
+        goal: "Produce a work product.",
+        phase: "delivery",
+        contextId: "workflow-score",
+        hostCapabilities: ALL_CAPABILITIES,
+      };
+      const baseline = await routeStage({
+        ...input,
+        evidence: { workProduct: true },
+      }, { catalog: CATALOG, cwd: project.root });
+      const grill = await routeStage({
+        ...input,
+        contextId: "workflow-score-grill",
+        evidence: { workProduct: true, grillWithDocs: true },
+      }, { catalog: CATALOG, cwd: project.root });
+      const stacked = await routeStage({
+        ...input,
+        contextId: "workflow-score-stacked",
+        evidence: { workProduct: true, grillWithDocs: true, planMode: true },
+      }, { catalog: CATALOG, cwd: project.root });
+
+      assert.deepEqual(baseline.target, { model: "gpt-5.6-terra", effort: "low" });
+      assert.deepEqual(grill.target, { model: "gpt-5.6-terra", effort: "medium" });
+      assert.deepEqual(stacked.target, { model: "gpt-5.6-sol", effort: "medium" });
+    });
+  } finally {
+    await project.cleanup();
   }
 });
 

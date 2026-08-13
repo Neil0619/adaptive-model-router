@@ -6,6 +6,20 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- A native Windows smoke orchestrator with a two-parameter public interface,
+  strict path-free evidence schema, independent status/history/diagnostics
+  checks, exact clone-versus-installed revision verification, candidate-local
+  test/validate/eval gates, generated Markdown, and a SHA-256 sidecar.
+- After initial Hook trust, the Windows orchestrator automatically owns the
+  route lifecycle, Sol → Terra → Sol host-model-intent checks, control messages,
+  initial-model restoration, and final settled-state verification. Visible
+  selector/status-line observations are optional, non-blocking UX evidence.
+- A fail-closed macOS evidence template, exact installed ref/revision/version
+  verifier, expected-ref/commit validation, and canonical Markdown/SHA-256
+  retention flow for the blocking native macOS report.
+- Outcome observability that distinguishes explicit `record_outcome` results
+  from Stop-auto-finalized `unknown` outcomes without storing prompts or paths.
+
 - SQLite `user_version` 3 with immutable, versioned scoring profiles and one
   redacted score snapshot per delegated route. Snapshots contain only numeric
   scores, boolean signals, enum decisions, profile IDs, and learning
@@ -36,6 +50,22 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- The installer now reloads Codex plugin state after `plugin add`, validates
+  required cached manifests and runtime files when the CLI exposes a cache
+  path, and reports `CACHE_DAMAGED: RECOVERY_REQUIRED` when a locked Windows
+  replacement leaves an incomplete cache.
+
+- A returned `delegate` action is now explicitly identified in the skill,
+  automatic Hook context, and optional managed AGENTS block as the applicable
+  skill authorization required by conditional multi-agent policies. Agents
+  must launch exactly one bounded subagent instead of presenting delegation as
+  a suggestion, silently continuing root-only, or asking the user to authorize
+  the route again; actual host-tool rejection still uses the bounded tooling
+  failure flow.
+- Missing delegated outcomes no longer make the Stop hook inject a continuation
+  prompt that can displace the user-facing final reply. The hook now records all
+  remaining outcomes as learning-ineligible `unknown` values in one transaction
+  and allows repeated or concurrent Stop events to finish silently.
 - Release validation now binds the GitHub release workflow, archive, SBOM, and
   provenance artifact names to the package version so stale release tags fail
   before publication.

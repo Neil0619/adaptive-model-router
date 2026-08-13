@@ -24,6 +24,14 @@ creates a subagent or changes the root model.
 After each call, the skill must show a visible notice that separates the
 host-managed root task from the bounded-stage target.
 
+A returned `delegate` action is the applicable skill's explicit authorization
+under conditional host policies that permit skill-requested subagents. It is a
+required action, not a recommendation: the root must immediately create exactly
+one bounded subagent. It must not describe the route as merely suggested,
+silently keep the delegated stage root-only, claim that the conditional policy
+is a blanket subagent ban, or ask the user to re-authorize it. Only an actual
+host-tool rejection enters the documented tooling-failure retry flow.
+
 The hook retains only a validated active root-model slug when one is available;
 missing or invalid values display as host-managed. It treats slug changes as
 manual-intent signals only while automatic activation is effective. The first
@@ -61,9 +69,15 @@ return `ask_user`.
 
 The base score is `40`.
 
+The table below is scoring profile v2. Existing v1 profiles retain both new
+workflow weights as `0` until an explicitly confirmed re-anchor activates v2;
+historical v1 profiles and score snapshots are not rewritten.
+
 | Signal | Adjustment |
 | --- | ---: |
 | Ambiguity, architecture, or trade-offs | `+18` |
+| Active `grill-with-docs` skill | `+18` |
+| Active Plan mode | `+18` |
 | High-risk, production, public API, concurrency, and related risk | `+25` |
 | Security or migration | `+10` |
 | Cross-module or end-to-end change | `+15` |
@@ -76,6 +90,11 @@ The base score is `40`.
 | Non-risk exploration | `-8` |
 | Redacted task text longer than 2,000 characters | `+8` |
 | Approved category policy | `-15` through `+15` |
+
+`grill-with-docs` and Plan mode are independent factual signals and therefore
+stack to `+36` when both are active. Text that merely mentions either workflow
+does not score. Neither signal counts toward the independent hard-signal gate
+for Sol Max.
 
 The clamped `0..100` default mapping expresses the preferred policy family:
 

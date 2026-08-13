@@ -289,7 +289,7 @@ async function routeWithStore(input, options, store) {
     phase: input.phase,
     evidence: input.evidence,
     policy,
-    profile: scoringProfile.definition,
+    profile: { ...scoringProfile.definition, profileVersion: scoringProfile.profileVersion },
   });
   let classifier = { state: "not_needed", result: null, reasonCode: null };
   let classifierAdjustment = 0;
