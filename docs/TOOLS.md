@@ -72,9 +72,11 @@ Example for a host that currently exposes Sol and Terra:
 Important evidence fields include `workProduct`, `requirementsSettled`,
 `strongVerification`, `highRisk`, `securitySensitive`, `migration`,
 `crossCutting`, `publicContract`, `architectureTradeoff`, `highFailureCost`,
-`irreversible`, `parallelWriteRisk`, `mechanical`, `ambiguous`, `exploration`,
-`review`, `batchSize`, `hostCanDelegate`, `verificationFailed`, and enumerated
-`failureType`.
+`irreversible`, `parallelWriteRisk`, `mechanical`, `ambiguous`,
+`grillWithDocs`, `planMode`, `exploration`, `review`, `batchSize`,
+`hostCanDelegate`, `verificationFailed`, and enumerated `failureType`.
+Set `grillWithDocs` and `planMode` only from actual host/skill state; text
+mentions are not evidence. Each adds 18 points and they may stack.
 `hostCanDelegate` is retained for older callers. Omit it when
 `hostCapabilities.delegation` is supplied; contradictory values are rejected.
 

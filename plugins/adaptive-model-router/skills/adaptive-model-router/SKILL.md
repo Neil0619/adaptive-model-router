@@ -20,6 +20,10 @@ recording.
    - a concise stage `goal`;
    - the current `phase`;
    - strictly factual boolean/integer `evidence`;
+     set `grillWithDocs: true` only when the `grill-with-docs` skill is actually
+     active for the current stage, and set `planMode: true` only when the host
+     has actually placed the current task in Plan mode. Mere mentions do not
+     activate either signal, and the two signals may be combined;
    - a stable task/thread identifier as `contextId`;
    - `previousRouteId` only when continuing or retrying a route returned earlier;
    - an `override` only when the user explicitly requested a model or effort for this call.

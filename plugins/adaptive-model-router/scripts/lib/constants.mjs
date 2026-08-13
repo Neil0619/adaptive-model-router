@@ -98,10 +98,12 @@ export const DEFAULT_OFFSETS = Object.freeze(
 );
 
 export const DEFAULT_SCORING_PROFILE = Object.freeze({
-  profileVersion: 1,
+  profileVersion: 2,
   weights: Object.freeze({
     base: 40,
     ambiguity: 18,
+    grillWithDocs: 18,
+    planMode: 18,
     risk: 25,
     safety: 10,
     crossCutting: 15,

@@ -241,7 +241,7 @@ test("profile reanchor stales pending evidence and explicit rebase preserves the
       assert.equal(pending.delta, 5);
       const context = store.context({ cwd: project.root, contextId: "rebase-0" });
       const reanchored = store.reanchorScoringProfile(context, {
-        profileVersion: 2,
+        profileVersion: DEFAULT_SCORING_PROFILE.profileVersion + 1,
         definition: {
           weights: { ...DEFAULT_SCORING_PROFILE.weights },
           thresholds: { ...DEFAULT_SCORING_PROFILE.thresholds },

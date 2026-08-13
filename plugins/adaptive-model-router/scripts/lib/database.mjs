@@ -83,6 +83,18 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function hydrateScoringDefinition(profileVersion, definition = {}) {
+  const weights = { ...DEFAULT_SCORING_PROFILE.weights, ...(definition.weights || {}) };
+  if (Number(profileVersion) < 2) {
+    weights.grillWithDocs = 0;
+    weights.planMode = 0;
+  }
+  return {
+    weights,
+    thresholds: { ...DEFAULT_SCORING_PROFILE.thresholds, ...(definition.thresholds || {}) },
+  };
+}
+
 export function normalizeRootModel(value) {
   return normalizeModelSlug(value);
 }
@@ -1216,15 +1228,13 @@ export class RouterStore {
         };
       }
       const parsedDefinition = parseJson(current.definition_json, DEFAULT_SCORING_PROFILE);
+      const profileVersion = Number(current.profile_version);
       return {
         profileId: current.active_profile_id,
         parentProfileId: current.parent_profile_id || null,
         lastSafeProfileId: current.last_safe_profile_id || null,
-        profileVersion: Number(current.profile_version),
-        definition: {
-          weights: { ...DEFAULT_SCORING_PROFILE.weights, ...(parsedDefinition.weights || {}) },
-          thresholds: { ...DEFAULT_SCORING_PROFILE.thresholds, ...(parsedDefinition.thresholds || {}) },
-        },
+        profileVersion,
+        definition: hydrateScoringDefinition(profileVersion, parsedDefinition),
         source: current.source,
         outcomeSeq: Number(current.outcome_seq || 0),
         createdAt: current.created_at,
@@ -1263,15 +1273,13 @@ export class RouterStore {
       };
     }
     const parsedDefinition = parseJson(current.definition_json, DEFAULT_SCORING_PROFILE);
+    const profileVersion = Number(current.profile_version);
     return {
       profileId: current.active_profile_id,
       parentProfileId: current.parent_profile_id || null,
       lastSafeProfileId: current.last_safe_profile_id || null,
-      profileVersion: Number(current.profile_version),
-      definition: {
-        weights: { ...DEFAULT_SCORING_PROFILE.weights, ...(parsedDefinition.weights || {}) },
-        thresholds: { ...DEFAULT_SCORING_PROFILE.thresholds, ...(parsedDefinition.thresholds || {}) },
-      },
+      profileVersion,
+      definition: hydrateScoringDefinition(profileVersion, parsedDefinition),
       source: current.source,
       outcomeSeq: Number(current.outcome_seq || 0),
       createdAt: current.created_at,

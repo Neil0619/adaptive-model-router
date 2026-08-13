@@ -25,6 +25,8 @@ export const EVIDENCE_SCHEMA = {
     crossCutting: { type: "boolean" },
     mechanical: { type: "boolean" },
     ambiguous: { type: "boolean" },
+    grillWithDocs: { type: "boolean" },
+    planMode: { type: "boolean" },
     exploration: { type: "boolean" },
     review: { type: "boolean" },
     batchSize: { type: "integer", minimum: 0, maximum: 1000000 },

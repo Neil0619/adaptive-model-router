@@ -69,9 +69,15 @@ return `ask_user`.
 
 The base score is `40`.
 
+The table below is scoring profile v2. Existing v1 profiles retain both new
+workflow weights as `0` until an explicitly confirmed re-anchor activates v2;
+historical v1 profiles and score snapshots are not rewritten.
+
 | Signal | Adjustment |
 | --- | ---: |
 | Ambiguity, architecture, or trade-offs | `+18` |
+| Active `grill-with-docs` skill | `+18` |
+| Active Plan mode | `+18` |
 | High-risk, production, public API, concurrency, and related risk | `+25` |
 | Security or migration | `+10` |
 | Cross-module or end-to-end change | `+15` |
@@ -84,6 +90,11 @@ The base score is `40`.
 | Non-risk exploration | `-8` |
 | Redacted task text longer than 2,000 characters | `+8` |
 | Approved category policy | `-15` through `+15` |
+
+`grill-with-docs` and Plan mode are independent factual signals and therefore
+stack to `+36` when both are active. Text that merely mentions either workflow
+does not score. Neither signal counts toward the independent hard-signal gate
+for Sol Max.
 
 The clamped `0..100` default mapping expresses the preferred policy family:
 
