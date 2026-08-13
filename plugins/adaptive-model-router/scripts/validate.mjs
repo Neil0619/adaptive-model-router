@@ -156,9 +156,10 @@ assert(!windowsSmokeRunner.includes("--dangerously-bypass-approvals-and-sandbox"
 assert(!windowsSmokeRunner.includes("--dangerously-bypass-hook-trust"), "Windows smoke runner must not bypass Hook trust");
 assert(windowsSmokeRunner.includes("invoke-command-shim.ps1"), "Windows smoke runner must use the command-shim adapter");
 assert(windowsCommandShim.includes("ValueFromRemainingArguments"), "Windows command shim must preserve argument boundaries");
-assert(installManager.includes("HOT_UPGRADE_CONTINUITY_BROKEN"), "installer must fail when previous-runtime continuity cannot be restored");
-assert(installManager.includes("snapshotInstalledRuntimes"), "installer must protect installed immutable runtimes before plugin add");
-assert(installManager.includes("restoreInstalledRuntimes"), "installer must restore installed runtimes removed by Codex plugin add");
+assert(installManager.includes("HOST_RELOAD_REQUIRED"), "installer must reject host-surface and contract changes before hot upgrade");
+assert(installManager.includes("stageCompatibleRuntime"), "installer must side-load compatible immutable runtimes");
+assert(installManager.includes("hotUpgradeWithIntegrityCheck"), "installer must keep compatible upgrade separate from cold plugin replacement");
+assert(!/function hotUpgradeWithIntegrityCheck[\\s\\S]*?codex\(\["plugin", "add"/u.test(installManager), "compatible hot upgrade must not invoke Codex plugin re-registration");
 assert(installManager.includes('["mcp", "list", "--json"]'), "installer must verify Codex MCP registration");
 assert(installManager.includes("verifyInstalledToolContract"), "installer must verify the installed MCP tool contract");
 assert(taskToolVerifier.includes("--ephemeral"), "task-tool smoke must not persist its disposable Codex task");

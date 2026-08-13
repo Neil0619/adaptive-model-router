@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- Compatible runtime upgrades now stage an immutable sibling without invoking
+  `codex plugin add`, so the installer no longer risks removing Router tools
+  from already-created Desktop tasks. Host-surface and contract changes stop
+  with `HOST_RELOAD_REQUIRED`; the old pinned shell must prove it can activate
+  the staged version.
+- Upgrade diagnostics and documentation now distinguish new CLI task exposure,
+  dynamic MCP path discovery, and same-Desktop-task tool continuity. A task
+  whose Router tools are already missing requires a genuinely new non-forked
+  task; restart/reopen and fork are not presented as in-place repairs.
+
 ## [0.4.0] - 2026-07-26
 
 ### Added

@@ -35,6 +35,8 @@ specification.
 - [Native macOS smoke test](MACOS_SMOKE.md): the equivalent logged-in native
   macOS gate for automatic routing and host-model intent.
 - [Changelog](../CHANGELOG.md): release-visible behavior changes.
+- [2026-08-14 hot-upgrade incident](INCIDENT-2026-08-14-HOT-UPGRADE.md): root
+  cause, corrective controls, and permanent continuity rules.
 
 The release checklist is authoritative for release gates. The platform
 runbooks are authoritative for native Windows and macOS smoke procedures.

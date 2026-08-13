@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -33,6 +33,12 @@ const SOURCE_RUNTIME = parseRuntimeDescriptor(
 const INSTALL_VERSION = SOURCE_MANIFEST.version;
 const REQUIRED_TASK_TOOLS = Object.freeze(["diagnose_router", "record_outcome", "route_stage"]);
 const LIVE_TASK_SMOKE_TOOLS = Object.freeze(["diagnose_router", "route_stage"]);
+const HOST_SURFACE_FILES = Object.freeze([
+  ".mcp.json",
+  "hooks/hooks.json",
+  "skills/adaptive-model-router/SKILL.md",
+  "skills/adaptive-model-router/agents/openai.yaml",
+]);
 const installWait = new Int32Array(new SharedArrayBuffer(4));
 
 if (
@@ -241,113 +247,97 @@ function sameRuntimeContract(left, right) {
     left.storageContractVersion === right.storageContractVersion;
 }
 
-function verifyUpgradeContinuity(beforeHealth, afterHealth) {
-  if (beforeHealth.state !== "healthy" || beforeHealth.version === afterHealth.version) return;
-  if (compareRuntimeVersions(afterHealth.version, beforeHealth.version) <= 0) {
+function sameHostSurface(installedRoot) {
+  try {
+    return HOST_SURFACE_FILES.every((relative) =>
+      readFileSync(join(installedRoot, relative)).equals(readFileSync(join(PLUGIN_ROOT, relative))));
+  } catch {
+    return false;
+  }
+}
+
+function assertCompatibleHotUpgrade(beforeHealth) {
+  if (!sameRuntimeContract(beforeHealth.descriptor, SOURCE_RUNTIME)) {
+    throw new InstallError(
+      `HOST_RELOAD_REQUIRED: the update changes a Router shell, tool, or storage contract; fully exit Codex Desktop and other Codex sessions, run "codex plugin add ${PLUGIN_ID}" from a fresh terminal, then start a genuinely new non-forked task`,
+      6,
+      "HOST_RELOAD_REQUIRED",
+    );
+  }
+  if (!sameHostSurface(beforeHealth.root)) {
+    throw new InstallError(
+      `HOST_RELOAD_REQUIRED: the update changes Router MCP registration, Hooks, or Skill instructions and cannot preserve the current Desktop task tool inventory; fully exit Codex Desktop and other Codex sessions, run "codex plugin add ${PLUGIN_ID}" from a fresh terminal, review Hooks, then start a genuinely new non-forked task`,
+      6,
+      "HOST_RELOAD_REQUIRED",
+    );
+  }
+  if (compareRuntimeVersions(INSTALL_VERSION, beforeHealth.version) < 0) {
     throw new InstallError(
       "HOT_UPGRADE_REJECTED: the installed runtime version did not advance monotonically",
       5,
       "HOT_UPGRADE_REJECTED",
     );
   }
-  if (!sameRuntimeContract(beforeHealth.descriptor, afterHealth.descriptor)) {
-    process.stdout.write("The new runtime changes a host-facing contract; existing tasks remain pinned to the preserved runtime.\n");
-  }
-  if (!existsSync(beforeHealth.root) || dirname(beforeHealth.root) !== dirname(afterHealth.root)) {
-    throw new InstallError(
-      "HOT_UPGRADE_CONTINUITY_BROKEN: Codex did not preserve the previous immutable sibling cache; existing tasks may no longer restart their pinned Router shell",
-      5,
-      "HOT_UPGRADE_CONTINUITY_BROKEN",
-    );
-  }
 }
 
-function snapshotInstalledRuntimes(beforeHealth) {
-  if (beforeHealth.state !== "healthy") return null;
+function stageCompatibleRuntime(beforeHealth) {
+  assertCompatibleHotUpgrade(beforeHealth);
+  if (beforeHealth.version === INSTALL_VERSION) return beforeHealth;
   const versionsRoot = dirname(beforeHealth.root);
-  const runtimes = readdirSync(versionsRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-    .map((entry) => runtimeHealthAtRoot(join(versionsRoot, entry.name)))
-    .filter(Boolean);
-  if (!runtimes.some((runtime) => runtime.root === beforeHealth.root)) {
+  const targetRoot = resolve(versionsRoot, INSTALL_VERSION);
+  if (dirname(targetRoot) !== versionsRoot) {
     throw new InstallError(
-      "HOT_UPGRADE_SNAPSHOT_FAILED: the active immutable runtime could not be enumerated before plugin add",
+      "HOT_UPGRADE_STAGE_FAILED: the target runtime directory is invalid",
       5,
-      "HOT_UPGRADE_SNAPSHOT_FAILED",
+      "HOT_UPGRADE_STAGE_FAILED",
     );
   }
-  const temporaryRoot = mkdtempSync(join(tmpdir(), "adaptive-router-upgrade-snapshot-"));
-  try {
-    const snapshots = runtimes.map((runtime, index) => {
-      const snapshotRoot = join(temporaryRoot, `runtime-${index}`);
-      cpSync(runtime.root, snapshotRoot, {
-        recursive: true,
-        errorOnExist: true,
-        force: false,
-        preserveTimestamps: true,
-      });
-      return { ...runtime, snapshotRoot };
-    });
-    return { temporaryRoot, runtimes: snapshots };
-  } catch {
-    rmSync(temporaryRoot, { recursive: true, force: true });
+  if (existsSync(targetRoot)) {
+    const existing = runtimeHealthAtRoot(targetRoot);
+    if (existing?.version === INSTALL_VERSION && sameRuntimeContract(existing.descriptor, SOURCE_RUNTIME)) {
+      return { state: "healthy", ...existing };
+    }
     throw new InstallError(
-      "HOT_UPGRADE_SNAPSHOT_FAILED: installed immutable runtimes could not be protected before plugin add",
+      "HOT_UPGRADE_STAGE_FAILED: the immutable target runtime already exists but is incomplete or inconsistent",
       5,
-      "HOT_UPGRADE_SNAPSHOT_FAILED",
+      "HOT_UPGRADE_STAGE_FAILED",
     );
   }
-}
-
-function restoreRuntime(runtime) {
-  if (existsSync(runtime.root)) return;
-  const restoreRoot = join(
-    dirname(runtime.root),
-    `.restore-${process.pid}-${randomBytes(5).toString("hex")}`,
+  const temporaryRoot = join(
+    versionsRoot,
+    `.stage-${process.pid}-${randomBytes(5).toString("hex")}`,
   );
   try {
-    mkdirSync(dirname(runtime.root), { recursive: true });
-    cpSync(runtime.snapshotRoot, restoreRoot, {
+    cpSync(PLUGIN_ROOT, temporaryRoot, {
       recursive: true,
       errorOnExist: true,
       force: false,
       preserveTimestamps: true,
     });
-    renameSync(restoreRoot, runtime.root);
-    if (runtimeHealthAtRoot(runtime.root)?.version !== runtime.version) {
-      throw new Error("restored version differs");
+    const staged = runtimeHealthAtRoot(temporaryRoot);
+    if (staged?.version !== INSTALL_VERSION || !sameRuntimeContract(staged.descriptor, SOURCE_RUNTIME)) {
+      throw new Error("staged runtime failed integrity validation");
     }
+    renameSync(temporaryRoot, targetRoot);
+    return { state: "healthy", ...runtimeHealthAtRoot(targetRoot) };
   } catch {
-    rmSync(restoreRoot, { recursive: true, force: true });
+    rmSync(temporaryRoot, { recursive: true, force: true });
+    const concurrent = runtimeHealthAtRoot(targetRoot);
+    if (
+      concurrent?.version === INSTALL_VERSION &&
+      sameRuntimeContract(concurrent.descriptor, SOURCE_RUNTIME)
+    ) {
+      return { state: "healthy", ...concurrent };
+    }
     throw new InstallError(
-      "HOT_UPGRADE_CONTINUITY_BROKEN: an installed immutable runtime was removed and could not be restored",
+      "HOT_UPGRADE_STAGE_FAILED: the compatible runtime could not be staged without invoking Codex plugin re-registration",
       5,
-      "HOT_UPGRADE_CONTINUITY_BROKEN",
+      "HOT_UPGRADE_STAGE_FAILED",
     );
   }
 }
 
-function restoreInstalledRuntimes(snapshot) {
-  for (const runtime of snapshot?.runtimes || []) restoreRuntime(runtime);
-}
-
-function verifyPreservedRuntimes(snapshot) {
-  for (const runtime of snapshot?.runtimes || []) {
-    if (runtimeHealthAtRoot(runtime.root)?.version !== runtime.version) {
-      throw new InstallError(
-        "HOT_UPGRADE_CONTINUITY_BROKEN: an installed immutable runtime was not preserved for existing tasks",
-        5,
-        "HOT_UPGRADE_CONTINUITY_BROKEN",
-      );
-    }
-  }
-}
-
-function removeRuntimeSnapshots(snapshot) {
-  if (snapshot) rmSync(snapshot.temporaryRoot, { recursive: true, force: true });
-}
-
-function verifyMcpRegistration(afterHealth) {
+function verifyMcpRegistration(afterHealth, acceptableRoots = [afterHealth.root]) {
   const servers = codex(["mcp", "list", "--json"], { json: true, quiet: true });
   const router = Array.isArray(servers)
     ? servers.find((entry) => entry?.name === "adaptive-model-router")
@@ -362,7 +352,7 @@ function verifyMcpRegistration(afterHealth) {
       "./scripts/node-launcher.mjs",
       "./scripts/mcp-server.mjs",
     ]) ||
-    cwd !== afterHealth.root
+    !acceptableRoots.includes(cwd)
   ) {
     throw new InstallError(
       "MCP_REGISTRATION_INCOMPLETE: Codex did not register the installed Adaptive Model Router MCP for new tasks",
@@ -372,7 +362,7 @@ function verifyMcpRegistration(afterHealth) {
   }
 }
 
-function verifyInstalledToolContract(afterHealth) {
+function verifyInstalledToolContract(shellHealth, expectedRuntimeVersion = shellHealth.version) {
   const temporary = mkdtempSync(join(tmpdir(), "adaptive-router-installed-tools-"));
   try {
     const input = [
@@ -383,12 +373,18 @@ function verifyInstalledToolContract(afterHealth) {
         params: { protocolVersion: "2025-06-18" },
       }),
       JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "diagnose_router", arguments: { contextId: "installer-runtime-probe" } },
+      }),
     ].join("\n");
     const result = spawnSync(process.execPath, [
-      join(afterHealth.root, "scripts", "node-launcher.mjs"),
-      join(afterHealth.root, "scripts", "mcp-server.mjs"),
+      join(shellHealth.root, "scripts", "node-launcher.mjs"),
+      join(shellHealth.root, "scripts", "mcp-server.mjs"),
     ], {
-      cwd: afterHealth.root,
+      cwd: shellHealth.root,
       encoding: "utf8",
       env: {
         ...process.env,
@@ -402,12 +398,26 @@ function verifyInstalledToolContract(afterHealth) {
     if (result.error || result.status !== 0) throw new Error("installed MCP process failed");
     const responses = result.stdout.trim().split(/\r?\n/u).map((line) => JSON.parse(line));
     const names = responses.find((entry) => entry?.id === 2)?.result?.tools?.map((tool) => tool.name);
+    const diagnosis = responses.find((entry) => entry?.id === 3)?.result;
     if (!Array.isArray(names) || REQUIRED_TASK_TOOLS.some((tool) => !names.includes(tool))) {
       throw new Error("installed MCP tool contract is incomplete");
     }
-  } catch {
+    if (
+      diagnosis?.isError ||
+      diagnosis?.structuredContent?.runtime?.runtimeVersion !== expectedRuntimeVersion
+    ) {
+      const observed = diagnosis?.structuredContent?.runtime?.runtimeVersion || "unavailable";
+      throw new Error(`pinned MCP shell runtime ${observed} did not match ${expectedRuntimeVersion}`);
+    }
+  } catch (error) {
+    const detail = [
+      "installed MCP process failed",
+      "installed MCP tool contract is incomplete",
+    ].includes(error?.message) || /^pinned MCP shell runtime [^ ]+ did not match [^ ]+$/u.test(error?.message)
+      ? `: ${error.message}`
+      : "";
     throw new InstallError(
-      "MCP_TOOL_CONTRACT_INCOMPLETE: the installed Router MCP did not expose route_stage, record_outcome, and diagnose_router",
+      `MCP_TOOL_CONTRACT_INCOMPLETE: the installed Router MCP verification failed${detail}`,
       5,
       "MCP_TOOL_CONTRACT_INCOMPLETE",
     );
@@ -421,7 +431,7 @@ function verifyTaskTools() {
     run(process.execPath, [join(PLUGIN_ROOT, "scripts", "verify-task-tools.mjs")], { quiet: true });
   } catch {
     throw new InstallError(
-      "TASK_TOOL_EXPOSURE_MISSING: a disposable Codex task could not use the installed Router tools; trust the current plugin Hooks and retry",
+      "TASK_TOOL_EXPOSURE_MISSING: a disposable Codex CLI task could not use the installed Router tools; trust the current plugin Hooks and retry",
       7,
       "TASK_TOOL_EXPOSURE_MISSING",
     );
@@ -430,15 +440,9 @@ function verifyTaskTools() {
 
 function addPluginWithIntegrityCheck(beforeState, { verifyTaskToolExposure = false } = {}) {
   const beforeHealth = installedPluginHealth(beforeState);
-  const snapshot = snapshotInstalledRuntimes(beforeHealth);
   try {
-    try {
-      codex(["plugin", "add", PLUGIN_ID]);
-    } finally {
-      restoreInstalledRuntimes(snapshot);
-    }
+    codex(["plugin", "add", PLUGIN_ID]);
   } catch (error) {
-    removeRuntimeSnapshots(snapshot);
     if (error?.errorCode === "CACHE_LOCKED") {
       try {
         const afterHealth = installedPluginHealth(loadState());
@@ -463,17 +467,19 @@ function addPluginWithIntegrityCheck(beforeState, { verifyTaskToolExposure = fal
     }
     throw error;
   }
-  try {
-    const afterHealth = waitForInstalledPlugin();
-    verifyUpgradeContinuity(beforeHealth, afterHealth);
-    verifyPreservedRuntimes(snapshot);
-    verifyMcpRegistration(afterHealth);
-    verifyInstalledToolContract(afterHealth);
-    if (verifyTaskToolExposure) verifyTaskTools();
-    return afterHealth;
-  } finally {
-    removeRuntimeSnapshots(snapshot);
-  }
+  const afterHealth = waitForInstalledPlugin();
+  verifyMcpRegistration(afterHealth);
+  verifyInstalledToolContract(afterHealth);
+  if (verifyTaskToolExposure) verifyTaskTools();
+  return afterHealth;
+}
+
+function hotUpgradeWithIntegrityCheck(beforeHealth, { verifyTaskToolExposure = false } = {}) {
+  const stagedHealth = stageCompatibleRuntime(beforeHealth);
+  verifyMcpRegistration(stagedHealth, [beforeHealth.root, stagedHealth.root]);
+  verifyInstalledToolContract(beforeHealth, stagedHealth.version);
+  if (verifyTaskToolExposure) verifyTaskTools();
+  return stagedHealth;
 }
 
 function canonicalRepository(source) {
@@ -653,16 +659,29 @@ async function installOrUpgrade(args, state) {
   else if (!localRepositoryMarketplace(currentMarketplace)) {
     codex(["plugin", "marketplace", "upgrade", MARKETPLACE]);
   }
-  addPluginWithIntegrityCheck(state, { verifyTaskToolExposure: args.verifyTaskTools });
+  const beforeHealth = installedPluginHealth(state);
+  const hotUpgrade = beforeHealth.state === "healthy";
+  if (hotUpgrade) {
+    hotUpgradeWithIntegrityCheck(beforeHealth, { verifyTaskToolExposure: args.verifyTaskTools });
+  } else {
+    addPluginWithIntegrityCheck(state, { verifyTaskToolExposure: args.verifyTaskTools });
+  }
   if (args.patchAgents) patchAgents();
-  process.stdout.write(`Adaptive Model Router ${INSTALL_VERSION} is installed and its MCP is registered for new tasks.\n`);
+  if (hotUpgrade) {
+    process.stdout.write(
+      `Adaptive Model Router runtime ${INSTALL_VERSION} was staged and activated without invoking Codex plugin re-registration.\n`,
+    );
+    process.stdout.write("Existing tasks that still expose Router tools keep their host tool inventory.\n");
+  } else {
+    process.stdout.write(`Adaptive Model Router ${INSTALL_VERSION} is installed and its MCP is registered for new tasks.\n`);
+  }
   if (args.verifyTaskTools) {
-    process.stdout.write(`A disposable Codex task completed live ${LIVE_TASK_SMOKE_TOOLS.join(", ")} calls.\n`);
+    process.stdout.write(`A disposable Codex CLI task completed live ${LIVE_TASK_SMOKE_TOOLS.join(", ")} calls.\n`);
   } else {
     process.stdout.write("Task-level MCP exposure was not exercised; after Hook trust, rerun with --verify-task-tools for the logged-in smoke.\n");
   }
-  process.stdout.write("On first install, or when upgrading from v0.3.x, trust the plugin hooks and start one new task.\n");
-  process.stdout.write("Compatible v0.4.x+ runtime updates activate on the next Hook or MCP call without reopening an existing task.\n");
+  process.stdout.write("On first install, after a host-surface change, or for a task whose Router tools were already lost, trust the plugin hooks and start one genuinely new non-forked task.\n");
+  process.stdout.write("Compatible v0.4.x+ runtime-only updates activate on the next Hook or MCP call without reopening an existing task.\n");
   process.stdout.write('To opt into automatic routing for all local projects, send "router: global on" once; upgrades preserve this setting.\n');
 }
 

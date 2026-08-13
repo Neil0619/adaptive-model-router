@@ -76,7 +76,7 @@ try {
   );
   if (REQUIRED_TOOLS.some((tool) => counts[tool] !== 1)) {
     throw new Error(
-      "TASK_TOOL_EXPOSURE_MISSING: a new Codex task did not complete exactly one diagnose_router and route_stage call",
+      "TASK_TOOL_EXPOSURE_MISSING: a new Codex CLI task did not complete exactly one diagnose_router and route_stage call",
     );
   }
   process.stdout.write(`${JSON.stringify({

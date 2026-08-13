@@ -322,9 +322,10 @@ safety auto-rollback. Do not mutate the smoke project's active profile.
 
 ## 9. Exercise upgrade, uninstall, and wrappers
 
-The runner exits the smoke task, then executes the native lifecycle below.
-These commands document the automated contract; the operator does not run them
-as separate smoke steps:
+The runner stops the smoke target and every Adaptive Router launcher/server,
+then executes the native lifecycle below as an explicitly destructive cold
+replacement test. These commands are not the compatible hot-upgrade path and
+the operator does not run them as separate smoke steps:
 
 ```powershell
 codex plugin marketplace upgrade adaptive-model-router
@@ -373,12 +374,15 @@ codex plugin marketplace list
 codex plugin list
 ```
 
-The runner confirms that wrapper output distinguishes the one-time v0.3.x → v0.4.0
-fresh-task transition from later compatible v0.4.x+ implementation updates.
+The runner confirms that wrapper output distinguishes cold host-surface
+replacement from later compatible v0.4.x+ runtime-only updates, and that the
+compatible path never invokes `plugin add` or requests Desktop plugin
+re-registration.
 The automated `runtime-hot-upgrade.test.mjs` must have demonstrated one
 long-lived MCP process, concurrent old Hook shells, damaged-candidate
 quarantine, active-runtime rollback, and a path-free pointer. Hook JSON, skill,
-MCP-schema, or storage-contract changes remain explicit new-task boundaries.
+MCP-schema, or storage-contract changes remain explicit cold-replacement and
+genuinely-new-non-forked-task boundaries.
 
 The runner starts Codex again from a second temporary project without sending
 `router: global on` again:

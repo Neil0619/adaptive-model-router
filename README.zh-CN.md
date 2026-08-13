@@ -51,8 +51,11 @@ codex plugin add adaptive-model-router@adaptive-model-router
 ## 升级与卸载
 
 ```bash
-codex plugin marketplace upgrade adaptive-model-router
-codex plugin add adaptive-model-router@adaptive-model-router
+./install.sh upgrade
+```
+
+```powershell
+.\install.ps1 -Action Upgrade
 ```
 
 ```bash
@@ -60,7 +63,13 @@ codex plugin remove adaptive-model-router@adaptive-model-router
 codex plugin marketplace remove adaptive-model-router
 ```
 
-包装脚本对应为 `./install.sh upgrade`、`./install.sh uninstall`、`.\install.ps1 -Action Upgrade` 和 `.\install.ps1 -Action Uninstall`。
+卸载包装脚本为 `./install.sh uninstall` 和 `.\install.ps1 -Action Uninstall`。
+
+兼容热升级必须使用仓库包装脚本。脚本只刷新 marketplace 元数据，把已审阅的新包原子
+旁加载成不可变兄弟运行时，再验证旧任务固定的 MCP 启动壳确实激活该版本；它不会
+调用 `codex plugin add`、不会请求插件重新注册，也不会删除历史运行时。Codex 可能
+把后续 `mcp list` 查询解析到新兄弟目录，但这不会改写已创建任务的固定工具库存。
+直接执行 `plugin add` 属于冷安装/替换，不是热升级操作。
 
 v0.4.0 增加了稳定启动壳。安装后续兼容的 v0.4.x 或更高版本后，已经打开的任务会在
 下一次 Hook 或 MCP 调用时加载新实现，不需要更换根模型，也不必重新开任务。旧壳会先
@@ -69,8 +78,9 @@ v0.4.0 增加了稳定启动壳。安装后续兼容的 v0.4.x 或更高版本�
 
 从 v0.3.x 升到 v0.4.0 仍需一次性新开任务，因为 v0.3 的启动壳没有热加载能力，
 而且 MCP 契约已在任务开始时固定。以后如果更新 Hook 定义、skill 指令、MCP 工具
-Schema 或存储契约，也会被视为不兼容升级，需要重新审阅 Hook 并新开任务；只改兼容
-实现的升级不需要。
+Schema 或存储契约，热升级会在改写宿主注册前拒绝执行；这类版本必须冷替换、重新
+审阅 Hook，并创建一个真正全新的非派生任务。仅重启 Desktop 或从受损任务派生任务，
+都不会给固定的任务工具库存补回 Router 工具。只改兼容实现的升级不需要重启。
 
 Windows 环境问题参见[故障排查](docs/TROUBLESHOOTING.md)。发布维护者应直接使用
 [原生 Windows 11](docs/WINDOWS_SMOKE.md)和

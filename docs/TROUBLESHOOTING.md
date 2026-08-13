@@ -22,32 +22,37 @@ files, or Codex credentials into a public issue.
    codex plugin list
    ```
 
-2. Refresh and reinstall:
+2. For a compatible runtime-only update, use the managed upgrade:
 
    ```bash
-   codex plugin marketplace upgrade adaptive-model-router
-   codex plugin add adaptive-model-router@adaptive-model-router
+   ./install.sh upgrade
    ```
 
-   Do not run `plugin marketplace remove` during a compatible upgrade. Existing
-   tasks may still need the previous immutable cache to launch their pinned
-   Hook or MCP shell. The supported wrappers protect every verified historical
-   runtime before `plugin add`, restore any entries Codex removes, and verify
-   that the active old and new runtime directories remain siblings.
+   The wrapper stages a new immutable sibling and verifies it through the
+   previously pinned MCP shell. It does not call `plugin add` or request plugin
+   re-registration. Codex may resolve later `mcp list` queries to the staged
+   sibling; this does not alter an existing task's fixed tool inventory. If it
+   reports `HOST_RELOAD_REQUIRED`, fully exit
+   Desktop and all other Codex CLI processes, then run the exact cold
+   replacement command it prints from a fresh terminal. Review Hooks and create
+   a genuinely new non-forked task afterward; do not present that operation as
+   a hot upgrade.
 
-3. On a first install, a v0.3.x → v0.4.0 upgrade, or an incompatible contract
-   update, start a new Codex task. For a compatible v0.4.x+ runtime update,
-   invoke the Hook or any Router MCP tool in the existing task; no task restart
-   is required. If the ChatGPT desktop app still shows stale plugin state after
-   a required restart, restart the app and open another task.
+3. On a first install, a v0.3.x → v0.4.0 upgrade, an incompatible contract
+   update, or after task tools have already disappeared, create a genuinely new
+   non-forked Codex task. Restarting Desktop and reopening the same task does
+   not recompute its tool inventory; forking that task can preserve the same
+   missing-tool condition. For a compatible v0.4.x+ runtime update, a task that
+   already owns Router tools activates the sibling runtime on its next Hook or
+   MCP call without restarting.
 
 4. After trusting the current Hooks, verify real task exposure with
    `./install.sh upgrade --verify-task-tools --non-interactive` or
    `.\install.ps1 -Action Upgrade -VerifyTaskTools -NonInteractive`. This uses
-   one disposable Codex task and fails unless `diagnose_router` and
+   one disposable Codex CLI task and fails unless `diagnose_router` and
    `route_stage` both complete. Without this flag, installation verifies MCP
-   registration and direct tool discovery but does not claim task-level
-   exposure.
+   registration and direct tool discovery. Neither check proves that an
+   already-created Desktop task retained its fixed tool inventory.
 
 If a marketplace named `adaptive-model-router` points to a different source or
 ref, the wrapper stops rather than replacing it. Inspect the marketplace list
@@ -105,7 +110,10 @@ the next MCP call. `previousVersion` is the rollback target and
 
 If it does not advance:
 
-1. Confirm the new package appears in `codex plugin list`.
+1. Confirm the new immutable sibling was staged by the wrapper. Depending on
+   host discovery timing, `codex mcp list --json` may point to either the
+   previous shell or the staged sibling; the installer must accept both and
+   separately verify the previous shell can activate the staged runtime.
 2. Run `npm run validate` in a source checkout and confirm `runtime.json`
    matches the plugin manifest.
 3. Check whether the new version changed the shell protocol, tool schemas, or
@@ -126,8 +134,11 @@ compatible.
 Task tool registration is fixed when that task starts. If its initial tool
 inventory never contained `route_stage`, `record_outcome`, or
 `diagnose_router`, a later plugin upgrade cannot add them to that same task.
-Verify the installation with `--verify-task-tools`, then start one new task.
-Do not describe the tools as likely to recover at a later stage boundary.
+Restarting Desktop and reopening it does not change that fact, and a fork may
+inherit the missing inventory. Verify a new CLI task with
+`--verify-task-tools`, then create one genuinely new non-forked Desktop task.
+Do not describe the old task's tools as likely to recover at a later stage
+boundary.
 
 This differs from runtime hot upgrade: a task that already owns the pinned
 Router MCP shell can activate a compatible sibling runtime on its next call

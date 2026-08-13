@@ -52,8 +52,11 @@ If a legacy `adaptive-local` installation is present, an interactive wrapper ask
 ## Upgrade and uninstall
 
 ```bash
-codex plugin marketplace upgrade adaptive-model-router
-codex plugin add adaptive-model-router@adaptive-model-router
+./install.sh upgrade
+```
+
+```powershell
+.\install.ps1 -Action Upgrade
 ```
 
 ```bash
@@ -61,14 +64,14 @@ codex plugin remove adaptive-model-router@adaptive-model-router
 codex plugin marketplace remove adaptive-model-router
 ```
 
-Wrapper equivalents are `./install.sh upgrade`, `./install.sh uninstall`, `.\install.ps1 -Action Upgrade`, and `.\install.ps1 -Action Uninstall`.
+Uninstall wrapper equivalents are `./install.sh uninstall` and `.\install.ps1 -Action Uninstall`.
 
 The installer always verifies the immutable installed package, the registered
 MCP command, and the installed MCP tool contract. After the current Hook
 definitions are trusted, add `--verify-task-tools` on macOS/Linux or
-`-VerifyTaskTools` on Windows to run a disposable logged-in Codex task that
+`-VerifyTaskTools` on Windows to run a disposable logged-in Codex CLI task that
 must actually call `diagnose_router` and `route_stage`. A package install is not
-evidence that an already-created task received those tools.
+evidence that an already-created Desktop task retained or received those tools.
 
 v0.4.0 introduces a stable launch shell for compatible runtime upgrades.
 After a v0.4.x-or-newer package is installed, an already-open task can pick up
@@ -78,20 +81,23 @@ candidate's shell, tool, and storage contracts, runs isolated health probes,
 and atomically activates it; a failed candidate is quarantined and the previous
 runtime remains active.
 
-A compatible upgrade must use `plugin marketplace upgrade` followed by
-`plugin add`. Never remove and recreate the marketplace during an upgrade:
-the previous immutable sibling cache is the pinned shell for existing tasks.
-The installer snapshots the verified old runtime before `plugin add`, restores
-every verified historical runtime at its exact path if Codex replaces the cache
-entries, and fails with
-`HOT_UPGRADE_CONTINUITY_BROKEN` if continuity cannot be restored.
+A compatible upgrade must use the repository wrapper. It refreshes marketplace
+metadata, atomically stages the reviewed package as a new immutable sibling,
+and verifies that the previously pinned MCP shell activates that exact runtime.
+It deliberately does not call `codex plugin add`, request plugin
+re-registration, or remove historical runtime directories. Codex may resolve
+new `mcp list` queries to the staged sibling; that discovery is not a mutation
+of an already-created task's tool inventory. A direct `plugin add`
+is a cold install/replacement operation, not a hot-upgrade primitive.
 
 The v0.3.x to v0.4.0 transition still requires one new task because the v0.3
 shell did not contain this loader and its MCP contract was already fixed at
 task startup. Future changes to Hook definitions, skill instructions, MCP tool
-schemas, or the storage contract are intentionally treated as incompatible and
-also require Hook review and a new task. Compatible implementation-only
-updates do not.
+schemas, or the storage contract are intentionally rejected by the hot-upgrade
+path and require a cold replacement, Hook review, and a genuinely new
+non-forked task. Restarting Desktop or forking an affected task does not inject
+tools into that task's fixed inventory. Compatible implementation-only updates
+do not require a restart.
 
 For Windows-specific setup and failure recovery, see
 [troubleshooting](docs/TROUBLESHOOTING.md). Release maintainers should use the

@@ -144,8 +144,9 @@ Run the complete route lifecycle once on macOS and once on native Windows 11:
    restore the initial model and automatic mode. Record that effort-only changes
    are not observable by the Hook.
 9. Exercise upgrade, uninstall, reinstall, idempotence, and optional AGENTS
-   marker removal. Confirm the installer explains the one-time v0.3 → v0.4
-   restart boundary and the compatible v0.4+ no-restart path.
+   marker removal. Confirm the installer keeps compatible v0.4+ runtime staging
+   separate from cold host replacement, never uses `plugin add` for the hot
+   path, and explains the genuinely-new-non-forked-task boundary.
 10. Confirm database v3 learning status, a versioned scoring profile, typed
     retry breakdown, and shadow scoring with no route/outcome/proposal/cursor
     changes.

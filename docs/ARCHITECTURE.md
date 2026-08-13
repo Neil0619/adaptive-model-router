@@ -135,7 +135,8 @@ Codex resolves Hook definitions, MCP schemas, and skill instructions when a
 task starts. v0.4.0 therefore keeps those host-facing contracts in a small
 stable shell and separates them from the runtime implementation:
 
-1. A normal plugin upgrade installs another immutable sibling cache directory.
+1. The managed compatible-upgrade path atomically stages another immutable
+   sibling cache directory without invoking host plugin re-registration.
 2. The next Hook launch or MCP tool call scans only those sibling Router
    versions and reads each strict `runtime.json`.
 3. A candidate is eligible only when its shell protocol, tool contract, and
@@ -148,14 +149,18 @@ stable shell and separates them from the runtime implementation:
    the active pointer. Failed provisional or active runtimes are quarantined,
    and the previous compatible runtime is selected on the next invocation.
 
-The installation module enforces this seam operationally. It snapshots every
-verified installed runtime sibling, performs only marketplace upgrade plus
-plugin add, and restores every removed runtime to its exact path from temporary
-snapshots. It then requires a monotonic installed version, verifies all prior
-runtimes, and requires the active old and new versions under the same parent
-directory. It separately verifies Codex MCP registration and the installed tool
-contract. The optional logged-in task-tool smoke is the only installation check
-that claims a newly created Codex task actually received Router tools.
+The installation module enforces this seam operationally. For a healthy
+compatible installation it refreshes marketplace metadata, validates the
+runtime and host-surface contracts, copies the reviewed source into a temporary
+sibling, validates it, and atomically renames it to the immutable version path.
+It never invokes `plugin add` on this path, so every historical runtime and an
+already-created task's fixed tool inventory remain untouched. Codex may resolve
+later MCP-list queries to the staged sibling. Independently, the previously
+pinned MCP shell must report the staged runtime version. Host-surface or
+contract changes fail with
+`HOST_RELOAD_REQUIRED` before registration is mutated. The optional logged-in
+smoke verifies only a newly created Codex CLI task; it is not evidence about an
+already-created Desktop task's fixed tool inventory.
 
 The pointer stores only cache directory names, versions, and a bounded failed
 list under plugin data; it never stores an absolute cache path. Concurrent
@@ -166,8 +171,10 @@ process-level state safety.
 
 This mechanism deliberately does not hot-reload task-pinned skill prose or add
 new MCP tools. A changed shell protocol, tool schema, storage contract, Hook
-definition, or skill workflow requires a new task. The v0.3.x → v0.4.0 upgrade
-is the one-time bootstrap transition because v0.3 has no stable loader.
+definition, or skill workflow requires a cold host replacement and a genuinely
+new non-forked task. Restarting or forking an already-affected task does not
+recompute its tool inventory. The v0.3.x → v0.4.0 upgrade is the one-time
+bootstrap transition because v0.3 has no stable loader.
 
 Storage contract 1 permits only forward-compatible, additive database
 migrations: existing tables and columns remain, and additions must not make old

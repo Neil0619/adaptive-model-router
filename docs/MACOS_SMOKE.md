@@ -190,7 +190,9 @@ requests an outcome for the shadow preference.
 
 ## 6. Exercise lifecycle wrappers and persistence
 
-Exit the task and run:
+For the direct cold lifecycle commands below, fully exit Codex Desktop and all
+other Codex CLI/plugin processes first. Run them from a fresh terminal; the
+subsequent wrapper upgrade is the compatible no-re-registration path.
 
 ```bash
 codex plugin marketplace upgrade adaptive-model-router
@@ -212,12 +214,14 @@ Confirm the owned AGENTS marker was inserted once and removed completely while
 surrounding user text remained unchanged. The final two installs must be
 idempotent and leave AGENTS unpatched.
 
-The wrapper output must distinguish the one-time v0.3.x → v0.4.0 fresh-task
-transition from later compatible v0.4.x+ runtime updates. Do not claim that
-every implementation-only upgrade needs a new task. The automated
+The wrapper output must distinguish cold host-surface replacement from later
+compatible v0.4.x+ runtime-only updates. The compatible upgrade must not call
+`plugin add` or request Desktop plugin re-registration. Do not claim that every
+implementation-only upgrade needs a new task. The automated
 `runtime-hot-upgrade.test.mjs` is the blocking same-process activation test for
 this release; changes to Hook JSON, skill instructions, MCP schemas, or the
-storage contract still require a new task.
+storage contract still require cold replacement and a genuinely new non-forked
+task.
 
 Start Codex from a second temporary project without repeating `router: global
 on`. An unchanged Hook hash must not create a routine second trust step; if it
