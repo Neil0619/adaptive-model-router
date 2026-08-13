@@ -148,6 +148,15 @@ stable shell and separates them from the runtime implementation:
    the active pointer. Failed provisional or active runtimes are quarantined,
    and the previous compatible runtime is selected on the next invocation.
 
+The installation module enforces this seam operationally. It snapshots every
+verified installed runtime sibling, performs only marketplace upgrade plus
+plugin add, and restores every removed runtime to its exact path from temporary
+snapshots. It then requires a monotonic installed version, verifies all prior
+runtimes, and requires the active old and new versions under the same parent
+directory. It separately verifies Codex MCP registration and the installed tool
+contract. The optional logged-in task-tool smoke is the only installation check
+that claims a newly created Codex task actually received Router tools.
+
 The pointer stores only cache directory names, versions, and a bounded failed
 list under plugin data; it never stores an absolute cache path. Concurrent
 shells serialize the short pointer update through an exclusive local lock and

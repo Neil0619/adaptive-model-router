@@ -689,11 +689,14 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'remove', 'adaptive-model-router@adaptive-model-router') | Out-Null
     Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'marketplace', 'remove', 'adaptive-model-router') | Out-Null
     $wrapperInstall = Invoke-Wrapper -Arguments @('-PatchAgents', '-Ref', $CandidateRef)
-    $wrapperUpgrade = Invoke-Wrapper -Arguments @('-Action', 'Upgrade', '-PatchAgents', '-Ref', $CandidateRef)
+    $wrapperUpgrade = Invoke-Wrapper -Arguments @('-Action', 'Upgrade', '-PatchAgents', '-VerifyTaskTools', '-Ref', $CandidateRef)
     foreach ($wrapperResult in @($wrapperInstall, $wrapperUpgrade)) {
         if ($wrapperResult.Stdout -notmatch 'v0\.3\.x' -or $wrapperResult.Stdout -notmatch 'Compatible v0\.4\.x\+' -or $wrapperResult.Stdout -notmatch 'upgrades preserve this setting') {
             throw 'wrapper lifecycle did not emit the required upgrade and persistence guidance'
         }
+    }
+    if ($wrapperUpgrade.Stdout -notmatch 'disposable Codex task completed live') {
+        throw 'wrapper upgrade did not verify Router tools through a disposable Codex task'
     }
     $agentsPath = Join-Path $DedicatedCodexHome 'AGENTS.md'
     $agentsText = if (Test-Path -LiteralPath $agentsPath) { Get-Content -LiteralPath $agentsPath -Raw } else { '' }

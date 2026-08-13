@@ -29,11 +29,25 @@ files, or Codex credentials into a public issue.
    codex plugin add adaptive-model-router@adaptive-model-router
    ```
 
+   Do not run `plugin marketplace remove` during a compatible upgrade. Existing
+   tasks may still need the previous immutable cache to launch their pinned
+   Hook or MCP shell. The supported wrappers protect every verified historical
+   runtime before `plugin add`, restore any entries Codex removes, and verify
+   that the active old and new runtime directories remain siblings.
+
 3. On a first install, a v0.3.x → v0.4.0 upgrade, or an incompatible contract
    update, start a new Codex task. For a compatible v0.4.x+ runtime update,
    invoke the Hook or any Router MCP tool in the existing task; no task restart
    is required. If the ChatGPT desktop app still shows stale plugin state after
    a required restart, restart the app and open another task.
+
+4. After trusting the current Hooks, verify real task exposure with
+   `./install.sh upgrade --verify-task-tools --non-interactive` or
+   `.\install.ps1 -Action Upgrade -VerifyTaskTools -NonInteractive`. This uses
+   one disposable Codex task and fails unless `diagnose_router` and
+   `route_stage` both complete. Without this flag, installation verifies MCP
+   registration and direct tool discovery but does not claim task-level
+   exposure.
 
 If a marketplace named `adaptive-model-router` points to a different source or
 ref, the wrapper stops rather than replacing it. Inspect the marketplace list
@@ -106,6 +120,18 @@ Hook definitions and skill text themselves remain task-pinned. If an update
 depends on new Hook JSON, a new tool, or new skill instructions, review the
 Hook hash and start a new task even if its implementation files are otherwise
 compatible.
+
+## A task says Router MCP tools are unavailable
+
+Task tool registration is fixed when that task starts. If its initial tool
+inventory never contained `route_stage`, `record_outcome`, or
+`diagnose_router`, a later plugin upgrade cannot add them to that same task.
+Verify the installation with `--verify-task-tools`, then start one new task.
+Do not describe the tools as likely to recover at a later stage boundary.
+
+This differs from runtime hot upgrade: a task that already owns the pinned
+Router MCP shell can activate a compatible sibling runtime on its next call
+without reopening.
 
 ## Node.js is missing or too old
 

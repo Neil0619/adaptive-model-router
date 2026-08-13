@@ -63,6 +63,13 @@ codex plugin marketplace remove adaptive-model-router
 
 Wrapper equivalents are `./install.sh upgrade`, `./install.sh uninstall`, `.\install.ps1 -Action Upgrade`, and `.\install.ps1 -Action Uninstall`.
 
+The installer always verifies the immutable installed package, the registered
+MCP command, and the installed MCP tool contract. After the current Hook
+definitions are trusted, add `--verify-task-tools` on macOS/Linux or
+`-VerifyTaskTools` on Windows to run a disposable logged-in Codex task that
+must actually call `diagnose_router` and `route_stage`. A package install is not
+evidence that an already-created task received those tools.
+
 v0.4.0 introduces a stable launch shell for compatible runtime upgrades.
 After a v0.4.x-or-newer package is installed, an already-open task can pick up
 the newer Hook and MCP implementation on its next invocation without changing
@@ -70,6 +77,14 @@ the root model or reopening the task. The pinned shell first checks the
 candidate's shell, tool, and storage contracts, runs isolated health probes,
 and atomically activates it; a failed candidate is quarantined and the previous
 runtime remains active.
+
+A compatible upgrade must use `plugin marketplace upgrade` followed by
+`plugin add`. Never remove and recreate the marketplace during an upgrade:
+the previous immutable sibling cache is the pinned shell for existing tasks.
+The installer snapshots the verified old runtime before `plugin add`, restores
+every verified historical runtime at its exact path if Codex replaces the cache
+entries, and fails with
+`HOT_UPGRADE_CONTINUITY_BROKEN` if continuity cannot be restored.
 
 The v0.3.x to v0.4.0 transition still requires one new task because the v0.3
 shell did not contain this loader and its MCP contract was already fixed at

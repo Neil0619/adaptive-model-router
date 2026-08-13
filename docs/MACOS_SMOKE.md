@@ -200,7 +200,7 @@ codex plugin marketplace remove adaptive-model-router
 
 cd "$Source"
 ./install.sh --patch-agents --ref="$CandidateRef"
-./install.sh upgrade --patch-agents --ref="$CandidateRef"
+./install.sh upgrade --patch-agents --verify-task-tools --ref="$CandidateRef"
 ./install.sh uninstall --ref="$CandidateRef"
 ./install.sh --ref="$CandidateRef"
 ./install.sh --ref="$CandidateRef"

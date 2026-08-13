@@ -59,6 +59,9 @@ const gateContentComparator = await readFile(join(repoRoot, "scripts", "compare-
 const windowsSmokeRunnerPath = "scripts/windows-smoke.ps1";
 const windowsSmokeRunner = await readFile(join(repoRoot, ...windowsSmokeRunnerPath.split("/")), "utf8");
 const windowsCommandShim = await readFile(join(repoRoot, "scripts", "invoke-command-shim.ps1"), "utf8");
+const installManager = await readFile(join(pluginRoot, "scripts", "manage-install.mjs"), "utf8");
+const taskToolVerifier = await readFile(join(pluginRoot, "scripts", "verify-task-tools.mjs"), "utf8");
+const windowsInstaller = await readFile(join(repoRoot, "install.ps1"), "utf8");
 const skill = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8");
 const skillUi = await readFile(join(pluginRoot, "skills", "adaptive-model-router", "agents", "openai.yaml"), "utf8");
 assert(manifest.version.split("+")[0] === packageJson.version, "manifest base version and package version differ");
@@ -115,6 +118,7 @@ assert(
 assert(windowsSmokeRunner.includes("[Parameter(Mandatory = $true)]"), "Windows smoke runner must require a candidate ref");
 assert(windowsSmokeRunner.includes("validate-smoke-evidence.mjs"), "Windows smoke runner must validate its evidence");
 assert(windowsSmokeRunner.includes("candidate-automated-gate"), "Windows smoke runner must repeat the exact candidate automated gate");
+assert(windowsSmokeRunner.includes("-VerifyTaskTools"), "Windows smoke runner must verify task-level Router tool exposure after upgrade");
 assert(windowsSmokeRunner.includes("Assert-InstalledCandidate"), "Windows smoke runner must verify the installed candidate revision");
 assert(windowsSmokeRunner.includes("compare-gate-content.mjs"), "Windows smoke runner must compare gate content through the candidate comparator");
 assert(windowsSmokeRunner.includes("$InstalledRouterLauncher"), "Windows smoke runner must resolve router state through the installed runtime launcher");
@@ -152,6 +156,16 @@ assert(!windowsSmokeRunner.includes("--dangerously-bypass-approvals-and-sandbox"
 assert(!windowsSmokeRunner.includes("--dangerously-bypass-hook-trust"), "Windows smoke runner must not bypass Hook trust");
 assert(windowsSmokeRunner.includes("invoke-command-shim.ps1"), "Windows smoke runner must use the command-shim adapter");
 assert(windowsCommandShim.includes("ValueFromRemainingArguments"), "Windows command shim must preserve argument boundaries");
+assert(installManager.includes("HOT_UPGRADE_CONTINUITY_BROKEN"), "installer must fail when previous-runtime continuity cannot be restored");
+assert(installManager.includes("snapshotInstalledRuntimes"), "installer must protect installed immutable runtimes before plugin add");
+assert(installManager.includes("restoreInstalledRuntimes"), "installer must restore installed runtimes removed by Codex plugin add");
+assert(installManager.includes('["mcp", "list", "--json"]'), "installer must verify Codex MCP registration");
+assert(installManager.includes("verifyInstalledToolContract"), "installer must verify the installed MCP tool contract");
+assert(taskToolVerifier.includes("--ephemeral"), "task-tool smoke must not persist its disposable Codex task");
+assert(taskToolVerifier.includes("--dangerously-bypass-approvals-and-sandbox"), "disposable task-tool smoke must avoid approval cancellation in its temporary project");
+assert(!taskToolVerifier.includes("--dangerously-bypass-hook-trust"), "task-tool smoke must preserve Hook trust as a host security boundary");
+assert(taskToolVerifier.includes('"diagnose_router", "route_stage"'), "task-tool smoke must exercise both Router diagnosis and routing");
+assert(windowsInstaller.includes("[switch]$VerifyTaskTools"), "Windows installer must expose the task-tool smoke switch");
 assert(smokeEvidenceValidator.includes("status disagrees with blocking checks"), "smoke evidence validator must enforce PASS consistency");
 assert(macosSmoke.includes("verify-installed-candidate.mjs"), "macOS smoke must verify the installed ref, revision, and version");
 assert(macosSmoke.includes("--expected-ref=\"$CandidateRef\"") && macosSmoke.includes("--expected-commit=\"$CandidateCommit\""), "macOS evidence must bind the expected ref and commit");

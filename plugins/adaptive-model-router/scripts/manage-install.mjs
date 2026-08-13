@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import {
   AGENTS_MARKER_END,
   AGENTS_MARKER_START,
@@ -12,6 +13,10 @@ import {
 import { resolveCodexCommandSync, spawnSpec } from "./lib/codex-command.mjs";
 import { sanitizedError } from "./lib/io.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
+import {
+  compareRuntimeVersions,
+  parseRuntimeDescriptor,
+} from "./lib/runtime-loader.mjs";
 
 const MARKETPLACE = "adaptive-model-router";
 const PLUGIN_ID = "adaptive-model-router@adaptive-model-router";
@@ -19,6 +24,24 @@ const REPOSITORY = "Neil0619/adaptive-model-router";
 const DEFAULT_REF = "stable";
 const LEGACY_MARKETPLACE = "adaptive-local";
 const LEGACY_PLUGIN_ID = "adaptive-model-router@adaptive-local";
+const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = resolve(PLUGIN_ROOT, "..", "..");
+const SOURCE_MANIFEST = JSON.parse(readFileSync(join(PLUGIN_ROOT, ".codex-plugin", "plugin.json"), "utf8"));
+const SOURCE_RUNTIME = parseRuntimeDescriptor(
+  JSON.parse(readFileSync(join(PLUGIN_ROOT, "runtime.json"), "utf8")),
+);
+const INSTALL_VERSION = SOURCE_MANIFEST.version;
+const REQUIRED_TASK_TOOLS = Object.freeze(["diagnose_router", "record_outcome", "route_stage"]);
+const LIVE_TASK_SMOKE_TOOLS = Object.freeze(["diagnose_router", "route_stage"]);
+const installWait = new Int32Array(new SharedArrayBuffer(4));
+
+if (
+  SOURCE_MANIFEST.name !== "adaptive-model-router" ||
+  SOURCE_RUNTIME.runtimeVersion !== INSTALL_VERSION ||
+  INSTALL_VERSION.split("+")[0] !== ROUTER_VERSION
+) {
+  throw new Error("installer source version metadata is inconsistent");
+}
 
 class InstallError extends Error {
   constructor(message, exitCode, errorCode = null) {
@@ -33,6 +56,7 @@ function parseArgs(values) {
     action: "install",
     patchAgents: false,
     nonInteractive: false,
+    verifyTaskTools: false,
     yes: false,
     ref: DEFAULT_REF,
   };
@@ -40,6 +64,7 @@ function parseArgs(values) {
     if (["install", "upgrade", "uninstall"].includes(value)) parsed.action = value;
     else if (value === "--patch-agents") parsed.patchAgents = true;
     else if (value === "--non-interactive") parsed.nonInteractive = true;
+    else if (value === "--verify-task-tools") parsed.verifyTaskTools = true;
     else if (value === "--yes") parsed.yes = true;
     else if (value.startsWith("--ref=")) parsed.ref = value.slice("--ref=".length);
     else throw new InstallError(`unknown installer argument: ${value}`, 2);
@@ -114,7 +139,13 @@ function codex(args, options = {}) {
 function loadState() {
   const marketplaces = codex(["plugin", "marketplace", "list", "--json"], { json: true, quiet: true }).marketplaces || [];
   const plugins = codex(["plugin", "list", "--available", "--json"], { json: true, quiet: true });
-  return { marketplaces, installed: plugins.installed || [], available: plugins.available || [] };
+  const mcpServers = codex(["mcp", "list", "--json"], { json: true, quiet: true });
+  return {
+    marketplaces,
+    installed: plugins.installed || [],
+    available: plugins.available || [],
+    mcpServers: Array.isArray(mcpServers) ? mcpServers : [],
+  };
 }
 
 function entryName(entry) {
@@ -125,28 +156,39 @@ function pluginId(entry) {
   return entry.pluginId || `${entry.name}@${entry.marketplaceName}`;
 }
 
-function installedPluginHealth(state) {
-  const entry = state.installed.find((candidate) => pluginId(candidate) === PLUGIN_ID);
-  if (!entry) return { state: "missing" };
-  const root = entry?.source?.path;
-  if (typeof root !== "string" || root.length === 0) return { state: "unverifiable" };
+function runtimeHealthAtRoot(root) {
   try {
     const manifest = JSON.parse(readFileSync(join(root, ".codex-plugin", "plugin.json"), "utf8"));
     const runtime = JSON.parse(readFileSync(join(root, "runtime.json"), "utf8"));
     JSON.parse(readFileSync(join(root, ".mcp.json"), "utf8"));
     JSON.parse(readFileSync(join(root, "hooks", "hooks.json"), "utf8"));
     readFileSync(join(root, "skills", "adaptive-model-router", "SKILL.md"), "utf8");
+    const descriptor = parseRuntimeDescriptor(runtime);
     if (
       manifest?.name !== "adaptive-model-router" ||
-      manifest?.version !== ROUTER_VERSION ||
-      runtime?.runtimeVersion !== manifest.version
+      typeof manifest?.version !== "string" ||
+      manifest.version.split("+")[0] !== ROUTER_VERSION ||
+      descriptor.runtimeVersion !== manifest.version
     ) {
-      return { state: "damaged" };
+      return null;
     }
-    return { state: "healthy" };
+    return { root: resolve(root), version: manifest.version, descriptor };
   } catch {
-    return { state: "damaged" };
+    return null;
   }
+}
+
+function installedPluginHealth(state) {
+  const entry = state.installed.find((candidate) => pluginId(candidate) === PLUGIN_ID);
+  if (!entry) return { state: "missing" };
+  const registered = state.mcpServers?.find((candidate) => candidate?.name === "adaptive-model-router");
+  const registeredRoot = registered?.transport?.type === "stdio" && typeof registered.transport.cwd === "string"
+    ? resolve(registered.transport.cwd)
+    : null;
+  const root = registeredRoot && existsSync(registeredRoot) ? registeredRoot : entry?.source?.path;
+  if (typeof root !== "string" || root.length === 0) return { state: "unverifiable" };
+  const health = runtimeHealthAtRoot(root);
+  return health ? { state: "healthy", ...health } : { state: "damaged" };
 }
 
 function verifyInstalledPlugin(state) {
@@ -172,13 +214,231 @@ function verifyInstalledPlugin(state) {
       "CACHE_DAMAGED",
     );
   }
+  if (health.version !== INSTALL_VERSION) {
+    throw new InstallError(
+      `PLUGIN_INSTALL_INCOMPLETE: Codex installed ${health.version} instead of ${INSTALL_VERSION}`,
+      5,
+      "PLUGIN_INSTALL_INCOMPLETE",
+    );
+  }
+  return health;
 }
 
-function addPluginWithIntegrityCheck(beforeState) {
-  const beforeHealth = installedPluginHealth(beforeState);
+function waitForInstalledPlugin() {
+  let state;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    state = loadState();
+    const health = installedPluginHealth(state);
+    if (health.state === "healthy" && health.version === INSTALL_VERSION) return health;
+    if (attempt < 9) Atomics.wait(installWait, 0, 0, 100);
+  }
+  return verifyInstalledPlugin(state);
+}
+
+function sameRuntimeContract(left, right) {
+  return left.shellProtocolVersion === right.shellProtocolVersion &&
+    left.toolContractVersion === right.toolContractVersion &&
+    left.storageContractVersion === right.storageContractVersion;
+}
+
+function verifyUpgradeContinuity(beforeHealth, afterHealth) {
+  if (beforeHealth.state !== "healthy" || beforeHealth.version === afterHealth.version) return;
+  if (compareRuntimeVersions(afterHealth.version, beforeHealth.version) <= 0) {
+    throw new InstallError(
+      "HOT_UPGRADE_REJECTED: the installed runtime version did not advance monotonically",
+      5,
+      "HOT_UPGRADE_REJECTED",
+    );
+  }
+  if (!sameRuntimeContract(beforeHealth.descriptor, afterHealth.descriptor)) {
+    process.stdout.write("The new runtime changes a host-facing contract; existing tasks remain pinned to the preserved runtime.\n");
+  }
+  if (!existsSync(beforeHealth.root) || dirname(beforeHealth.root) !== dirname(afterHealth.root)) {
+    throw new InstallError(
+      "HOT_UPGRADE_CONTINUITY_BROKEN: Codex did not preserve the previous immutable sibling cache; existing tasks may no longer restart their pinned Router shell",
+      5,
+      "HOT_UPGRADE_CONTINUITY_BROKEN",
+    );
+  }
+}
+
+function snapshotInstalledRuntimes(beforeHealth) {
+  if (beforeHealth.state !== "healthy") return null;
+  const versionsRoot = dirname(beforeHealth.root);
+  const runtimes = readdirSync(versionsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .map((entry) => runtimeHealthAtRoot(join(versionsRoot, entry.name)))
+    .filter(Boolean);
+  if (!runtimes.some((runtime) => runtime.root === beforeHealth.root)) {
+    throw new InstallError(
+      "HOT_UPGRADE_SNAPSHOT_FAILED: the active immutable runtime could not be enumerated before plugin add",
+      5,
+      "HOT_UPGRADE_SNAPSHOT_FAILED",
+    );
+  }
+  const temporaryRoot = mkdtempSync(join(tmpdir(), "adaptive-router-upgrade-snapshot-"));
   try {
-    codex(["plugin", "add", PLUGIN_ID]);
+    const snapshots = runtimes.map((runtime, index) => {
+      const snapshotRoot = join(temporaryRoot, `runtime-${index}`);
+      cpSync(runtime.root, snapshotRoot, {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+        preserveTimestamps: true,
+      });
+      return { ...runtime, snapshotRoot };
+    });
+    return { temporaryRoot, runtimes: snapshots };
+  } catch {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+    throw new InstallError(
+      "HOT_UPGRADE_SNAPSHOT_FAILED: installed immutable runtimes could not be protected before plugin add",
+      5,
+      "HOT_UPGRADE_SNAPSHOT_FAILED",
+    );
+  }
+}
+
+function restoreRuntime(runtime) {
+  if (existsSync(runtime.root)) return;
+  const restoreRoot = join(
+    dirname(runtime.root),
+    `.restore-${process.pid}-${randomBytes(5).toString("hex")}`,
+  );
+  try {
+    mkdirSync(dirname(runtime.root), { recursive: true });
+    cpSync(runtime.snapshotRoot, restoreRoot, {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+      preserveTimestamps: true,
+    });
+    renameSync(restoreRoot, runtime.root);
+    if (runtimeHealthAtRoot(runtime.root)?.version !== runtime.version) {
+      throw new Error("restored version differs");
+    }
+  } catch {
+    rmSync(restoreRoot, { recursive: true, force: true });
+    throw new InstallError(
+      "HOT_UPGRADE_CONTINUITY_BROKEN: an installed immutable runtime was removed and could not be restored",
+      5,
+      "HOT_UPGRADE_CONTINUITY_BROKEN",
+    );
+  }
+}
+
+function restoreInstalledRuntimes(snapshot) {
+  for (const runtime of snapshot?.runtimes || []) restoreRuntime(runtime);
+}
+
+function verifyPreservedRuntimes(snapshot) {
+  for (const runtime of snapshot?.runtimes || []) {
+    if (runtimeHealthAtRoot(runtime.root)?.version !== runtime.version) {
+      throw new InstallError(
+        "HOT_UPGRADE_CONTINUITY_BROKEN: an installed immutable runtime was not preserved for existing tasks",
+        5,
+        "HOT_UPGRADE_CONTINUITY_BROKEN",
+      );
+    }
+  }
+}
+
+function removeRuntimeSnapshots(snapshot) {
+  if (snapshot) rmSync(snapshot.temporaryRoot, { recursive: true, force: true });
+}
+
+function verifyMcpRegistration(afterHealth) {
+  const servers = codex(["mcp", "list", "--json"], { json: true, quiet: true });
+  const router = Array.isArray(servers)
+    ? servers.find((entry) => entry?.name === "adaptive-model-router")
+    : null;
+  const transport = router?.transport;
+  const cwd = typeof transport?.cwd === "string" ? resolve(transport.cwd) : null;
+  if (
+    !router?.enabled ||
+    transport?.type !== "stdio" ||
+    transport?.command !== "node" ||
+    JSON.stringify(transport?.args) !== JSON.stringify([
+      "./scripts/node-launcher.mjs",
+      "./scripts/mcp-server.mjs",
+    ]) ||
+    cwd !== afterHealth.root
+  ) {
+    throw new InstallError(
+      "MCP_REGISTRATION_INCOMPLETE: Codex did not register the installed Adaptive Model Router MCP for new tasks",
+      5,
+      "MCP_REGISTRATION_INCOMPLETE",
+    );
+  }
+}
+
+function verifyInstalledToolContract(afterHealth) {
+  const temporary = mkdtempSync(join(tmpdir(), "adaptive-router-installed-tools-"));
+  try {
+    const input = [
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-06-18" },
+      }),
+      JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+    ].join("\n");
+    const result = spawnSync(process.execPath, [
+      join(afterHealth.root, "scripts", "node-launcher.mjs"),
+      join(afterHealth.root, "scripts", "mcp-server.mjs"),
+    ], {
+      cwd: afterHealth.root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ADAPTIVE_ROUTER_HOME: temporary,
+        ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
+      },
+      input: `${input}\n`,
+      timeout: 15_000,
+      windowsHide: true,
+    });
+    if (result.error || result.status !== 0) throw new Error("installed MCP process failed");
+    const responses = result.stdout.trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+    const names = responses.find((entry) => entry?.id === 2)?.result?.tools?.map((tool) => tool.name);
+    if (!Array.isArray(names) || REQUIRED_TASK_TOOLS.some((tool) => !names.includes(tool))) {
+      throw new Error("installed MCP tool contract is incomplete");
+    }
+  } catch {
+    throw new InstallError(
+      "MCP_TOOL_CONTRACT_INCOMPLETE: the installed Router MCP did not expose route_stage, record_outcome, and diagnose_router",
+      5,
+      "MCP_TOOL_CONTRACT_INCOMPLETE",
+    );
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
+function verifyTaskTools() {
+  try {
+    run(process.execPath, [join(PLUGIN_ROOT, "scripts", "verify-task-tools.mjs")], { quiet: true });
+  } catch {
+    throw new InstallError(
+      "TASK_TOOL_EXPOSURE_MISSING: a disposable Codex task could not use the installed Router tools; trust the current plugin Hooks and retry",
+      7,
+      "TASK_TOOL_EXPOSURE_MISSING",
+    );
+  }
+}
+
+function addPluginWithIntegrityCheck(beforeState, { verifyTaskToolExposure = false } = {}) {
+  const beforeHealth = installedPluginHealth(beforeState);
+  const snapshot = snapshotInstalledRuntimes(beforeHealth);
+  try {
+    try {
+      codex(["plugin", "add", PLUGIN_ID]);
+    } finally {
+      restoreInstalledRuntimes(snapshot);
+    }
   } catch (error) {
+    removeRuntimeSnapshots(snapshot);
     if (error?.errorCode === "CACHE_LOCKED") {
       try {
         const afterHealth = installedPluginHealth(loadState());
@@ -203,7 +463,17 @@ function addPluginWithIntegrityCheck(beforeState) {
     }
     throw error;
   }
-  verifyInstalledPlugin(loadState());
+  try {
+    const afterHealth = waitForInstalledPlugin();
+    verifyUpgradeContinuity(beforeHealth, afterHealth);
+    verifyPreservedRuntimes(snapshot);
+    verifyMcpRegistration(afterHealth);
+    verifyInstalledToolContract(afterHealth);
+    if (verifyTaskToolExposure) verifyTaskTools();
+    return afterHealth;
+  } finally {
+    removeRuntimeSnapshots(snapshot);
+  }
 }
 
 function canonicalRepository(source) {
@@ -258,8 +528,18 @@ function marketplaceRef(entry) {
 }
 
 function desiredMarketplace(entry, ref = DEFAULT_REF) {
-  return canonicalRepository(marketplaceSource(entry)) === REPOSITORY.toLowerCase() &&
-    marketplaceRef(entry) === ref;
+  return localRepositoryMarketplace(entry) || (
+    canonicalRepository(marketplaceSource(entry)) === REPOSITORY.toLowerCase() &&
+    marketplaceRef(entry) === ref
+  );
+}
+
+function localRepositoryMarketplace(entry) {
+  const source = marketplaceSource(entry);
+  if (entry?.marketplaceSource?.sourceType !== "local" || typeof source !== "string") return false;
+  const actual = resolve(source);
+  if (process.platform === "win32") return actual.toLowerCase() === REPOSITORY_ROOT.toLowerCase();
+  return actual === REPOSITORY_ROOT;
 }
 
 function codexHome() {
@@ -369,11 +649,18 @@ async function installOrUpgrade(args, state) {
       codex(["plugin", "marketplace", "remove", LEGACY_MARKETPLACE]);
     }
   }
-  if (currentMarketplace) codex(["plugin", "marketplace", "upgrade", MARKETPLACE]);
-  else codex(["plugin", "marketplace", "add", REPOSITORY, "--ref", args.ref]);
-  addPluginWithIntegrityCheck(state);
+  if (!currentMarketplace) codex(["plugin", "marketplace", "add", REPOSITORY, "--ref", args.ref]);
+  else if (!localRepositoryMarketplace(currentMarketplace)) {
+    codex(["plugin", "marketplace", "upgrade", MARKETPLACE]);
+  }
+  addPluginWithIntegrityCheck(state, { verifyTaskToolExposure: args.verifyTaskTools });
   if (args.patchAgents) patchAgents();
-  process.stdout.write(`Adaptive Model Router ${ROUTER_VERSION} is installed.\n`);
+  process.stdout.write(`Adaptive Model Router ${INSTALL_VERSION} is installed and its MCP is registered for new tasks.\n`);
+  if (args.verifyTaskTools) {
+    process.stdout.write(`A disposable Codex task completed live ${LIVE_TASK_SMOKE_TOOLS.join(", ")} calls.\n`);
+  } else {
+    process.stdout.write("Task-level MCP exposure was not exercised; after Hook trust, rerun with --verify-task-tools for the logged-in smoke.\n");
+  }
   process.stdout.write("On first install, or when upgrading from v0.3.x, trust the plugin hooks and start one new task.\n");
   process.stdout.write("Compatible v0.4.x+ runtime updates activate on the next Hook or MCP call without reopening an existing task.\n");
   process.stdout.write('To opt into automatic routing for all local projects, send "router: global on" once; upgrades preserve this setting.\n');

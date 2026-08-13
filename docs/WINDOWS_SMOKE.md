@@ -338,7 +338,7 @@ It then tests the repository wrapper from the Unicode checkout:
 ```powershell
 Set-Location $Source
 .\install.ps1 -PatchAgents -Ref $CandidateRef
-.\install.ps1 -Action Upgrade -PatchAgents -Ref $CandidateRef
+.\install.ps1 -Action Upgrade -PatchAgents -VerifyTaskTools -Ref $CandidateRef
 ```
 
 Verify the owned marker occurs exactly once:
