@@ -38,7 +38,10 @@ Only the first executable lookup failed, before any of those components ran.
   entry.
 - Compatible upgrade performs the same one-time repair on a legacy pinned
   shell and every valid historical v0.4 shell, then stages the new immutable
-  sibling with an absolute command.
+  sibling with an absolute command. Because the host may prune old cache
+  siblings during marketplace reconciliation, verified shells are first
+  archived in stable plugin data and missing indexed paths are restored before
+  this repair.
 - An owned Desktop runtime-override Node shim keeps already-loaded bare command
   strings executable until those tasks end. The installer verifies the shim
   under the exact reduced PATH and never overwrites an unrelated valid Node.

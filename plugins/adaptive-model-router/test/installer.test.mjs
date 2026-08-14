@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { supportsRuntime } from "../scripts/lib/runtime.mjs";
 import { AGENTS_MARKER_END, AGENTS_MARKER_START } from "../scripts/lib/constants.mjs";
+import { DEFAULT_PLUGIN_DATA_DIRECTORY } from "../scripts/lib/plugin-data.mjs";
 import { temporaryProject } from "./fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -93,6 +94,16 @@ if (args[0] === "plugin" && args[1] === "marketplace" && args[2] === "add") {
 } else if (args[0] === "plugin" && args[1] === "marketplace" && args[2] === "remove") {
   state.marketplaces=state.marketplaces.filter((entry)=>entry.name!==args[3]);
   state.available=state.available.filter((entry)=>entry.marketplaceName!==args[3]);
+} else if (args[0] === "plugin" && args[1] === "marketplace" && args[2] === "upgrade") {
+  if (state.reconcileOnMarketplaceUpgrade && state.reconciledPluginRoot) {
+    const entry=state.installed.find((candidate)=>candidate.pluginId==="adaptive-model-router@adaptive-model-router");
+    if (entry) entry.source={source:"local",path:state.reconciledPluginRoot};
+    state.pluginInstallRoot=state.reconciledPluginRoot;
+    state.mcpResolvedRoot=state.reconciledPluginRoot;
+    for (const root of state.removeRootsOnMarketplaceUpgrade || []) {
+      if (root !== state.reconciledPluginRoot) rmSync(root,{recursive:true,force:true});
+    }
+  }
 } else if (args[0] === "plugin" && args[1] === "add") {
   if (state.dropDesktopTaskToolsOnPluginAdd) state.desktopTaskTools = false;
   let entry = state.installed.find((candidate)=>candidate.pluginId===args[2]);
@@ -215,6 +226,16 @@ function runManager(project, fake, args = [], {
 
 async function state(fake) {
   return JSON.parse(await readFile(fake.statePath, "utf8"));
+}
+
+function runtimeVault(codexHome) {
+  return join(
+    codexHome,
+    "plugins",
+    "data",
+    DEFAULT_PLUGIN_DATA_DIRECTORY,
+    "runtime-shell-vault",
+  );
 }
 
 test("runtime boundary accepts 24.15 and rejects 24.14", () => {
@@ -697,7 +718,7 @@ test("a compatible upgrade rejects duplicate enabled Router MCP registrations", 
     };
     const fake = await fakeCodex(project, {
       pluginInstallRoot: oldRoot,
-      duplicateMcpOnMcpListCall: 2,
+      duplicateMcpOnMcpListCall: 3,
       marketplaces: [{
         name: "adaptive-model-router",
         marketplaceSource: {
@@ -1001,9 +1022,7 @@ test("a host-surface change refuses hot upgrade before plugin re-registration is
     assert.equal(result.status, 6);
     assert.match(result.stderr, /HOST_RELOAD_REQUIRED/);
     const finalState = await state(fake);
-    assert.deepEqual(finalState.mutations.map((args) => args.join(" ")), [
-      "plugin marketplace upgrade adaptive-model-router",
-    ]);
+    assert.deepEqual(finalState.mutations, []);
     assert.equal(finalState.desktopTaskTools, true);
     await assert.rejects(access(newRoot), { code: "ENOENT" });
   } finally {
@@ -1052,9 +1071,7 @@ test("a plugin manifest UI change refuses hot upgrade before plugin re-registrat
     const result = runManager(project, fake, ["upgrade", "--non-interactive"]);
     assert.equal(result.status, 6);
     assert.match(result.stderr, /HOST_RELOAD_REQUIRED/);
-    assert.deepEqual((await state(fake)).mutations.map((args) => args.join(" ")), [
-      "plugin marketplace upgrade adaptive-model-router",
-    ]);
+    assert.deepEqual((await state(fake)).mutations, []);
     await assert.rejects(access(newRoot), { code: "ENOENT" });
   } finally {
     await project.cleanup();
@@ -1228,7 +1245,7 @@ test("a failed hot-upgrade verification restores complete historical runtime tre
     };
     const fake = await fakeCodex(project, {
       pluginInstallRoot: oldRoot,
-      damageRuntimeOnMcpListCall: 2,
+      damageRuntimeOnMcpListCall: 3,
       marketplaces: [{
         name: "adaptive-model-router",
         marketplaceSource: {
@@ -1290,8 +1307,8 @@ test("a rollback failure retains and reports its complete recovery snapshot", {
     };
     const fake = await fakeCodex(project, {
       pluginInstallRoot: oldRoot,
-      damageRuntimeOnMcpListCall: 2,
-      makeVersionsRootReadOnlyOnMcpListCall: 2,
+      damageRuntimeOnMcpListCall: 3,
+      makeVersionsRootReadOnlyOnMcpListCall: 3,
       marketplaces: [{
         name: "adaptive-model-router",
         marketplaceSource: {
@@ -1428,6 +1445,205 @@ test("compatible upgrade preserves historical runtime identities and refreshes t
       const command = process.platform === "win32" ? prompt.commandWindows : prompt.command;
       assert.ok(command.includes(process.execPath));
     }
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("cold installation archives its verified runtime in stable plugin data", async () => {
+  const project = await temporaryProject("adaptive installer cold runtime vault ");
+  try {
+    const fake = await fakeCodex(project);
+    const result = runManager(project, fake, ["install", "--non-interactive"]);
+    assert.equal(result.status, 0, result.stderr);
+    const vault = runtimeVault(result.codexHome);
+    const index = JSON.parse(await readFile(join(vault, "index.json"), "utf8"));
+    assert.deepEqual(index, { schemaVersion: 1, directories: [runtimeVersion] });
+    assert.equal(
+      JSON.parse(await readFile(join(vault, runtimeVersion, "runtime.json"), "utf8")).runtimeVersion,
+      runtimeVersion,
+    );
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("marketplace reconciliation can prune an old cache before the installer restores it", async () => {
+  const project = await temporaryProject("adaptive installer marketplace prune recovery ");
+  try {
+    const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+    const oldVersion = "0.4.0+codex.20260812000000";
+    const oldRoot = join(versionsRoot, oldVersion);
+    const newRoot = join(versionsRoot, runtimeVersion);
+    await writePluginFixture(oldRoot, oldVersion);
+    await writePluginFixture(newRoot, runtimeVersion);
+    const installedEntry = {
+      pluginId: "adaptive-model-router@adaptive-model-router",
+      name: "adaptive-model-router",
+      marketplaceName: "adaptive-model-router",
+      source: { source: "local", path: oldRoot },
+    };
+    const fake = await fakeCodex(project, {
+      pluginInstallRoot: oldRoot,
+      reconciledPluginRoot: newRoot,
+      reconcileOnMarketplaceUpgrade: true,
+      removeRootsOnMarketplaceUpgrade: [oldRoot],
+      marketplaces: [{
+        name: "adaptive-model-router",
+        marketplaceSource: {
+          sourceType: "git",
+          source: "https://github.com/Neil0619/adaptive-model-router.git",
+          ref: "stable",
+        },
+      }],
+      installed: [installedEntry],
+      available: [installedEntry],
+    });
+    await writePluginFixture(oldRoot, oldVersion);
+    await writePluginFixture(newRoot, runtimeVersion);
+
+    const result = runManager(project, fake, ["upgrade", "--non-interactive"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Restored 1 compatible historical Router runtime shell/);
+    assert.equal(
+      JSON.parse(await readFile(join(oldRoot, "runtime.json"), "utf8")).runtimeVersion,
+      oldVersion,
+    );
+    const finalState = await state(fake);
+    assert.equal(finalState.mcpResolvedRoot, newRoot);
+    assert.equal(
+      finalState.mutations.some((args) => args.join(" ") === "plugin add adaptive-model-router@adaptive-model-router"),
+      false,
+    );
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("a later hot upgrade restores indexed historical shells pruned by the host", async () => {
+  const project = await temporaryProject("adaptive installer stable runtime vault restore ");
+  try {
+    const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+    const oldVersion = "0.4.0+codex.20260812000000";
+    const orphanVersion = "0.4.0+codex.20260811000000";
+    const oldRoot = join(versionsRoot, oldVersion);
+    const newRoot = join(versionsRoot, runtimeVersion);
+    await writePluginFixture(oldRoot, oldVersion);
+    const installedEntry = {
+      pluginId: "adaptive-model-router@adaptive-model-router",
+      name: "adaptive-model-router",
+      marketplaceName: "adaptive-model-router",
+      source: { source: "local", path: oldRoot },
+    };
+    const fake = await fakeCodex(project, {
+      pluginInstallRoot: oldRoot,
+      marketplaces: [{
+        name: "adaptive-model-router",
+        marketplaceSource: {
+          sourceType: "git",
+          source: "https://github.com/Neil0619/adaptive-model-router.git",
+          ref: "stable",
+        },
+      }],
+      installed: [installedEntry],
+      available: [installedEntry],
+    });
+    await writePluginFixture(oldRoot, oldVersion);
+
+    const first = runManager(project, fake, ["upgrade", "--non-interactive"]);
+    assert.equal(first.status, 0, first.stderr);
+    const vault = runtimeVault(first.codexHome);
+    const firstIndex = JSON.parse(await readFile(join(vault, "index.json"), "utf8"));
+    assert.deepEqual(firstIndex.directories, [oldVersion, runtimeVersion].sort());
+
+    const orphanVaultRoot = join(vault, orphanVersion);
+    await cp(join(vault, oldVersion), orphanVaultRoot, { recursive: true });
+    const orphanManifestPath = join(orphanVaultRoot, ".codex-plugin", "plugin.json");
+    const orphanManifest = JSON.parse(await readFile(orphanManifestPath, "utf8"));
+    orphanManifest.version = orphanVersion;
+    await writeFile(orphanManifestPath, JSON.stringify(orphanManifest));
+    const orphanRuntimePath = join(orphanVaultRoot, "runtime.json");
+    const orphanRuntime = JSON.parse(await readFile(orphanRuntimePath, "utf8"));
+    orphanRuntime.runtimeVersion = orphanVersion;
+    await writeFile(orphanRuntimePath, JSON.stringify(orphanRuntime));
+
+    await rm(oldRoot, { recursive: true, force: true });
+    const fakeState = await state(fake);
+    fakeState.mcpResolvedRoot = newRoot;
+    await writeFile(fake.statePath, JSON.stringify(fakeState));
+
+    const second = runManager(project, fake, ["upgrade", "--non-interactive"]);
+    assert.equal(second.status, 0, second.stderr);
+    assert.match(second.stdout, /Restored 1 compatible historical Router runtime shell/);
+    assert.equal(
+      JSON.parse(await readFile(join(oldRoot, "runtime.json"), "utf8")).runtimeVersion,
+      oldVersion,
+    );
+    assert.match(
+      await readFile(join(oldRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8"),
+      /Frozen task tool inventory/,
+    );
+    await assert.rejects(access(join(versionsRoot, orphanVersion)));
+    assert.equal(
+      (await state(fake)).mutations.some((args) => args.join(" ") === "plugin add adaptive-model-router@adaptive-model-router"),
+      false,
+    );
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("an indexed vault symlink fails closed before cache or registration mutation", {
+  skip: process.platform === "win32" ? "POSIX symlink safety regression" : false,
+}, async () => {
+  const project = await temporaryProject("adaptive installer runtime vault symlink ");
+  try {
+    const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+    const oldVersion = "0.4.0+codex.20260812000000";
+    const oldRoot = join(versionsRoot, oldVersion);
+    const newRoot = join(versionsRoot, runtimeVersion);
+    await writePluginFixture(oldRoot, oldVersion);
+    const installedEntry = {
+      pluginId: "adaptive-model-router@adaptive-model-router",
+      name: "adaptive-model-router",
+      marketplaceName: "adaptive-model-router",
+      source: { source: "local", path: oldRoot },
+    };
+    const fake = await fakeCodex(project, {
+      pluginInstallRoot: oldRoot,
+      marketplaces: [{
+        name: "adaptive-model-router",
+        marketplaceSource: {
+          sourceType: "git",
+          source: "https://github.com/Neil0619/adaptive-model-router.git",
+          ref: "stable",
+        },
+      }],
+      installed: [installedEntry],
+      available: [installedEntry],
+    });
+    await writePluginFixture(oldRoot, oldVersion);
+
+    const first = runManager(project, fake, ["upgrade", "--non-interactive"]);
+    assert.equal(first.status, 0, first.stderr);
+    const vault = runtimeVault(first.codexHome);
+    const outside = join(project.root, "outside-vault-target");
+    await mkdir(outside);
+    await writeFile(join(outside, "sentinel.txt"), "unchanged\n");
+    await rm(join(vault, oldVersion), { recursive: true, force: true });
+    await symlink(outside, join(vault, oldVersion));
+    await rm(oldRoot, { recursive: true, force: true });
+    const fakeState = await state(fake);
+    fakeState.mcpResolvedRoot = newRoot;
+    const mutationsBeforeFailure = [...fakeState.mutations];
+    await writeFile(fake.statePath, JSON.stringify(fakeState));
+
+    const second = runManager(project, fake, ["upgrade", "--non-interactive"]);
+    assert.equal(second.status, 5);
+    assert.match(second.stderr, /RUNTIME_VAULT_DAMAGED/);
+    assert.deepEqual((await state(fake)).mutations, mutationsBeforeFailure);
+    assert.equal(await readFile(join(outside, "sentinel.txt"), "utf8"), "unchanged\n");
+    await assert.rejects(access(oldRoot));
   } finally {
     await project.cleanup();
   }

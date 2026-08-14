@@ -87,13 +87,23 @@ and atomically activates it; a failed candidate is quarantined and the previous
 runtime remains active.
 
 A compatible upgrade must use the repository wrapper. It refreshes marketplace
-metadata, atomically stages the reviewed package as a new immutable sibling,
-and verifies that the previously pinned MCP shell activates that exact runtime.
-It deliberately does not call `codex plugin add`, request plugin
-re-registration, or remove historical runtime directories. Codex may resolve
-new `mcp list` queries to the staged sibling; that discovery is not a mutation
-of an already-created task's tool inventory. A direct `plugin add`
-is a cold install/replacement operation, not a hot-upgrade primitive.
+metadata, reloads the resulting host registration, atomically stages the
+reviewed package as a new immutable sibling, and verifies that the previously
+pinned MCP shell activates that exact runtime. Before marketplace refresh it
+archives every verified compatible shell in a strict, atomic vault under stable
+plugin data. If Codex reconciliation prunes an old host-managed cache, the
+wrapper restores the indexed shell to the same immutable path before repairing
+its live bridge. Cold installation seeds the same vault. The wrapper
+deliberately does not call `codex plugin add` or request plugin
+re-registration. A direct `plugin add` is a cold install/replacement operation,
+not a hot-upgrade primitive.
+
+The vault contains only validated copies of the plugin package plus an index of
+runtime directory names. It is outside Codex's host-managed cache, never stores
+prompts or project data, and is not an alternate executable source: restored
+trees must pass the current runtime, host-surface, symlink, and compatibility
+checks before an atomic directory rename. An invalid index or entry fails the
+upgrade closed.
 
 The upgrade boundary is explicit:
 

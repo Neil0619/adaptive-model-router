@@ -407,7 +407,8 @@ codex plugin list
 The runner confirms that wrapper output distinguishes cold host-surface
 replacement from later compatible v0.4.x+ runtime-only updates, and that the
 compatible path never invokes `plugin add` or requests Desktop plugin
-re-registration. It also requires matching `liveWorkflowContractVersion` and
+re-registration. It also verifies the strict stable-plugin-data vault and any
+indexed historical-cache restoration, and requires matching `liveWorkflowContractVersion` and
 `stdioBridgeContractVersion` values.
 The automated `runtime-hot-upgrade.test.mjs` must have demonstrated one
 long-lived MCP process, concurrent old Hook shells, damaged-candidate

@@ -17,6 +17,7 @@ import {
 } from "./lib/compatibility.mjs";
 import { resolveCodexCommandSync, spawnSpec } from "./lib/codex-command.mjs";
 import { canonicalJson, sanitizedError } from "./lib/io.mjs";
+import { defaultPluginData } from "./lib/plugin-data.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
 import {
   compareRuntimeVersions,
@@ -55,6 +56,8 @@ const HOST_SURFACE_FILES = Object.freeze([
 ]);
 const installWait = new Int32Array(new SharedArrayBuffer(4));
 const DESKTOP_NODE_BRIDGE_MARKER = "adaptive-model-router Desktop PATH compatibility bridge";
+const RUNTIME_VAULT_DIRECTORY = "runtime-shell-vault";
+const RUNTIME_VAULT_INDEX = "index.json";
 
 if (
   SOURCE_MANIFEST.name !== "adaptive-model-router" ||
@@ -537,6 +540,309 @@ function discardRuntimeTreeSnapshot(snapshot) {
       `Warning: runtime snapshot identifier ${JSON.stringify(basename(snapshot.container))} remains under the system temporary directory.\n`,
     );
   }
+}
+
+function safeRuntimeDirectoryName(value) {
+  return typeof value === "string" &&
+    value.length >= 1 &&
+    value.length <= 128 &&
+    value !== "." &&
+    value !== ".." &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    /^[0-9A-Za-z][0-9A-Za-z.+_-]*$/u.test(value);
+}
+
+function lstatIfPresent(path) {
+  try {
+    return lstatSync(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function installerPluginDataRoot() {
+  const configured = process.env.ADAPTIVE_ROUTER_HOME ||
+    process.env.PLUGIN_DATA ||
+    process.env.CLAUDE_PLUGIN_DATA;
+  return configured ? resolve(configured) : defaultPluginData(process.env);
+}
+
+function runtimeVaultRoot() {
+  const root = join(installerPluginDataRoot(), RUNTIME_VAULT_DIRECTORY);
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  const metadata = lstatSync(root);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new InstallError(
+      "RUNTIME_VAULT_DAMAGED: the stable historical-shell vault is not a real directory",
+      5,
+      "RUNTIME_VAULT_DAMAGED",
+    );
+  }
+  return root;
+}
+
+function readRuntimeVaultIndex(root) {
+  const path = join(root, RUNTIME_VAULT_INDEX);
+  const metadata = lstatIfPresent(path);
+  if (!metadata) return [];
+  try {
+    if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("invalid vault index file");
+    const document = JSON.parse(readFileSync(path, "utf8"));
+    if (
+      !document ||
+      typeof document !== "object" ||
+      Array.isArray(document) ||
+      document.schemaVersion !== 1 ||
+      !Array.isArray(document.directories) ||
+      Object.keys(document).sort().join(",") !== "directories,schemaVersion" ||
+      document.directories.some((entry) => !safeRuntimeDirectoryName(entry)) ||
+      new Set(document.directories).size !== document.directories.length
+    ) {
+      throw new Error("invalid vault index");
+    }
+    return [...document.directories].sort();
+  } catch {
+    throw new InstallError(
+      "RUNTIME_VAULT_DAMAGED: the stable historical-shell vault index is invalid",
+      5,
+      "RUNTIME_VAULT_DAMAGED",
+    );
+  }
+}
+
+function vaultRuntimeHealth(root, directory) {
+  try {
+    assertSafeRuntimeTree(root);
+    const health = runtimeHealthAtRoot(root);
+    if (
+      !health ||
+      health.version !== directory ||
+      basename(root) !== directory ||
+      compareRuntimeVersions(health.version, INSTALL_VERSION) > 0 ||
+      !sameRuntimeContract(health.descriptor, SOURCE_RUNTIME) ||
+      !sameLiveCompatibility(health.compatibility, SOURCE_COMPATIBILITY) ||
+      !sameHostSurface(root)
+    ) {
+      return null;
+    }
+    return health;
+  } catch {
+    return null;
+  }
+}
+
+function archiveRuntimeRoot(vaultRoot, root) {
+  assertSafeRuntimeTree(root);
+  const health = runtimeHealthAtRoot(root);
+  const directory = health?.version;
+  if (
+    !safeRuntimeDirectoryName(directory) ||
+    basename(root) !== directory ||
+    compareRuntimeVersions(directory, INSTALL_VERSION) > 0 ||
+    !sameRuntimeContract(health.descriptor, SOURCE_RUNTIME) ||
+    !sameLiveCompatibility(health.compatibility, SOURCE_COMPATIBILITY) ||
+    !sameHostSurface(root)
+  ) {
+    throw new InstallError(
+      "RUNTIME_VAULT_ARCHIVE_FAILED: a verified runtime could not be bound to its immutable directory",
+      5,
+      "RUNTIME_VAULT_ARCHIVE_FAILED",
+    );
+  }
+  const nonce = `${process.pid}-${randomBytes(5).toString("hex")}`;
+  const staged = join(vaultRoot, `.archive-${nonce}`);
+  const target = join(vaultRoot, directory);
+  const displaced = join(vaultRoot, `.displaced-${directory}-${nonce}`);
+  let displacedExisting = false;
+  let installedArchive = false;
+  try {
+    cpSync(root, staged, {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+      preserveTimestamps: true,
+    });
+    assertSafeRuntimeTree(staged);
+    const stagedHealth = runtimeHealthAtRoot(staged);
+    if (
+      stagedHealth?.version !== directory ||
+      !sameRuntimeContract(stagedHealth.descriptor, SOURCE_RUNTIME) ||
+      !sameLiveCompatibility(stagedHealth.compatibility, SOURCE_COMPATIBILITY) ||
+      !sameHostSurface(staged)
+    ) {
+      throw new Error("archived runtime failed integrity validation");
+    }
+    const targetMetadata = lstatIfPresent(target);
+    if (targetMetadata) {
+      if (!targetMetadata.isDirectory() || targetMetadata.isSymbolicLink()) {
+        throw new Error("existing vault entry is not a real directory");
+      }
+      if (!vaultRuntimeHealth(target, directory)) throw new Error("existing vault entry is invalid");
+      renameSync(target, displaced);
+      displacedExisting = true;
+    }
+    renameSync(staged, target);
+    installedArchive = true;
+  } catch {
+    if (displacedExisting && !installedArchive && !existsSync(target)) {
+      try {
+        renameSync(displaced, target);
+        displacedExisting = false;
+      } catch {}
+    }
+    throw new InstallError(
+      "RUNTIME_VAULT_ARCHIVE_FAILED: the verified runtime could not be archived atomically",
+      5,
+      "RUNTIME_VAULT_ARCHIVE_FAILED",
+    );
+  } finally {
+    if (!installedArchive) {
+      try {
+        rmSync(staged, { recursive: true, force: true });
+      } catch {}
+    }
+    if (installedArchive && displacedExisting) {
+      try {
+        rmSync(displaced, { recursive: true, force: true });
+      } catch {}
+    }
+  }
+  return directory;
+}
+
+function archiveRuntimeRoots(roots) {
+  const vaultRoot = runtimeVaultRoot();
+  const indexed = new Set(readRuntimeVaultIndex(vaultRoot));
+  for (const directory of indexed) {
+    if (!vaultRuntimeHealth(join(vaultRoot, directory), directory)) {
+      throw new InstallError(
+        "RUNTIME_VAULT_DAMAGED: an indexed historical runtime is missing or invalid",
+        5,
+        "RUNTIME_VAULT_DAMAGED",
+      );
+    }
+  }
+  for (const root of [...new Set(roots.map((entry) => resolve(entry)))].sort()) {
+    indexed.add(archiveRuntimeRoot(vaultRoot, root));
+  }
+  atomicWrite(join(vaultRoot, RUNTIME_VAULT_INDEX), `${JSON.stringify({
+    schemaVersion: 1,
+    directories: [...indexed].sort(),
+  })}\n`);
+}
+
+function restoreVaultedRuntimeRoot(vaultRoot, versionsRoot, versionsRootIdentity, directory) {
+  const source = join(vaultRoot, directory);
+  const health = vaultRuntimeHealth(source, directory);
+  if (!health) {
+    throw new InstallError(
+      "RUNTIME_VAULT_DAMAGED: an indexed historical runtime is missing or invalid",
+      5,
+      "RUNTIME_VAULT_DAMAGED",
+    );
+  }
+  const target = resolve(versionsRoot, directory);
+  if (dirname(target) !== versionsRoot) {
+    throw new InstallError(
+      "RUNTIME_VAULT_DAMAGED: an indexed historical runtime has an invalid directory",
+      5,
+      "RUNTIME_VAULT_DAMAGED",
+    );
+  }
+  const targetMetadata = lstatIfPresent(target);
+  if (targetMetadata) {
+    if (!targetMetadata.isDirectory() || targetMetadata.isSymbolicLink()) {
+      throw new InstallError(
+        "RUNTIME_VAULT_RESTORE_FAILED: a historical cache target is not a real directory",
+        5,
+        "RUNTIME_VAULT_RESTORE_FAILED",
+      );
+    }
+    if (vaultRuntimeHealth(target, directory)) return false;
+  }
+  assertDirectoryIdentity(versionsRoot, versionsRootIdentity);
+  const recoveryRoot = join(versionsRoot, ".adaptive-router-vault-restore");
+  if (!existsSync(recoveryRoot)) mkdirSync(recoveryRoot, { mode: 0o700 });
+  const recoveryMetadata = lstatSync(recoveryRoot);
+  if (!recoveryMetadata.isDirectory() || recoveryMetadata.isSymbolicLink()) {
+    throw new InstallError(
+      "RUNTIME_VAULT_RESTORE_FAILED: the cache recovery path is not a real directory",
+      5,
+      "RUNTIME_VAULT_RESTORE_FAILED",
+    );
+  }
+  const nonce = `${process.pid}-${randomBytes(5).toString("hex")}`;
+  const staged = join(recoveryRoot, `restore-${directory}-${nonce}`);
+  const displaced = join(recoveryRoot, `displaced-${directory}-${nonce}`);
+  let displacedExisting = false;
+  let installedRestore = false;
+  try {
+    cpSync(source, staged, {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+      preserveTimestamps: true,
+    });
+    assertSafeRuntimeTree(staged);
+    materializeLaunchCommands(staged);
+    const stagedHealth = runtimeHealthAtRoot(staged);
+    if (
+      stagedHealth?.version !== directory ||
+      !sameRuntimeContract(stagedHealth.descriptor, SOURCE_RUNTIME) ||
+      !sameLiveCompatibility(stagedHealth.compatibility, SOURCE_COMPATIBILITY) ||
+      !sameHostSurface(staged)
+    ) {
+      throw new Error("restored runtime failed validation");
+    }
+    assertDirectoryIdentity(versionsRoot, versionsRootIdentity);
+    if (targetMetadata) {
+      renameSync(target, displaced);
+      displacedExisting = true;
+    }
+    renameSync(staged, target);
+    installedRestore = true;
+  } catch {
+    if (displacedExisting && !installedRestore && !existsSync(target)) {
+      try {
+        renameSync(displaced, target);
+        displacedExisting = false;
+      } catch {}
+    }
+    throw new InstallError(
+      "RUNTIME_VAULT_RESTORE_FAILED: a historical runtime could not be restored atomically",
+      5,
+      "RUNTIME_VAULT_RESTORE_FAILED",
+    );
+  } finally {
+    if (!installedRestore) {
+      try {
+        rmSync(staged, { recursive: true, force: true });
+      } catch {}
+    }
+    if (installedRestore && displacedExisting) {
+      try {
+        rmSync(displaced, { recursive: true, force: true });
+      } catch {}
+    }
+  }
+  return true;
+}
+
+function restoreVaultedRuntimeRoots(anchorRoot) {
+  const vaultRoot = runtimeVaultRoot();
+  const indexed = readRuntimeVaultIndex(vaultRoot);
+  if (indexed.length === 0) return [];
+  const versionsRoot = dirname(anchorRoot);
+  const versionsRootIdentity = directoryIdentity(versionsRoot);
+  const restored = [];
+  for (const directory of indexed) {
+    if (restoreVaultedRuntimeRoot(vaultRoot, versionsRoot, versionsRootIdentity, directory)) {
+      restored.push(directory);
+    }
+  }
+  return restored;
 }
 
 function defaultDesktopOverrideDirectory() {
@@ -1150,11 +1456,18 @@ function addPluginWithIntegrityCheck(beforeState, { verifyTaskToolExposure = fal
   verifyInstalledHookContract(afterHealth);
   verifyInstalledStdioBridge(afterHealth);
   if (verifyTaskToolExposure) verifyTaskTools();
+  archiveRuntimeRoots([afterHealth.root]);
   return afterHealth;
 }
 
 function hotUpgradeWithIntegrityCheck(beforeHealth) {
   assertCompatibleHotUpgrade(beforeHealth);
+  const restored = restoreVaultedRuntimeRoots(beforeHealth.root);
+  if (restored.length > 0) {
+    process.stdout.write(
+      `Restored ${restored.length} compatible historical Router runtime shell${restored.length === 1 ? "" : "s"} from stable plugin data.\n`,
+    );
+  }
   const roots = compatibleRuntimeRoots(beforeHealth.root);
   if (!roots.includes(beforeHealth.root)) {
     throw new InstallError(
@@ -1196,6 +1509,7 @@ function hotUpgradeWithIntegrityCheck(beforeHealth) {
     verifyInstalledStdioBridge(beforeHealth);
     staged = stageCompatibleRuntime(beforeHealth, mutableRoots);
     verifyInstalledToolContract(beforeHealth, INSTALL_VERSION);
+    archiveRuntimeRoots([...roots, staged.health.root]);
     return staged.health;
   } catch (error) {
     try {
@@ -1397,15 +1711,48 @@ async function installOrUpgrade(args, state) {
       codex(["plugin", "marketplace", "remove", LEGACY_MARKETPLACE]);
     }
   }
-  if (!currentMarketplace) codex(["plugin", "marketplace", "add", REPOSITORY, "--ref", args.ref]);
-  else if (!localRepositoryMarketplace(currentMarketplace)) {
-    codex(["plugin", "marketplace", "upgrade", MARKETPLACE]);
+  if (beforeHealth.state === "healthy") {
+    assertCompatibleHotUpgrade(beforeHealth);
+    const roots = compatibleRuntimeRoots(beforeHealth.root);
+    if (!roots.includes(beforeHealth.root)) {
+      throw new InstallError(
+        "RUNTIME_VAULT_ARCHIVE_FAILED: the active Router runtime changed before it could be archived",
+        5,
+        "RUNTIME_VAULT_ARCHIVE_FAILED",
+      );
+    }
+    archiveRuntimeRoots(roots);
   }
-  const hotUpgrade = beforeHealth.state === "healthy";
+  let currentState = state;
+  if (!currentMarketplace) {
+    codex(["plugin", "marketplace", "add", REPOSITORY, "--ref", args.ref]);
+  } else if (!localRepositoryMarketplace(currentMarketplace)) {
+    codex(["plugin", "marketplace", "upgrade", MARKETPLACE]);
+    currentState = loadState();
+  }
+  const currentHealth = installedPluginHealth(currentState);
+  if (["damaged", "unverifiable"].includes(currentHealth.state)) {
+    throw new InstallError(
+      "CACHE_DAMAGED: RECOVERY_REQUIRED: marketplace refresh did not leave one healthy registered Router cache; plugin re-registration was refused to protect existing tasks",
+      5,
+      "CACHE_DAMAGED",
+    );
+  }
+  if (
+    beforeHealth.state === "healthy" &&
+    currentHealth.state !== "healthy"
+  ) {
+    throw new InstallError(
+      "CACHE_DAMAGED: RECOVERY_REQUIRED: marketplace refresh did not leave one healthy registered Router cache; plugin re-registration was refused to protect existing tasks",
+      5,
+      "CACHE_DAMAGED",
+    );
+  }
+  const hotUpgrade = currentHealth.state === "healthy";
   if (hotUpgrade) {
-    hotUpgradeWithIntegrityCheck(beforeHealth);
+    hotUpgradeWithIntegrityCheck(currentHealth);
   } else {
-    addPluginWithIntegrityCheck(state, { verifyTaskToolExposure: args.verifyTaskTools });
+    addPluginWithIntegrityCheck(currentState, { verifyTaskToolExposure: args.verifyTaskTools });
   }
   if (args.patchAgents) patchAgents();
   if (hotUpgrade) {

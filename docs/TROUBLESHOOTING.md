@@ -30,9 +30,12 @@ files, or Codex credentials into a public issue.
 
    The wrapper stages a new immutable sibling and verifies it through the
    previously pinned MCP shell. It does not call `plugin add` or request plugin
-   re-registration. Codex may resolve later `mcp list` queries to the staged
-   sibling; this does not alter an existing task's fixed tool inventory. If it
-   reports `HOST_RELOAD_REQUIRED`, fully exit
+   re-registration. Before marketplace refresh it archives all verified
+   compatible shells in stable plugin data; after refresh it reloads the actual
+   registration and restores indexed historical paths that Codex cache
+   reconciliation pruned. Codex may resolve later `mcp list` queries to the
+   staged sibling; this does not alter an existing task's fixed tool inventory.
+   If it reports `HOST_RELOAD_REQUIRED`, fully exit
    Desktop and all other Codex CLI processes, then run the exact cold
    replacement command it prints from a fresh terminal. Review Hooks and create
    a genuinely new non-forked task afterward; do not present that operation as
@@ -85,6 +88,14 @@ by the wrapper. It identifies a directory under the system temporary directory.
 The installer deliberately retains that complete tree instead of deleting the
 last known-good backup; restore or inspect it before retrying any lifecycle
 command.
+
+`RUNTIME_VAULT_DAMAGED`, `RUNTIME_VAULT_ARCHIVE_FAILED`, or
+`RUNTIME_VAULT_RESTORE_FAILED` is not a normal routing fallback. The installer
+has refused to trust or replace a historical shell. Preserve the stable plugin
+data and installed cache, verify that `runtime-shell-vault/index.json` and every
+indexed directory came from reviewed plugin packages, and repair from the exact
+reviewed versions before retrying. Do not delete the index, bypass symlink
+checks, or run `plugin add` while existing tasks depend on those paths.
 
 An installed runtime containing a symbolic link, duplicate enabled Router MCP
 registration, or changed cache-directory identity is treated as damaged. The

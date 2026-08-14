@@ -160,6 +160,16 @@ The seam has two ownership classes:
   live-read Skill workflow body. These files may be refreshed across compatible
   v0.4 shells only under explicit contracts and without host registration.
 
+Host-managed cache retention is not a continuity boundary: Codex may prune an
+older immutable sibling while reconciling marketplace metadata. The installer
+therefore owns a third, non-executable persistence surface under stable plugin
+data: `runtime-shell-vault/`. Its strict atomic index names validated compatible
+shell copies only. Before marketplace refresh, a healthy installation archives
+all visible compatible shells. After refresh, the installer reloads the actual
+MCP registration and atomically restores any indexed shell whose immutable
+cache path is missing or damaged. Unindexed directories are ignored; invalid,
+future, incompatible, or symlinked entries fail closed.
+
 The Skill name and description are fixed host identity. The refreshable Skill
 body is governed by `liveWorkflowContractVersion`; the helper and its request,
 approval, transport, storage, and response behavior are governed by
@@ -167,17 +177,20 @@ approval, transport, storage, and response behavior are governed by
 `compatibility.json` and must match the pinned shell for a hot upgrade. A
 mismatch is a host reload boundary, not a best-effort repair.
 
-1. The managed compatible-upgrade path atomically stages another immutable
-   sibling cache directory without invoking host plugin re-registration.
-2. The next Hook launch or MCP tool call scans only those sibling Router
+1. The managed compatible-upgrade path archives visible compatible shells,
+   refreshes marketplace metadata, reloads host state, and restores indexed
+   shells that host reconciliation pruned, without invoking plugin
+   re-registration.
+2. It atomically stages another immutable sibling cache directory.
+3. The next Hook launch or MCP tool call scans only those sibling Router
    versions and reads each strict `runtime.json`.
-3. A candidate is eligible only when its shell protocol, tool contract, and
+4. A candidate is eligible only when its shell protocol, tool contract, and
    storage contract equal the pinned shell. Its manifest name/version and
    entrypoints must also validate.
-4. The pinned probe compares exact tool names and input schemas, then the
+5. The pinned probe compares exact tool names and input schemas, then the
    candidate probe opens a fresh temporary database and runs redacted
    diagnostics.
-5. The first successful real Hook or MCP store initialization atomically moves
+6. The first successful real Hook or MCP store initialization atomically moves
    the active pointer. Failed provisional or active runtimes are quarantined,
    and the previous compatible runtime is selected on the next invocation.
 
@@ -191,11 +204,12 @@ cache whose only defect is a bare `node` bootstrap is repaired once without
 plugin re-registration; normalized host-surface comparison treats those
 installer-owned absolute paths as the stable `node` templates rather than a
 contract change.
-It never invokes `plugin add` on this path, so every historical runtime identity
-and an already-created task's fixed native tool inventory remain intact. The
-installer may repair installer-owned Node launch fields and refresh the
-live-read skill/stdio bridge files across compatible historical shells only
-when their explicit workflow contracts match. Codex
+It never invokes `plugin add` on this path, so an already-created task's fixed
+native tool inventory remains intact. Historical cache paths are preserved by
+the stable vault rather than by assuming the host will retain every cache
+sibling. The installer may repair installer-owned Node launch fields and
+refresh the live-read skill/stdio bridge files across restored compatible
+historical shells only when their explicit workflow contracts match. Codex
 may resolve later MCP-list queries to the staged sibling. Independently, the
 previously pinned MCP shell must report the staged runtime version. Fixed
 host-surface or contract changes fail with
@@ -210,6 +224,12 @@ shells serialize the short pointer update through an exclusive local lock and
 converge through atomic replacement. Quarantine wins over a later success from
 the same immutable cache directory. Database transactions continue to provide
 process-level state safety.
+
+The vault is separate from the active pointer and routing database. Its index
+stores only immutable runtime directory names; each indexed directory is a
+validated plugin-package copy. Archive and restore use staging directories and
+atomic directory rename. A vault entry is never selected directly by the
+runtime loader, and an orphan directory absent from the index is never restored.
 
 This mechanism deliberately does not add native MCP functions to a frozen task
 inventory. Instead, the live-read skill uses `scripts/stdio-tool.mjs` to invoke

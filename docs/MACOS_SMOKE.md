@@ -228,7 +228,9 @@ idempotent and leave AGENTS unpatched.
 
 The wrapper output must distinguish cold host-surface replacement from later
 compatible v0.4.x+ runtime-only updates. The compatible upgrade must not call
-`plugin add` or request Desktop plugin re-registration. Do not claim that every
+`plugin add` or request Desktop plugin re-registration. It must preserve the
+strict stable-plugin-data vault index and restore any indexed historical cache
+path pruned by host reconciliation before completing. Do not claim that every
 implementation-only upgrade needs a new task. It must also report matching
 `liveWorkflowContractVersion` and `stdioBridgeContractVersion` values. The
 automated `runtime-hot-upgrade.test.mjs` is the blocking same-process

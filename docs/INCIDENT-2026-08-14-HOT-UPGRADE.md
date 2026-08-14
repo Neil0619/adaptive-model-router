@@ -28,6 +28,16 @@ requesting host re-registration. The live-read Skill workflow body and stdio
 helper may refresh only when `liveWorkflowContractVersion` and
 `stdioBridgeContractVersion` match the pinned shell.
 
+A later same-task test exposed a second runtime-file failure: Codex can
+reconcile the plugin source before the wrapper's hot transaction and retain
+only recent cache siblings. The current task's fixed cache path was therefore
+deleted even though the hot path itself never called `plugin add`. Restoring
+only historical directories that still happened to exist could not solve that
+ordering. The final repair archives compatible shells under stable plugin data
+before marketplace refresh, reloads the post-refresh MCP registration, and
+restores indexed missing paths atomically before bridge repair and candidate
+staging.
+
 ## Root cause
 
 Three different continuity properties were treated as one:
@@ -78,6 +88,12 @@ failed upgrade.
 - Compatible hot upgrade never starts a disposable CLI task: creating that
   task can cause the host to reconcile every cache sibling while the source
   manifest already names the new candidate.
+- Compatible shells are archived in an indexed stable plugin-data vault before
+  marketplace refresh. Post-refresh host state is reloaded, and cache paths
+  pruned by host reconciliation are restored and revalidated before mutation.
+- Vault regression tests model the host deleting the old cache during
+  marketplace refresh, a later host prune, an unindexed orphan, and a symlinked
+  indexed entry. Restoration never invokes plugin re-registration.
 - The transaction snapshots every compatible runtime tree, not only the live
   bridge files, and restores missing non-bridge files on verification failure.
 - A successful rollback deletes its temporary snapshot; a failed rollback
@@ -118,6 +134,10 @@ failed upgrade.
    tool inventory changed.
 9. Never use a source-checkout path as evidence for the active installed cache,
    and never start a host-reconciling task inside a hot-upgrade transaction.
+10. Never treat host-managed cache retention as durable storage. Archive
+    compatible historical shells outside that cache before any operation that
+    can trigger reconciliation, then reload the registration and restore only
+    strict indexed entries.
 
 ## Remaining host boundary
 

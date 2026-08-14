@@ -93,6 +93,15 @@ value, or secret. Candidate health checks use a newly created temporary data
 directory and delete it before returning. Diagnostic output exposes only
 contract/version numbers and the count of quarantined runtimes.
 
+Compatible install and upgrade also keep `runtime-shell-vault/` under the same
+stable plugin data root. Its `index.json` contains only validated immutable
+runtime directory names. Indexed subdirectories are local copies of the plugin
+package—code, documentation, manifests, schemas, and installer-materialized
+launch definitions. They may therefore contain the local Node executable path
+already written into MCP/Hook configuration, but never prompts, project source,
+route rows, model input, credentials, environment values, or the routing
+database. Vault entries are not sent to a model or network service.
+
 ## Legacy data
 
 Data under the v0.1 legacy directory is never used for v0.2 learning
@@ -116,7 +125,7 @@ removes only the current project's routes, outcomes, learning state, task-mode
 state, scoring profiles/snapshots, read-only-inspection guards, and root-model
 change events. Other projects, the global automatic-routing
 preference, and the local HMAC salt remain intact. Uninstalling the plugin does
-not silently delete learning data.
+not silently delete learning data or the compatible runtime-shell vault.
 
 See [Tool reference](TOOLS.md) for the deletion contract and
 [Troubleshooting](TROUBLESHOOTING.md) before collecting diagnostic information
