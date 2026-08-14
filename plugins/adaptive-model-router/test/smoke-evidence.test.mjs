@@ -400,12 +400,18 @@ test("release evidence gate binds both native PASS artifacts to one unchanged ca
 
 test("installed candidate verification binds repository, ref, revision, enabled state, and version", () => {
   const expectedCommit = "a".repeat(40);
+  const candidateVersion = "0.4.0+codex.20260814065649";
   const marketplaceState = { marketplaces: [{ name: "adaptive-model-router", root: "/redacted/cache" }] };
+  const mcpState = [{
+    name: "adaptive-model-router",
+    enabled: true,
+    transport: { type: "stdio", cwd: "/redacted/cache" },
+  }];
   const pluginState = {
     installed: [{
       pluginId: "adaptive-model-router@adaptive-model-router",
       enabled: true,
-      version: "0.4.0",
+      version: candidateVersion,
     }],
   };
   const identity = {
@@ -416,38 +422,126 @@ test("installed candidate verification binds repository, ref, revision, enabled 
   assert.doesNotThrow(() => verifyInstalledCandidate({
     marketplaceState,
     pluginState,
+    mcpState,
     identity,
     expectedRef: "codex/windows-smoke",
     expectedCommit,
+    candidateVersion,
+    runtimeManifestVersion: candidateVersion,
+  }));
+  assert.doesNotThrow(() => verifyInstalledCandidate({
+    marketplaceState,
+    pluginState: {
+      installed: [{
+        pluginId: "adaptive-model-router@adaptive-model-router",
+        enabled: true,
+        version: "0.4.0",
+      }],
+    },
+    mcpState,
+    identity,
+    expectedRef: "codex/windows-smoke",
+    expectedCommit,
+    candidateVersion,
+    runtimeManifestVersion: candidateVersion,
   }));
   assert.throws(() => verifyInstalledCandidate({
     marketplaceState,
     pluginState,
+    mcpState,
     identity: { ...identity, revision: "b".repeat(40) },
     expectedRef: "codex/windows-smoke",
     expectedCommit,
+    candidateVersion,
+    runtimeManifestVersion: candidateVersion,
   }), /revision differs/u);
   assert.throws(() => verifyInstalledCandidate({
     marketplaceState,
     pluginState,
+    mcpState,
     identity: { ...identity, source: "https://github.com/example/other.git" },
     expectedRef: "codex/windows-smoke",
     expectedCommit,
+    candidateVersion,
+    runtimeManifestVersion: candidateVersion,
   }), /reviewed repository/u);
+  assert.throws(() => verifyInstalledCandidate({
+    marketplaceState,
+    pluginState: {
+      installed: [{
+        pluginId: "adaptive-model-router@adaptive-model-router",
+        enabled: true,
+        version: "0.4.0+codex.stale",
+      }],
+    },
+    mcpState,
+    identity,
+    expectedRef: "codex/windows-smoke",
+    expectedCommit,
+    candidateVersion,
+    runtimeManifestVersion: candidateVersion,
+  }), /differs from the frozen candidate manifest/u);
+  assert.throws(() => verifyInstalledCandidate({
+    marketplaceState,
+    pluginState,
+    mcpState,
+    identity,
+    expectedRef: "codex/windows-smoke",
+    expectedCommit,
+    candidateVersion,
+    runtimeManifestVersion: "0.4.0+codex.stale",
+  }), /active Router MCP cache version differs/u);
+  assert.throws(() => verifyInstalledCandidate({
+    marketplaceState,
+    pluginState: {
+      installed: [{
+        pluginId: "adaptive-model-router@adaptive-model-router",
+        enabled: true,
+        version: "0.4.0",
+      }],
+    },
+    mcpState,
+    identity,
+    expectedRef: "codex/windows-smoke",
+    expectedCommit,
+    candidateVersion,
+    runtimeManifestVersion: "0.4.0+codex.stale",
+  }), /active Router MCP cache version differs/u);
+  for (const invalidMcpState of [
+    [],
+    [...mcpState, ...mcpState],
+    [{ name: "adaptive-model-router", enabled: true, transport: { type: "http", cwd: "/redacted/cache" } }],
+  ]) {
+    assert.throws(() => verifyInstalledCandidate({
+      marketplaceState,
+      pluginState,
+      mcpState: invalidMcpState,
+      identity,
+      expectedRef: "codex/windows-smoke",
+      expectedCommit,
+      candidateVersion,
+      runtimeManifestVersion: candidateVersion,
+    }), /active Router MCP runtime is missing or ambiguous/u);
+  }
 });
 
 test("installed candidate CLI discovers Codex from PATH and verifies a git checkout without metadata", async () => {
   const project = await temporaryProject("adaptive installed verifier ");
   try {
     const marketplaceRoot = join(project.root, "marketplace checkout 中文");
+    const pluginRoot = join(marketplaceRoot, "plugins", "adaptive-model-router");
     const bin = join(project.root, "fake verifier bin");
-    await mkdir(marketplaceRoot, { recursive: true });
+    await mkdir(join(pluginRoot, ".codex-plugin"), { recursive: true });
     await mkdir(bin, { recursive: true });
     assert.equal(spawnSync("git", ["init", "--initial-branch=codex/windows-smoke", marketplaceRoot], { encoding: "utf8" }).status, 0);
     assert.equal(spawnSync("git", ["-C", marketplaceRoot, "config", "user.email", "smoke@example.invalid"], { encoding: "utf8" }).status, 0);
     assert.equal(spawnSync("git", ["-C", marketplaceRoot, "config", "user.name", "Smoke Fixture"], { encoding: "utf8" }).status, 0);
     await writeFile(join(marketplaceRoot, "fixture.txt"), "fixture\n");
-    assert.equal(spawnSync("git", ["-C", marketplaceRoot, "add", "fixture.txt"], { encoding: "utf8" }).status, 0);
+    await writeFile(
+      join(pluginRoot, ".codex-plugin", "plugin.json"),
+      `${JSON.stringify({ name: "adaptive-model-router", version: "0.4.0+codex.20260814065649" })}\n`,
+    );
+    assert.equal(spawnSync("git", ["-C", marketplaceRoot, "add", "."], { encoding: "utf8" }).status, 0);
     assert.equal(spawnSync("git", ["-C", marketplaceRoot, "commit", "-m", "fixture"], { encoding: "utf8" }).status, 0);
     assert.equal(spawnSync("git", ["-C", marketplaceRoot, "remote", "add", "origin", "https://github.com/Neil0619/adaptive-model-router.git"], { encoding: "utf8" }).status, 0);
     const commit = spawnSync("git", ["-C", marketplaceRoot, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
@@ -461,7 +555,11 @@ if (args === "plugin marketplace list --json") {
   process.exit(0);
 }
 if (args === "plugin list --available --json") {
-  process.stdout.write(JSON.stringify({ installed: [{ pluginId: "adaptive-model-router@adaptive-model-router", enabled: true, version: "0.4.0" }] }));
+  process.stdout.write(JSON.stringify({ installed: [{ pluginId: "adaptive-model-router@adaptive-model-router", enabled: true, version: "0.4.0+codex.20260814065649" }] }));
+  process.exit(0);
+}
+if (args === "mcp list --json") {
+  process.stdout.write(JSON.stringify([{ name: "adaptive-model-router", enabled: true, transport: { type: "stdio", cwd: root + "/plugins/adaptive-model-router" } }]));
   process.exit(0);
 }
 process.exit(2);
