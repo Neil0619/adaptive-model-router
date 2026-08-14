@@ -131,32 +131,23 @@ The release workflow runs `scripts/verify-release-evidence.mjs` with
 candidate ref, a mismatched plugin-tree hash, a valid `FAIL` artifact, or any
 release-relevant tree change after evidence collection.
 
-### One-time v0.4.0 native Windows exception
+### Historical v0.4.0 native Windows exception
 
-The maintainer explicitly authorized publishing `v0.4.0` without rerunning the
-native Windows same-Desktop-task continuity gate. This is a release exception,
-not a passing Windows result. The checked-in Windows artifact must remain a
-schema-valid `FAIL` with `EVIDENCE_INVALIDATED_BY_CONTINUITY_GATE`; the macOS
-native artifact must still be a validated `PASS`, the six hosted Windows CI
-matrix/syntax jobs remain blocking, and all automated tests, validation, and
-evaluation still run in the release workflow.
+The maintainer authorized the original `v0.4.0` publication without rerunning
+the native Windows same-Desktop-task continuity gate. That consumed one-time
+decision did not turn the retained Windows `FAIL` artifact into a passing
+result. It was limited to the official `v0.4.0` tag workflow and bound the
+frozen candidate, retained evidence hash, maintainer authorization, and three
+explicitly accepted Windows risks.
 
-The verifier accepts this exception only when all of the following are true:
-
-- it is invoked with the checked-in
-  `docs/release-waivers/v0.4.0-windows-native.json` receipt;
-- it is running in the official `Neil0619/adaptive-model-router` GitHub Actions
-  tag workflow for exactly `v0.4.0`;
-- the receipt binds the frozen candidate commit and plugin-tree hash, the exact
-  SHA-256 of the retained Windows `FAIL` artifact, the maintainer identity and
-  authorization time, and the three explicitly accepted Windows risks;
-- the retained Windows artifact is `FAIL` with the invalidation warning above.
-
-Other tags, local invocations, missing diagnostic evidence, and future releases
-remain fail-closed. The receipt is shipped as a signed-release asset. Remove the
-workflow waiver argument after publishing `v0.4.0`; retain the receipt as
-historical evidence and do not generalize or rename the exception for a later
-version.
+The byte-preserved receipt remains at
+`docs/release-waivers/v0.4.0-windows-native.json` as historical evidence only.
+It is not an input or asset of the current release workflow and must not be
+renamed, generalized, or reused. `scripts/verify-release-evidence.mjs` no
+longer exposes a waiver option: every current invocation, including an official
+`v0.4.0` tag environment, requires both native artifacts to bind the same
+frozen candidate and validate as `PASS`. A schema-valid retained `FAIL` remains
+diagnostic history and cannot authorize another release.
 
 ## 3. Logged-in smoke gate
 

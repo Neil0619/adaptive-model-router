@@ -16,12 +16,6 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..")
 const validator = join(repoRoot, "scripts", "validate-smoke-evidence.mjs");
 const releaseVerifier = join(repoRoot, "scripts", "verify-release-evidence.mjs");
 const macosTemplate = join(repoRoot, "docs", "release-evidence", "templates", "macos-v1.json");
-const githubReleaseEnvironmentKeys = [
-  "GITHUB_ACTIONS",
-  "GITHUB_REPOSITORY",
-  "GITHUB_REF_TYPE",
-  "GITHUB_REF_NAME",
-];
 const requiredCheckIds = [
   "native-preflight",
   "candidate-frozen",
@@ -41,12 +35,6 @@ const requiredCheckIds = [
   "cross-project-persistence",
   "final-state-settled",
 ];
-
-function releaseVerifierEnvironment(overrides = {}) {
-  const environment = { ...process.env };
-  for (const key of githubReleaseEnvironmentKeys) delete environment[key];
-  return { ...environment, ...overrides };
-}
 
 test("release gate comparison ignores only line-ending transformations", async () => {
   assert.deepEqual(normalizeLineEndings(Buffer.from("one\r\ntwo\rthree\n")), Buffer.from("one\ntwo\nthree\n"));
@@ -285,9 +273,7 @@ test("release evidence gate binds both native PASS artifacts to one unchanged ca
     const evidenceDirectory = join(project.root, "docs", "release-evidence", "v0.4.0");
     const windowsPath = join(evidenceDirectory, "windows.json");
     const macosPath = join(evidenceDirectory, "macos.json");
-    const waiverPath = join(project.root, "docs", "release-waivers", "v0.4.0-windows-native.json");
     await mkdir(evidenceDirectory, { recursive: true });
-    await mkdir(dirname(waiverPath), { recursive: true });
     await writeFile(windowsPath, `${JSON.stringify(windows)}\n`);
     await writeFile(macosPath, `${JSON.stringify(macos)}\n`);
 
@@ -300,7 +286,6 @@ test("release evidence gate binds both native PASS artifacts to one unchanged ca
       cwd: project.root,
       encoding: "utf8",
       windowsHide: true,
-      env: releaseVerifierEnvironment(),
     });
     assert.equal(accepted.status, 0, accepted.stderr);
 
@@ -322,99 +307,72 @@ test("release evidence gate binds both native PASS artifacts to one unchanged ca
       cwd: project.root,
       encoding: "utf8",
       windowsHide: true,
-      env: releaseVerifierEnvironment(),
     });
     assert.notEqual(defaultRejected.status, 0);
     assert.match(defaultRejected.stderr, /does not bind one frozen candidate/u);
 
-    const waiver = {
-      schemaVersion: 1,
-      releaseTag: "v0.4.0",
-      gate: "windows-native",
-      scope: "same-task-continuity",
-      authorizedAt: "2026-08-14T07:00:00.000Z",
-      authorizedBy: "Neil0619",
-      reasonCode: "WINDOWS_NATIVE_SAME_TASK_SMOKE_DEFERRED",
-      candidate: {
-        ref: "codex/windows-smoke",
-        commitSha: commit,
-        pluginTreeSha256,
-      },
-      retainedEvidence: {
-        path: "docs/release-evidence/v0.4.0/windows.json",
-        sha256: createHash("sha256").update(await readFile(windowsPath)).digest("hex"),
-        status: "FAIL",
-      },
-      riskAcknowledgements: [
-        "DESKTOP_REDUCED_PATH_UNVERIFIED",
-        "NATIVE_FILE_LOCKING_UNVERIFIED",
-        "OLD_TASK_STDIO_BRIDGE_UNVERIFIED",
-      ],
-      futureReleaseReuse: false,
-    };
-    await writeFile(waiverPath, `${JSON.stringify(waiver, null, 2)}\n`);
-
-    const localBypassRejected = spawnSync(process.execPath, [
+    const retiredOptionRejected = spawnSync(process.execPath, [
       releaseVerifier,
       "--expected-ref=codex/windows-smoke",
-      `--temporary-windows-waiver=${waiverPath}`,
+      "--temporary-windows-waiver=retired.json",
       windowsPath,
       macosPath,
     ], {
       cwd: project.root,
       encoding: "utf8",
       windowsHide: true,
-      env: releaseVerifierEnvironment(),
     });
-    assert.notEqual(localBypassRejected.status, 0);
-    assert.match(localBypassRejected.stderr, /official v0\.4\.0 GitHub tag workflow/u);
+    assert.notEqual(retiredOptionRejected.status, 0);
+    assert.match(retiredOptionRejected.stderr, /unknown argument --temporary-windows-waiver=retired\.json/u);
 
-    assert.equal(runGit("checkout", "-b", "release").status, 0);
-    assert.equal(runGit("add", "docs/release-waivers/v0.4.0-windows-native.json").status, 0);
-    assert.equal(runGit("commit", "-m", "record one-time waiver").status, 0);
-
-    const bypassAccepted = spawnSync(process.execPath, [
+    const officialTagRejected = spawnSync(process.execPath, [
       releaseVerifier,
       "--expected-ref=codex/windows-smoke",
-      `--temporary-windows-waiver=${waiverPath}`,
       windowsPath,
       macosPath,
     ], {
       cwd: project.root,
       encoding: "utf8",
       windowsHide: true,
-      env: releaseVerifierEnvironment({
+      env: {
+        ...process.env,
         GITHUB_ACTIONS: "true",
         GITHUB_REPOSITORY: "Neil0619/adaptive-model-router",
         GITHUB_REF_TYPE: "tag",
         GITHUB_REF_NAME: "v0.4.0",
-      }),
+      },
     });
-    assert.equal(bypassAccepted.status, 0, bypassAccepted.stderr);
-    assert.match(bypassAccepted.stdout, /Windows evidence bypass active for v0\.4\.0/u);
+    assert.notEqual(officialTagRejected.status, 0);
+    assert.match(officialTagRejected.stderr, /does not bind one frozen candidate/u);
 
-    const wrongTagBypassRejected = spawnSync(process.execPath, [
+    await writeFile(windowsPath, `${JSON.stringify(windows)}\n`);
+
+    assert.equal(runGit("checkout", "-b", "receipt-change").status, 0);
+    const historicalReceiptPath = join(
+      project.root,
+      "docs",
+      "release-waivers",
+      "v0.4.0-windows-native.json",
+    );
+    await mkdir(dirname(historicalReceiptPath), { recursive: true });
+    await writeFile(historicalReceiptPath, "historical receipt changed\n");
+    assert.equal(runGit("add", "docs/release-waivers/v0.4.0-windows-native.json").status, 0);
+    assert.equal(runGit("commit", "-m", "change historical receipt").status, 0);
+    const receiptChangeRejected = spawnSync(process.execPath, [
       releaseVerifier,
       "--expected-ref=codex/windows-smoke",
-      `--temporary-windows-waiver=${waiverPath}`,
       windowsPath,
       macosPath,
     ], {
       cwd: project.root,
       encoding: "utf8",
       windowsHide: true,
-      env: releaseVerifierEnvironment({
-        GITHUB_ACTIONS: "true",
-        GITHUB_REPOSITORY: "Neil0619/adaptive-model-router",
-        GITHUB_REF_TYPE: "tag",
-        GITHUB_REF_NAME: "v0.4.1",
-      }),
     });
-    assert.notEqual(wrongTagBypassRejected.status, 0);
-    assert.match(wrongTagBypassRejected.stderr, /official v0\.4\.0 GitHub tag workflow/u);
+    assert.notEqual(receiptChangeRejected.status, 0);
+    assert.match(receiptChangeRejected.stderr, /release-relevant files differ/u);
 
-    await writeFile(windowsPath, `${JSON.stringify(windows)}\n`);
-
+    assert.equal(runGit("checkout", "codex/windows-smoke").status, 0);
+    assert.equal(runGit("checkout", "-b", "release").status, 0);
     await writeFile(join(project.root, "plugins", "adaptive-model-router", "fixture.txt"), "changed\n");
     assert.equal(runGit("add", ".").status, 0);
     assert.equal(runGit("commit", "-m", "changed release tree").status, 0);
@@ -427,7 +385,6 @@ test("release evidence gate binds both native PASS artifacts to one unchanged ca
       cwd: project.root,
       encoding: "utf8",
       windowsHide: true,
-      env: releaseVerifierEnvironment(),
     });
     assert.notEqual(rejected.status, 0);
     assert.match(rejected.stderr, /release-relevant files differ/u);

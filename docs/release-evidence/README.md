@@ -42,9 +42,10 @@ Release automation calls the validator with `--require-pass` through
 `scripts/verify-release-evidence.mjs`. That gate requires both native
 artifacts, checks that their frozen ref has not moved, recomputes the plugin
 tree hash, and rejects any release-relevant file change after smoke. A
-schema-valid `FAIL` artifact remains useful diagnostic history but can never
-authorize a release. The sole exception is the maintainer-authorized
-`v0.4.0` native Windows bypass documented in `docs/RELEASE.md`: it is bound to
-that exact official GitHub tag workflow and a checked-in waiver receipt, retains
-the Windows `FAIL` artifact, ships the receipt as a release asset, and does not
-relax the macOS `PASS`, hosted Windows CI, or future-release gates.
+schema-valid `FAIL` artifact remains useful diagnostic history but cannot
+authorize a release. The checked-in
+`docs/release-waivers/v0.4.0-windows-native.json` file is the byte-preserved
+historical receipt for the consumed one-time v0.4.0 publication decision. The
+current verifier does not read it, the release workflow does not package it,
+and official tag environment variables cannot relax the requirement that both
+native artifacts bind the same frozen candidate and report `PASS`.
