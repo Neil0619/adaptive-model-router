@@ -75,6 +75,23 @@ failed upgrade.
   or resolving to the newly staged sibling.
 - CLI smoke output is explicitly labeled as CLI evidence and cannot be used as
   proof about an already-created Desktop task.
+- Compatible hot upgrade never starts a disposable CLI task: creating that
+  task can cause the host to reconcile every cache sibling while the source
+  manifest already names the new candidate.
+- The transaction snapshots every compatible runtime tree, not only the live
+  bridge files, and restores missing non-bridge files on verification failure.
+- A successful rollback deletes its temporary snapshot; a failed rollback
+  retains and reports the complete snapshot for explicit recovery.
+- Rollback assembles a complete sibling tree and installs it by directory
+  rename; it never recursively copies through a mutable destination tree, and
+  any symbolic link in an installed runtime fails closed before lifecycle
+  mutation.
+- Candidate staging records ownership. A failed transaction removes only a
+  directory it created itself and preserves a valid candidate that appeared
+  concurrently from another installer.
+- An installed plugin without exactly one enabled stdio MCP cache registration
+  is recovery-required damage; the wrapper stops before marketplace refresh,
+  staging, or plugin replacement instead of trusting the source checkout path.
 - A frozen native inventory uses the approval-limited stdio bridge for
   compatible v0.4 continuity; cold replacement and incompatible contract
   changes still require a genuinely new non-forked task.
@@ -99,6 +116,8 @@ failed upgrade.
    basis for cachebusters.
 8. Never describe dynamic MCP path discovery as proof that an existing task's
    tool inventory changed.
+9. Never use a source-checkout path as evidence for the active installed cache,
+   and never start a host-reconciling task inside a hot-upgrade transaction.
 
 ## Remaining host boundary
 

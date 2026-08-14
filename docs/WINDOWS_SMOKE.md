@@ -368,6 +368,10 @@ Set-Location $Source
 .\install.ps1 -Action Upgrade -PatchAgents -VerifyTaskTools -Ref $CandidateRef
 ```
 
+For the compatible upgrade, `-VerifyTaskTools` runs pinned in-place MCP, Hook,
+and stdio-bridge probes and must not launch a disposable CLI task. The persistent
+native smoke target remains the blocking continuity consumer.
+
 Verify the owned marker occurs exactly once:
 
 ```powershell

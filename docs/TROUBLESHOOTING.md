@@ -70,13 +70,26 @@ files, or Codex credentials into a public issue.
    data directory. A transport failure is reported as a bridge failure, never
    disguised as a `route_stage` `continue` result.
 
-4. After trusting the current Hooks, verify real task exposure with
-   `./install.sh upgrade --verify-task-tools --non-interactive` or
-   `.\install.ps1 -Action Upgrade -VerifyTaskTools -NonInteractive`. This uses
-   one disposable Codex CLI task and fails unless `diagnose_router` and
-   `route_stage` both complete. Without this flag, installation verifies MCP
-   registration and direct tool discovery. Neither check proves that an
-   already-created Desktop task retained its fixed tool inventory.
+4. After trusting the current Hooks, a cold first install with
+   `--verify-task-tools` or `-VerifyTaskTools` uses one disposable Codex CLI task
+   and fails unless `diagnose_router` and `route_stage` both complete. A
+   compatible `upgrade --verify-task-tools` deliberately does not create a new
+   task; it runs only pinned in-place MCP, Hook, and stdio-bridge probes because
+   a fresh CLI task can trigger host cache reconciliation. Neither check proves
+   that an already-created Desktop task retained its fixed tool inventory; use
+   the same-task release gate below for that claim.
+
+If a verification failure is followed by `HOT_UPGRADE_ROLLBACK_FAILED`, stop
+all affected Router processes and preserve the recovery-snapshot identifier printed
+by the wrapper. It identifies a directory under the system temporary directory.
+The installer deliberately retains that complete tree instead of deleting the
+last known-good backup; restore or inspect it before retrying any lifecycle
+command.
+
+An installed runtime containing a symbolic link, duplicate enabled Router MCP
+registration, or changed cache-directory identity is treated as damaged. The
+wrapper stops before replacement; inspect the cache and registration rather
+than bypassing this guard.
 
 If a marketplace named `adaptive-model-router` points to a different source or
 ref, the wrapper stops rather than replacing it. Inspect the marketplace list
@@ -177,7 +190,7 @@ pinned Router MCP shell continues through its native functions; a frozen task
 continues through the bridge. Neither path claims that the host inventory was
 mutated.
 
-Release acceptance requires more than `--verify-task-tools`: keep one real
+Release acceptance requires more than the installer's in-place probes: keep one real
 Desktop task open across the compatible upgrade and prove, in that same task
 and context, one ordered `route_stage → delegate → record_outcome`
 lifecycle with an unchanged root model and exactly one bounded target/outcome.

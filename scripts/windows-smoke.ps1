@@ -742,8 +742,8 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
             throw 'wrapper lifecycle did not emit the required upgrade and persistence guidance'
         }
     }
-    if ($wrapperUpgrade.Stdout -notmatch 'disposable Codex task completed live') {
-        throw 'wrapper upgrade did not verify Router tools through a disposable Codex task'
+    if ($wrapperUpgrade.Stdout -notmatch 'no disposable Codex CLI task was started') {
+        throw 'wrapper upgrade did not preserve the in-place hot-upgrade verification boundary'
     }
     $agentsPath = Join-Path $DedicatedCodexHome 'AGENTS.md'
     $agentsText = if (Test-Path -LiteralPath $agentsPath) { Get-Content -LiteralPath $agentsPath -Raw } else { '' }

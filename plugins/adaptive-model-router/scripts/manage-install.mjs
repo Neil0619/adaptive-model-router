@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
@@ -52,11 +52,6 @@ const HOST_SURFACE_FILES = Object.freeze([
   "hooks/hooks.json",
   "skills/adaptive-model-router/SKILL.md",
   "skills/adaptive-model-router/agents/openai.yaml",
-]);
-const MUTABLE_RUNTIME_FILES = Object.freeze([
-  ".mcp.json",
-  "hooks/hooks.json",
-  ...LIVE_BRIDGE_FILES,
 ]);
 const installWait = new Int32Array(new SharedArrayBuffer(4));
 const DESKTOP_NODE_BRIDGE_MARKER = "adaptive-model-router Desktop PATH compatibility bridge";
@@ -394,13 +389,154 @@ function restoreFile(snapshot) {
   chmodSync(snapshot.path, snapshot.mode);
 }
 
-function snapshotRuntimeShells(roots) {
-  return roots.flatMap((root) => MUTABLE_RUNTIME_FILES.map((relative) =>
-    snapshotFile(join(root, relative))));
+function snapshotRuntimeTrees(roots) {
+  const container = mkdtempSync(join(tmpdir(), "adaptive-router-runtime-backup-"));
+  try {
+    const entries = roots.map((root, index) => {
+      assertSafeRuntimeTree(root);
+      const versionsRoot = dirname(root);
+      const backup = join(container, String(index));
+      cpSync(root, backup, {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+        preserveTimestamps: true,
+      });
+      assertSafeRuntimeTree(backup);
+      return {
+        root,
+        backup,
+        rootIdentity: directoryIdentity(root),
+        versionsRoot,
+        versionsRootIdentity: directoryIdentity(versionsRoot),
+      };
+    });
+    return { container, entries };
+  } catch {
+    let retained = false;
+    try {
+      rmSync(container, { recursive: true, force: true });
+    } catch {
+      retained = true;
+    }
+    if (retained) {
+      throw new InstallError(
+        `HOT_UPGRADE_SNAPSHOT_FAILED: partial snapshot identifier ${JSON.stringify(basename(container))} remains under the system temporary directory`,
+        5,
+        "HOT_UPGRADE_SNAPSHOT_FAILED",
+      );
+    }
+    throw new InstallError(
+      "HOT_UPGRADE_SNAPSHOT_FAILED: the installer could not back up every compatible runtime before mutation",
+      5,
+      "HOT_UPGRADE_SNAPSHOT_FAILED",
+    );
+  }
 }
 
-function restoreSnapshots(snapshots) {
-  for (const snapshot of [...snapshots].reverse()) restoreFile(snapshot);
+function directoryIdentity(path) {
+  const metadata = lstatSync(path);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error("runtime path is not a real directory");
+  }
+  return {
+    device: metadata.dev,
+    inode: metadata.ino,
+    realPath: realpathSync(path),
+  };
+}
+
+function assertDirectoryIdentity(path, expected) {
+  const observed = directoryIdentity(path);
+  if (
+    observed.device !== expected.device ||
+    observed.inode !== expected.inode ||
+    observed.realPath !== expected.realPath
+  ) {
+    throw new Error("runtime directory identity changed during the upgrade");
+  }
+}
+
+function assertSafeRuntimeTree(root) {
+  const metadata = lstatSync(root);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error("runtime tree root is not a real directory");
+  }
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.isSymbolicLink()) throw new Error("runtime tree contains a symbolic link");
+    if (entry.isDirectory()) assertSafeRuntimeTree(path);
+    else if (!entry.isFile()) throw new Error("runtime tree contains a non-regular file");
+  }
+}
+
+function restoreRuntimeTrees(snapshot) {
+  for (const entry of [...snapshot.entries].reverse()) {
+    restoreRuntimeTree(entry);
+  }
+}
+
+function restoreRuntimeTree(entry) {
+  const { root, backup, versionsRoot, versionsRootIdentity } = entry;
+  assertDirectoryIdentity(versionsRoot, versionsRootIdentity);
+  assertSafeRuntimeTree(backup);
+  const recoveryRoot = join(versionsRoot, ".adaptive-router-rollback");
+  if (!existsSync(recoveryRoot)) mkdirSync(recoveryRoot, { mode: 0o700 });
+  const recoveryMetadata = lstatSync(recoveryRoot);
+  if (!recoveryMetadata.isDirectory() || recoveryMetadata.isSymbolicLink()) {
+    throw new Error("runtime recovery path is not a real directory");
+  }
+  const nonce = `${process.pid}-${randomBytes(5).toString("hex")}`;
+  const staged = join(recoveryRoot, `restore-${nonce}`);
+  const displaced = join(recoveryRoot, `displaced-${basename(root)}-${nonce}`);
+  let displacedCurrent = false;
+  let installedRestore = false;
+  try {
+    cpSync(backup, staged, {
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+      preserveTimestamps: true,
+    });
+    assertSafeRuntimeTree(staged);
+    assertDirectoryIdentity(versionsRoot, versionsRootIdentity);
+    if (existsSync(root)) {
+      renameSync(root, displaced);
+      displacedCurrent = true;
+    }
+    renameSync(staged, root);
+    installedRestore = true;
+    assertSafeRuntimeTree(root);
+  } catch (error) {
+    if (displacedCurrent && !installedRestore && !existsSync(root)) {
+      try {
+        renameSync(displaced, root);
+        displacedCurrent = false;
+      } catch {}
+    }
+    throw error;
+  } finally {
+    if (!installedRestore) {
+      try {
+        rmSync(staged, { recursive: true, force: true });
+      } catch {}
+    }
+    if (installedRestore && displacedCurrent) {
+      try {
+        rmSync(displaced, { recursive: true, force: true });
+      } catch {}
+    }
+  }
+}
+
+function discardRuntimeTreeSnapshot(snapshot) {
+  try {
+    rmSync(snapshot.container, { recursive: true, force: true });
+  } catch {
+    process.stderr.write(
+      `Warning: runtime snapshot identifier ${JSON.stringify(basename(snapshot.container))} remains under the system temporary directory.\n`,
+    );
+  }
 }
 
 function defaultDesktopOverrideDirectory() {
@@ -524,16 +660,31 @@ function removeDesktopNodeBridge() {
 }
 
 function installedPluginHealth(state) {
-  const entry = state.installed.find((candidate) => pluginId(candidate) === PLUGIN_ID);
-  if (!entry) return { state: "missing" };
-  const registered = state.mcpServers?.find((candidate) => candidate?.name === "adaptive-model-router");
-  const registeredRoot = registered?.transport?.type === "stdio" && typeof registered.transport.cwd === "string"
-    ? resolve(registered.transport.cwd)
-    : null;
-  const root = registeredRoot && existsSync(registeredRoot) ? registeredRoot : entry?.source?.path;
-  if (typeof root !== "string" || root.length === 0) return { state: "unverifiable" };
+  const entries = state.installed.filter((candidate) => pluginId(candidate) === PLUGIN_ID);
+  if (entries.length === 0) return { state: "missing" };
+  if (entries.length !== 1) return { state: "unverifiable" };
+  const registrations = (state.mcpServers || []).filter((candidate) =>
+    candidate?.name === "adaptive-model-router" &&
+    candidate?.enabled === true);
+  if (registrations.length !== 1) return { state: "unverifiable" };
+  const registered = registrations[0];
+  if (
+    registered?.transport?.type !== "stdio" ||
+    typeof registered.transport.cwd !== "string" ||
+    registered.transport.cwd.length === 0
+  ) {
+    return { state: "unverifiable" };
+  }
+  const root = resolve(registered.transport.cwd);
+  if (!existsSync(root)) return { state: "damaged" };
   const health = runtimeHealthAtRoot(root);
-  return health ? { state: "healthy", ...health } : { state: "damaged" };
+  if (!health) return { state: "damaged" };
+  try {
+    assertSafeRuntimeTree(root);
+  } catch {
+    return { state: "damaged" };
+  }
+  return { state: "healthy", ...health };
 }
 
 function verifyInstalledPlugin(state) {
@@ -627,9 +778,11 @@ function assertCompatibleHotUpgrade(beforeHealth) {
   }
 }
 
-function stageCompatibleRuntime(beforeHealth) {
+function stageCompatibleRuntime(beforeHealth, mutableRoots) {
   assertCompatibleHotUpgrade(beforeHealth);
-  if (beforeHealth.version === INSTALL_VERSION) return beforeHealth;
+  if (beforeHealth.version === INSTALL_VERSION) {
+    return { health: beforeHealth, created: false, identity: null };
+  }
   const versionsRoot = dirname(beforeHealth.root);
   const targetRoot = resolve(versionsRoot, INSTALL_VERSION);
   if (dirname(targetRoot) !== versionsRoot) {
@@ -646,8 +799,13 @@ function stageCompatibleRuntime(beforeHealth) {
       sameRuntimeContract(existing.descriptor, SOURCE_RUNTIME) &&
       sameLiveCompatibility(existing.compatibility, SOURCE_COMPATIBILITY)
     ) {
-      materializeLaunchCommands(targetRoot);
-      return { state: "healthy", ...existing };
+      if (mutableRoots.has(targetRoot)) materializeLaunchCommands(targetRoot);
+      else {
+        verifyInstalledToolContract(existing, INSTALL_VERSION);
+        verifyInstalledHookContract(existing);
+        verifyInstalledStdioBridge(existing);
+      }
+      return { health: { state: "healthy", ...existing }, created: false, identity: null };
     }
     throw new InstallError(
       "HOT_UPGRADE_STAGE_FAILED: the immutable target runtime already exists but is incomplete or inconsistent",
@@ -662,12 +820,14 @@ function stageCompatibleRuntime(beforeHealth) {
   const temporaryRoot = join(temporaryContainer, INSTALL_VERSION);
   try {
     mkdirSync(temporaryContainer, { mode: 0o700 });
+    assertSafeRuntimeTree(PLUGIN_ROOT);
     cpSync(PLUGIN_ROOT, temporaryRoot, {
       recursive: true,
       errorOnExist: true,
       force: false,
       preserveTimestamps: true,
     });
+    assertSafeRuntimeTree(temporaryRoot);
     materializeLaunchCommands(temporaryRoot);
     const staged = runtimeHealthAtRoot(temporaryRoot);
     if (
@@ -680,19 +840,33 @@ function stageCompatibleRuntime(beforeHealth) {
     verifyInstalledToolContract(staged, INSTALL_VERSION);
     verifyInstalledHookContract(staged);
     verifyInstalledStdioBridge(staged);
+    const targetIdentity = {
+      ...directoryIdentity(temporaryRoot),
+      realPath: join(realpathSync(versionsRoot), INSTALL_VERSION),
+    };
     renameSync(temporaryRoot, targetRoot);
-    rmSync(temporaryContainer, { recursive: true, force: true });
-    return { state: "healthy", ...runtimeHealthAtRoot(targetRoot) };
+    try {
+      rmSync(temporaryContainer, { recursive: true, force: true });
+    } catch {}
+    return {
+      health: { state: "healthy", ...staged, root: targetRoot },
+      created: true,
+      identity: targetIdentity,
+    };
   } catch {
-    rmSync(temporaryContainer, { recursive: true, force: true });
+    try {
+      rmSync(temporaryContainer, { recursive: true, force: true });
+    } catch {}
     const concurrent = runtimeHealthAtRoot(targetRoot);
     if (
       concurrent?.version === INSTALL_VERSION &&
       sameRuntimeContract(concurrent.descriptor, SOURCE_RUNTIME) &&
       sameLiveCompatibility(concurrent.compatibility, SOURCE_COMPATIBILITY)
     ) {
-      materializeLaunchCommands(targetRoot);
-      return { state: "healthy", ...concurrent };
+      verifyInstalledToolContract(concurrent, INSTALL_VERSION);
+      verifyInstalledHookContract(concurrent);
+      verifyInstalledStdioBridge(concurrent);
+      return { health: { state: "healthy", ...concurrent }, created: false, identity: null };
     }
     throw new InstallError(
       "HOT_UPGRADE_STAGE_FAILED: the compatible runtime could not be staged without invoking Codex plugin re-registration",
@@ -702,11 +876,18 @@ function stageCompatibleRuntime(beforeHealth) {
   }
 }
 
+function removeOwnedStagedRuntime(staged) {
+  if (!staged?.created) return;
+  assertDirectoryIdentity(staged.health.root, staged.identity);
+  rmSync(staged.health.root, { recursive: true, force: true });
+}
+
 function verifyMcpRegistration(afterHealth, acceptableRoots = [afterHealth.root]) {
   const servers = codex(["mcp", "list", "--json"], { json: true, quiet: true });
-  const router = Array.isArray(servers)
-    ? servers.find((entry) => entry?.name === "adaptive-model-router")
-    : null;
+  const routers = Array.isArray(servers)
+    ? servers.filter((entry) => entry?.name === "adaptive-model-router" && entry?.enabled === true)
+    : [];
+  const router = routers.length === 1 ? routers[0] : null;
   const transport = router?.transport;
   const cwd = typeof transport?.cwd === "string" ? resolve(transport.cwd) : null;
   let configured;
@@ -972,14 +1153,18 @@ function addPluginWithIntegrityCheck(beforeState, { verifyTaskToolExposure = fal
   return afterHealth;
 }
 
-function hotUpgradeWithIntegrityCheck(beforeHealth, { verifyTaskToolExposure = false } = {}) {
+function hotUpgradeWithIntegrityCheck(beforeHealth) {
   assertCompatibleHotUpgrade(beforeHealth);
   const roots = compatibleRuntimeRoots(beforeHealth.root);
-  const runtimeSnapshots = snapshotRuntimeShells(roots);
-  const desktopDirectory = defaultDesktopOverrideDirectory();
-  const desktopSnapshot = desktopDirectory
-    ? snapshotFile(desktopNodeBridgePath(desktopDirectory))
-    : null;
+  if (!roots.includes(beforeHealth.root)) {
+    throw new InstallError(
+      "HOT_UPGRADE_SNAPSHOT_FAILED: the active Router runtime changed before it could be snapshotted",
+      5,
+      "HOT_UPGRADE_SNAPSHOT_FAILED",
+    );
+  }
+  const mutableRoots = new Set(roots);
+  const runtimeSnapshot = snapshotRuntimeTrees(roots);
   const targetRoot = resolve(dirname(beforeHealth.root), INSTALL_VERSION);
   const targetExisted = existsSync(targetRoot);
   const existingTarget = targetExisted ? runtimeHealthAtRoot(targetRoot) : null;
@@ -989,31 +1174,45 @@ function hotUpgradeWithIntegrityCheck(beforeHealth, { verifyTaskToolExposure = f
     sameLiveCompatibility(existingTarget.compatibility, SOURCE_COMPATIBILITY)
       ? INSTALL_VERSION
       : beforeHealth.version;
+  let retainRuntimeSnapshot = false;
+  let desktopSnapshot = null;
+  let runtimeMutationStarted = false;
+  let staged = null;
   try {
+    const desktopDirectory = defaultDesktopOverrideDirectory();
+    desktopSnapshot = desktopDirectory
+      ? snapshotFile(desktopNodeBridgePath(desktopDirectory))
+      : null;
     installDesktopNodeBridge({ required: rootRequiresDesktopNodeBridge(beforeHealth.root) });
-    for (const root of roots) {
-      materializeLaunchCommands(root);
-      refreshLiveBridgeFiles(root);
+    runtimeMutationStarted = true;
+    for (const entry of runtimeSnapshot.entries) {
+      assertDirectoryIdentity(entry.root, entry.rootIdentity);
+      materializeLaunchCommands(entry.root);
+      refreshLiveBridgeFiles(entry.root);
     }
     verifyMcpRegistration(beforeHealth, roots);
     verifyInstalledToolContract(beforeHealth, expectedRuntimeVersion);
     verifyInstalledHookContract(beforeHealth);
     verifyInstalledStdioBridge(beforeHealth);
-    if (verifyTaskToolExposure) verifyTaskTools();
-    return stageCompatibleRuntime(beforeHealth);
+    staged = stageCompatibleRuntime(beforeHealth, mutableRoots);
+    verifyInstalledToolContract(beforeHealth, INSTALL_VERSION);
+    return staged.health;
   } catch (error) {
     try {
-      if (!targetExisted) rmSync(targetRoot, { recursive: true, force: true });
-      restoreSnapshots(runtimeSnapshots);
+      removeOwnedStagedRuntime(staged);
+      if (runtimeMutationStarted) restoreRuntimeTrees(runtimeSnapshot);
       if (desktopSnapshot) restoreFile(desktopSnapshot);
     } catch {
+      retainRuntimeSnapshot = true;
       throw new InstallError(
-        "HOT_UPGRADE_ROLLBACK_FAILED: verification failed and the installer could not restore every compatibility-surface file; stop Router processes and repair from the reviewed candidate before continuing",
+        `HOT_UPGRADE_ROLLBACK_FAILED: recovery snapshot identifier ${JSON.stringify(basename(runtimeSnapshot.container))} under the system temporary directory; stop Router processes and restore it before continuing`,
         5,
         "HOT_UPGRADE_ROLLBACK_FAILED",
       );
     }
     throw error;
+  } finally {
+    if (!retainRuntimeSnapshot) discardRuntimeTreeSnapshot(runtimeSnapshot);
   }
 }
 
@@ -1179,6 +1378,14 @@ async function installOrUpgrade(args, state) {
   if (currentMarketplace && !desiredMarketplace(currentMarketplace, args.ref)) {
     throw new InstallError("marketplace name adaptive-model-router is already configured from a different source or ref", 4);
   }
+  const beforeHealth = installedPluginHealth(state);
+  if (["damaged", "unverifiable"].includes(beforeHealth.state)) {
+    throw new InstallError(
+      "CACHE_DAMAGED: RECOVERY_REQUIRED: the installed Router has no unique verifiable MCP cache; stop affected Router processes and repair or reinstall the exact reviewed ref; automatic replacement was refused to protect existing tasks",
+      5,
+      "CACHE_DAMAGED",
+    );
+  }
   const legacyInstalled = state.installed.some((entry) => pluginId(entry) === LEGACY_PLUGIN_ID);
   if (legacyInstalled) {
     if (!await confirmLegacy(args)) {
@@ -1194,10 +1401,9 @@ async function installOrUpgrade(args, state) {
   else if (!localRepositoryMarketplace(currentMarketplace)) {
     codex(["plugin", "marketplace", "upgrade", MARKETPLACE]);
   }
-  const beforeHealth = installedPluginHealth(state);
   const hotUpgrade = beforeHealth.state === "healthy";
   if (hotUpgrade) {
-    hotUpgradeWithIntegrityCheck(beforeHealth, { verifyTaskToolExposure: args.verifyTaskTools });
+    hotUpgradeWithIntegrityCheck(beforeHealth);
   } else {
     addPluginWithIntegrityCheck(state, { verifyTaskToolExposure: args.verifyTaskTools });
   }
@@ -1210,7 +1416,11 @@ async function installOrUpgrade(args, state) {
   } else {
     process.stdout.write(`Adaptive Model Router ${INSTALL_VERSION} is installed and its MCP is registered for new tasks.\n`);
   }
-  if (args.verifyTaskTools) {
+  if (hotUpgrade && args.verifyTaskTools) {
+    process.stdout.write(
+      "Pinned in-place MCP, Hook, and stdio bridge probes passed; no disposable Codex CLI task was started during the compatible hot upgrade.\n",
+    );
+  } else if (args.verifyTaskTools) {
     process.stdout.write(`A disposable Codex CLI task completed live ${LIVE_TASK_SMOKE_TOOLS.join(", ")} calls.\n`);
   } else {
     process.stdout.write("Task-level MCP exposure was not exercised; after Hook trust, rerun with --verify-task-tools for the logged-in smoke.\n");

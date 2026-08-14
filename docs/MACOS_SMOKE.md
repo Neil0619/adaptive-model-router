@@ -218,6 +218,10 @@ node "$Source/scripts/verify-installed-candidate.mjs" \
   --ref="$CandidateRef" --commit="$CandidateCommit"
 ```
 
+On the compatible upgrade, `--verify-task-tools` is an in-place contract-probe
+request only. It must report that no disposable Codex CLI task was started;
+the already-open Desktop task below is the sole continuity consumer.
+
 Confirm the owned AGENTS marker was inserted once and removed completely while
 surrounding user text remained unchanged. The final two installs must be
 idempotent and leave AGENTS unpatched.

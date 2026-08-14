@@ -69,11 +69,14 @@ codex plugin marketplace remove adaptive-model-router
 Uninstall wrapper equivalents are `./install.sh uninstall` and `.\install.ps1 -Action Uninstall`.
 
 The installer always verifies the immutable installed package, the registered
-MCP command, and the installed MCP tool contract. After the current Hook
-definitions are trusted, add `--verify-task-tools` on macOS/Linux or
-`-VerifyTaskTools` on Windows to run a disposable logged-in Codex CLI task that
-must actually call `diagnose_router` and `route_stage`. A package install is not
-evidence that an already-created Desktop task retained or received those tools.
+MCP command, and the installed MCP tool contract. On a cold first install,
+after the current Hook definitions are trusted, `--verify-task-tools` on
+macOS/Linux or `-VerifyTaskTools` on Windows also runs a disposable logged-in
+Codex CLI task that must call `diagnose_router` and `route_stage`. On a
+compatible hot upgrade, the same flag runs only pinned in-place MCP, Hook, and
+stdio-bridge probes: starting a new CLI task there can make the host reconcile
+the live cache. Neither result proves that an already-created Desktop task
+retained or received native tools.
 
 v0.4.0 introduces a stable launch shell for compatible runtime upgrades.
 After a v0.4.x-or-newer package is installed, an already-open task can pick up

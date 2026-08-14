@@ -67,6 +67,13 @@ codex plugin marketplace remove adaptive-model-router
 
 卸载包装脚本为 `./install.sh uninstall` 和 `.\install.ps1 -Action Uninstall`。
 
+安装器始终核验不可变安装包、已注册 MCP 命令和 MCP 工具契约。冷首次安装时，
+`--verify-task-tools`（macOS/Linux）或 `-VerifyTaskTools`（Windows）还会启动一个
+一次性登录态 Codex CLI 任务，并要求实际调用 `diagnose_router` 与 `route_stage`。
+兼容热升级时，同一参数只执行固定壳内的 MCP、Hook 与 stdio bridge 探针，不启动
+新 CLI 任务，因为新任务可能触发宿主重整正在使用的插件缓存。两类结果都不能代替
+下文“同一个 Desktop 任务跨升级”的连续性验收。
+
 兼容热升级必须使用仓库包装脚本。脚本只刷新 marketplace 元数据，把已审阅的新包原子
 旁加载成不可变兄弟运行时，再验证旧任务固定的 MCP 启动壳确实激活该版本；它不会
 调用 `codex plugin add`、不会请求插件重新注册，也不会删除历史运行时。Codex 可能
