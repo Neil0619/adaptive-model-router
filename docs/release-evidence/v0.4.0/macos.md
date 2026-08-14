@@ -2,11 +2,11 @@
 
 Status: **PASS**
 
-Generated: 2026-08-14T07:35:42.000Z
+Generated: 2026-08-14T10:36:56Z
 
-Candidate: `codex/v040-hot-upgrade-release` at `abc85a8fa919a789f883545f5dfbc3899737816d`
+Candidate: `codex/v040-hot-upgrade-release` at `d72ab717b5a7145c34989052d7b02972479a226d`
 
-Plugin tree SHA-256: `eaa84328ac025f46cdb559bbc35077a32880838f0a922796b1921a594a909125`
+Plugin tree SHA-256: `0625efe2565e8f4cc1e1dffc03b20d131185a8eb0e620074051f98ea7b76d961`
 
 | Check | Blocking | Status |
 |---|---:|---:|
@@ -32,6 +32,6 @@ Route: delegate; target sol/high; gate full-checks.
 
 Pending outcomes: 0; Stop-auto-finalized unknown: 0.
 
-Same Desktop task/context: yes; runtime 0.4.0+codex.20260814065649 → 0.4.0+codex.20260814071304; transport native.
+Same Desktop task/context: yes; runtime 0.4.0+codex.20260814095433 → 0.4.0+codex.20260814181412; transport stdio-bridge.
 
 Database: ok; classifier: closed; privacy: PASS.
