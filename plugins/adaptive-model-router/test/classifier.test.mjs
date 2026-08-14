@@ -77,7 +77,7 @@ function fakeClient({ mode = "final", delayInitialize = 0 } = {}) {
     });
     return child;
   };
-  const client = new AppServerClient({ timeoutMs: 500, spawnImpl, resolveImpl: async () => ({ path: "fake", kind: "direct" }) });
+  const client = new AppServerClient({ timeoutMs: 500, spawnImpl, resolveImpl: async () => ({ path: "codex", kind: "direct" }) });
   return { client, get child() { return child; } };
 }
 
@@ -135,7 +135,7 @@ test("app-server exit wakes an in-flight request", async () => {
   const spawnImpl = () => new FakeChild((_message, processHandle) => {
     queueMicrotask(() => processHandle.emit("exit", 9));
   });
-  const client = new AppServerClient({ timeoutMs: 5_000, spawnImpl, resolveImpl: async () => ({ path: "fake", kind: "direct" }) });
+  const client = new AppServerClient({ timeoutMs: 5_000, spawnImpl, resolveImpl: async () => ({ path: "codex", kind: "direct" }) });
   const started = Date.now();
   await assert.rejects(client.start(Date.now() + 5_000), /exited with code 9/);
   assert.ok(Date.now() - started < 1_000);
@@ -148,17 +148,28 @@ test("app-server enforces one total deadline", async () => {
   fixture.client.close();
 });
 
-test("Windows discovery supports explicit exe and safely wraps cmd paths with spaces and Unicode", async () => {
+test("Windows discovery uses fixed launchers for explicit paths with spaces and Unicode", async () => {
   const exe = await resolveCodexCommand({ platform: "win32", env: { CODEX_BIN: "C:\\Program Files\\Codex 中文\\codex.exe" } });
   assert.equal(exe.kind, "direct");
+  const exeSpec = spawnSpec(exe, ["--version"], { PATH: "C:\\Windows\\System32" });
+  assert.equal(exeSpec.command, "codex.exe");
+  assert.match(exeSpec.env.PATH, /^C:\\Program Files\\Codex 中文;/u);
   const cmd = await resolveCodexCommand({ platform: "win32", env: { CODEX_BIN: "C:\\Program Files\\Codex 中文\\codex.cmd" } });
   assert.equal(cmd.kind, "cmd");
   const spec = spawnSpec(cmd, ["app-server", "--listen", "stdio://"], { ComSpec: "C:\\Windows\\System32\\cmd.exe" });
-  assert.equal(spec.command, "C:\\Windows\\System32\\cmd.exe");
+  assert.equal(spec.command, "cmd.exe");
   assert.deepEqual(spec.args.slice(0, 4), ["/d", "/v:off", "/s", "/c"]);
   assert.equal(spec.windowsVerbatimArguments, true);
-  assert.match(spec.args[4], /Codex 中文/);
+  assert.doesNotMatch(spec.args[4], /Codex 中文/);
+  assert.match(spec.args[4], /codex\.cmd/i);
   assert.match(spec.args[4], /stdio:\/\//);
+});
+
+test("Codex launcher rejects environment-selected commands with an unexpected name", () => {
+  assert.throws(
+    () => spawnSpec({ path: "/tmp/not-codex", kind: "direct" }, ["--version"]),
+    /unexpected executable name/,
+  );
 });
 
 test("classifier prompt is capped and removes paths, environments, code, and secrets", () => {

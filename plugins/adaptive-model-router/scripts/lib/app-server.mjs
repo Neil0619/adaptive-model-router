@@ -37,17 +37,17 @@ export class AppServerClient {
     this.remaining(deadlineAt);
     const appHome = await mkdtemp(join(tmpdir(), "adaptive-model-router-app-server-"));
     this.appHome = appHome;
-    const spec = spawnSpec(resolved, ["app-server", "--listen", "stdio://"]);
+    const spec = spawnSpec(resolved, ["app-server", "--listen", "stdio://"], {
+      ...process.env,
+      ADAPTIVE_ROUTER_INTERNAL: "1",
+      CODEX_SQLITE_HOME: appHome,
+    });
     try {
       this.process = this.spawnImpl(spec.command, spec.args, {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
         windowsVerbatimArguments: spec.windowsVerbatimArguments,
-        env: {
-          ...process.env,
-          ADAPTIVE_ROUTER_INTERNAL: "1",
-          CODEX_SQLITE_HOME: appHome,
-        },
+        env: spec.env,
       });
     } catch (error) {
       this.cleanupHome();

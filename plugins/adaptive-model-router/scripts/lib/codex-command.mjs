@@ -1,7 +1,7 @@
 import { execFile, spawnSync } from "node:child_process";
 import { access, constants as fsConstants } from "node:fs/promises";
 import { accessSync } from "node:fs";
-import { delimiter, resolve } from "node:path";
+import { delimiter, dirname, resolve, win32 } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -92,12 +92,37 @@ function quoteCmd(value) {
   return `"${escaped}"`;
 }
 
+function portableBasename(path) {
+  return String(path).replaceAll("\\", "/").split("/").at(-1).toLowerCase();
+}
+
+function commandEnvironment(resolved, env) {
+  const next = { ...env };
+  const pathKey = Object.keys(next).find((key) => key.toLowerCase() === "path") || "PATH";
+  const windowsPath = /^(?:[A-Za-z]:[\\/]|\\\\)/u.test(resolved.path) && win32.isAbsolute(resolved.path);
+  const directory = windowsPath ? win32.dirname(resolved.path) : dirname(resolved.path);
+  if (directory && directory !== ".") {
+    const separator = windowsPath ? ";" : delimiter;
+    next[pathKey] = [directory, next[pathKey] || ""].filter(Boolean).join(separator);
+  }
+  return next;
+}
+
 export function spawnSpec(resolved, args, env = process.env) {
-  if (resolved.kind !== "cmd") return { command: resolved.path, args, windowsVerbatimArguments: false };
-  const commandLine = [quoteCmd(resolved.path), ...args.map(quoteCmd)].join(" ");
+  const executable = portableBasename(resolved.path);
+  const allowed = resolved.kind === "cmd"
+    ? ["codex.cmd", "codex.bat"]
+    : ["codex", "codex.exe"];
+  if (!allowed.includes(executable)) throw new Error("resolved Codex command has an unexpected executable name");
+  const childEnv = commandEnvironment(resolved, env);
+  if (resolved.kind !== "cmd") {
+    return { command: executable, args, env: childEnv, windowsVerbatimArguments: false };
+  }
+  const commandLine = [quoteCmd(executable), ...args.map(quoteCmd)].join(" ");
   return {
-    command: env.ComSpec || env.COMSPEC || "cmd.exe",
+    command: "cmd.exe",
     args: ["/d", "/v:off", "/s", "/c", `"${commandLine}"`],
+    env: childEnv,
     windowsVerbatimArguments: true,
   };
 }

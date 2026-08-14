@@ -54,15 +54,13 @@ try {
     "--skip-git-repo-check",
     "--dangerously-bypass-approvals-and-sandbox",
     "--json",
-    "-C",
-    project,
     prompt,
   ];
   const spec = spawnSpec(codex, args);
   const result = spawnSync(spec.command, spec.args, {
     cwd: project,
     encoding: "utf8",
-    env: process.env,
+    env: spec.env,
     timeout: 120_000,
     windowsHide: true,
     windowsVerbatimArguments: spec.windowsVerbatimArguments,

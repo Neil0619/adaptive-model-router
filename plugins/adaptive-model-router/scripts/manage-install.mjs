@@ -108,29 +108,17 @@ function parseArgs(values) {
   return parsed;
 }
 
-function codexExecutable() {
-  return resolveCodexCommandSync().path;
-}
-
-function commandSpec(command, args) {
-  if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(command)) {
-    return spawnSpec({ path: command, kind: "cmd" }, args);
-  }
-  return { command, args };
-}
-
-function run(command, args, { json = false, quiet = false } = {}) {
-  const spec = commandSpec(command, args);
+function runSpec(spec, invocationArgs, { json = false, quiet = false, label = spec.command } = {}) {
   const result = spawnSync(spec.command, spec.args, {
     encoding: "utf8",
     windowsHide: true,
     windowsVerbatimArguments: spec.windowsVerbatimArguments,
-    env: process.env,
+    env: spec.env || process.env,
   });
   if (result.error || result.status !== 0) {
     const failureText = `${result.error?.message || ""}\n${result.stderr || ""}`;
     if (
-      args[0] === "plugin" &&
+      invocationArgs[0] === "plugin" &&
       /failed to (?:back up|remove) (?:existing )?plugin cache entry|used by another process/iu.test(failureText)
     ) {
       throw new InstallError(
@@ -139,7 +127,7 @@ function run(command, args, { json = false, quiet = false } = {}) {
         "CACHE_LOCKED",
       );
     }
-    throw new InstallError(`${command} ${args.join(" ")} failed`, 5);
+    throw new InstallError(`${label} ${invocationArgs.join(" ")} failed`, 5);
   }
   if (!quiet && result.stdout) process.stdout.write(result.stdout);
   if (!quiet && result.stderr) process.stderr.write(result.stderr);
@@ -151,15 +139,20 @@ function run(command, args, { json = false, quiet = false } = {}) {
   }
 }
 
+function run(command, args, options = {}) {
+  return runSpec({ command, args, env: process.env }, args, { ...options, label: command });
+}
+
 function preflight() {
   assertRuntime();
   run(process.execPath, ["--version"], { quiet: true });
   run("git", ["--version"], { quiet: true });
-  run(codexExecutable(), ["--version"], { quiet: true });
+  codex(["--version"], { quiet: true });
 }
 
 function codex(args, options = {}) {
-  return run(codexExecutable(), args, options);
+  const spec = spawnSpec(resolveCodexCommandSync(), args, process.env);
+  return runSpec(spec, args, { ...options, label: "codex" });
 }
 
 function loadState() {
@@ -458,12 +451,14 @@ function desktopNodeBridgeContent() {
 }
 
 function verifyDesktopNodeBridge(directory) {
-  const spec = commandSpec(desktopNodeBridgePath(directory), ["--version"]);
-  const result = spawnSync(spec.command, spec.args, {
+  const command = process.platform === "win32" ? "cmd.exe" : "node";
+  const args = process.platform === "win32"
+    ? ["/d", "/v:off", "/s", "/c", "node --version"]
+    : ["--version"];
+  const result = spawnSync(command, args, {
     encoding: "utf8",
     env: { ...process.env, PATH: directory },
     windowsHide: true,
-    windowsVerbatimArguments: spec.windowsVerbatimArguments,
     timeout: 5_000,
   });
   return !result.error && result.status === 0 && /^v?\d+\.\d+\.\d+/u.test(result.stdout.trim());
