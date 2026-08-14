@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { access, chmod, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +15,7 @@ const manager = join(pluginRoot, "scripts", "manage-install.mjs");
 const runtimeVersion = JSON.parse(await readFile(join(pluginRoot, "runtime.json"), "utf8")).runtimeVersion;
 
 const FAKE_SOURCE = `
-import { readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 const path = process.env.FAKE_CODEX_STATE;
 const state = JSON.parse(readFileSync(path, "utf8"));
 const args = process.argv.slice(2);
@@ -27,10 +28,13 @@ if (args.join(" ") === "plugin marketplace list --json") {
 if (args.join(" ") === "plugin list --available --json") { process.stdout.write(JSON.stringify({installed:state.installed,available:state.available})); process.exit(0); }
 if (args.join(" ") === "mcp list --json") {
   const installed = state.installed.find((entry)=>entry.pluginId==="adaptive-model-router@adaptive-model-router");
-  const root = state.mcpResolvedRoot || installed?.source?.path || state.pluginInstallRoot;
+  const requestedRoot = state.mcpResolvedRoot || installed?.source?.path || state.pluginInstallRoot;
+  const root = requestedRoot && existsSync(requestedRoot+"/.mcp.json") ? requestedRoot : installed?.source?.path || state.pluginInstallRoot;
+  let config = {command:"node",args:["./scripts/node-launcher.mjs","./scripts/mcp-server.mjs"]};
+  try { config = JSON.parse(readFileSync(root+"/.mcp.json","utf8")).mcpServers["adaptive-model-router"] || config; } catch {}
   const servers = state.mcpRegistered === false ? [] : [{
     name:"adaptive-model-router", enabled:true, disabled_reason:null,
-    transport:{type:"stdio",command:"node",args:["./scripts/node-launcher.mjs","./scripts/mcp-server.mjs"],cwd:root},
+    transport:{type:"stdio",command:config.command,args:config.args,cwd:root},
   }];
   process.stdout.write(JSON.stringify(servers)); process.exit(0);
 }
@@ -140,15 +144,30 @@ async function fakeCodex(project, initial = {}) {
   return { executable, statePath, bin };
 }
 
-function runManager(project, fake, args = [], { useCodexBin = true } = {}) {
+function runManager(project, fake, args = [], {
+  useCodexBin = true,
+  desktopOverrideDir,
+  desktopOverridePathEntry = null,
+} = {}) {
   const codexHome = join(project.root, "Codex Home 空格");
+  const automaticDesktopOverride = desktopOverrideDir === undefined;
+  const effectiveDesktopOverride = automaticDesktopOverride
+    ? join(project.root, "Desktop runtime", "dependencies", "bin", "override")
+    : desktopOverrideDir;
+  if (automaticDesktopOverride) mkdirSync(effectiveDesktopOverride, { recursive: true });
+  if (desktopOverridePathEntry) mkdirSync(desktopOverridePathEntry, { recursive: true });
   const env = {
     ...process.env,
-    PATH: `${fake.bin}${delimiter}${process.env.PATH || ""}`,
+    PATH: [desktopOverridePathEntry, fake.bin, process.env.PATH || ""]
+      .filter(Boolean)
+      .join(delimiter),
     CODEX_HOME: codexHome,
     FAKE_CODEX_STATE: fake.statePath,
   };
   if (useCodexBin) env.CODEX_BIN = fake.executable;
+  if (effectiveDesktopOverride) {
+    env.ADAPTIVE_ROUTER_DESKTOP_OVERRIDE_DIR = effectiveDesktopOverride;
+  }
   const result = spawnSync(process.execPath, [manager, ...args], {
     encoding: "utf8",
     env,
@@ -374,7 +393,7 @@ test("install, upgrade, optional AGENTS patch, and uninstall are idempotent in a
 
     const installed = runManager(project, fake, ["install", "--non-interactive"]);
     assert.equal(installed.status, 0, installed.stderr);
-    assert.match(installed.stdout, /host-surface change/);
+    assert.match(installed.stdout, /frozen.*stdio bridge/i);
     assert.match(installed.stdout, /Compatible v0\.4\.x\+ runtime-only updates/);
     assert.match(installed.stdout, /upgrades preserve this setting/);
     assert.equal(await readFile(agents, "utf8"), "User instructions.\n");
@@ -448,6 +467,165 @@ test("a compatible upgrade preserves the old immutable sibling and activates it 
       "plugin marketplace upgrade adaptive-model-router",
     ]);
     assert.match(result.stdout, /without invoking Codex plugin re-registration/i);
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("a compatible upgrade materializes an absolute Node command that starts under the Desktop PATH", async () => {
+  const project = await temporaryProject("adaptive installer Desktop PATH ");
+  try {
+    const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+    const oldRoot = join(versionsRoot, "0.4.0+codex.20260812000000");
+    const newRoot = join(versionsRoot, runtimeVersion);
+    await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
+    const installedEntry = {
+      pluginId: "adaptive-model-router@adaptive-model-router",
+      name: "adaptive-model-router",
+      marketplaceName: "adaptive-model-router",
+      source: { source: "local", path: oldRoot },
+    };
+    const fake = await fakeCodex(project, {
+      pluginInstallRoot: oldRoot,
+      mcpResolvedRoot: newRoot,
+      marketplaces: [{
+        name: "adaptive-model-router",
+        marketplaceSource: {
+          sourceType: "git",
+          source: "https://github.com/Neil0619/adaptive-model-router.git",
+          ref: "stable",
+        },
+      }],
+      installed: [installedEntry],
+      available: [installedEntry],
+    });
+    await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
+
+    const desktopOverrideDir = join(project.root, "Desktop runtime", "dependencies", "bin", "override");
+    await mkdir(desktopOverrideDir, { recursive: true });
+    const result = runManager(
+      project,
+      fake,
+      ["upgrade", "--non-interactive"],
+      { desktopOverrideDir },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Desktop Node compatibility bridge path=/);
+    assert.match(result.stdout, /ownership=installer probe=passed/);
+    const mcp = JSON.parse(await readFile(join(newRoot, ".mcp.json"), "utf8"))
+      .mcpServers["adaptive-model-router"];
+    assert.equal(mcp.command, process.execPath);
+
+    const hooks = JSON.parse(await readFile(join(newRoot, "hooks", "hooks.json"), "utf8"));
+    const promptHook = hooks.hooks.UserPromptSubmit[0].hooks[0];
+    const hookCommand = process.platform === "win32" ? promptHook.commandWindows : promptHook.command;
+    assert.ok(hookCommand.includes(process.execPath), "installed Hook must use an absolute Node executable");
+
+    const bridgeName = process.platform === "win32" ? "node.cmd" : "node";
+    const desktopNodeBridge = await readFile(join(desktopOverrideDir, bridgeName), "utf8");
+    assert.match(desktopNodeBridge, /adaptive-model-router Desktop PATH compatibility bridge/);
+    assert.ok(desktopNodeBridge.includes(process.execPath));
+
+    const input = [
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: { protocolVersion: "2025-06-18" },
+      }),
+      JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+    ].join("\n");
+    const desktopLaunch = spawnSync(mcp.command, mcp.args, {
+      cwd: newRoot,
+      encoding: "utf8",
+      env: { ...process.env, PATH: "", ADAPTIVE_ROUTER_NODE: process.execPath },
+      input: `${input}\n`,
+      timeout: 15_000,
+      windowsHide: true,
+    });
+    assert.equal(desktopLaunch.status, 0, desktopLaunch.stderr);
+    const responses = desktopLaunch.stdout.trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+    const names = responses.find((entry) => entry?.id === 2)?.result?.tools?.map((tool) => tool.name);
+    assert.ok(names.includes("route_stage"));
+    assert.ok(names.includes("record_outcome"));
+
+    const pluginData = join(project.root, "Desktop plugin data");
+    await mkdir(pluginData, { recursive: true });
+    const hookShell = process.platform === "win32"
+      ? {
+          executable: process.env.ComSpec || join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe"),
+          args: ["/d", "/s", "/c", `"${hookCommand}"`],
+          windowsVerbatimArguments: true,
+        }
+      : { executable: "/bin/sh", args: ["-c", hookCommand], windowsVerbatimArguments: false };
+    const desktopHook = spawnSync(hookShell.executable, hookShell.args, {
+      cwd: project.root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: "",
+        PLUGIN_ROOT: newRoot,
+        PLUGIN_DATA: pluginData,
+        ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
+      },
+      input: JSON.stringify({
+        cwd: project.root,
+        session_id: "desktop-path-hook",
+        model: "gpt-5.6-sol",
+        prompt: "router: global on",
+      }),
+      timeout: 15_000,
+      windowsHide: true,
+      windowsVerbatimArguments: hookShell.windowsVerbatimArguments,
+    });
+    assert.equal(desktopHook.status, 0, desktopHook.stderr);
+    assert.match(
+      JSON.parse(desktopHook.stdout).hookSpecificOutput.additionalContext,
+      /already been applied atomically by the trusted UserPromptSubmit hook/i,
+    );
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("hot upgrade discovers the Desktop override directory from PATH without a macOS app executable", async () => {
+  const project = await temporaryProject("adaptive installer PATH discovery ");
+  try {
+    const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+    const oldRoot = join(versionsRoot, "0.4.0+codex.20260812000000");
+    await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
+    const installedEntry = {
+      pluginId: "adaptive-model-router@adaptive-model-router",
+      name: "adaptive-model-router",
+      marketplaceName: "adaptive-model-router",
+      source: { source: "local", path: oldRoot },
+    };
+    const fake = await fakeCodex(project, {
+      pluginInstallRoot: oldRoot,
+      marketplaces: [{
+        name: "adaptive-model-router",
+        marketplaceSource: {
+          sourceType: "git",
+          source: "https://github.com/Neil0619/adaptive-model-router.git",
+          ref: "stable",
+        },
+      }],
+      installed: [installedEntry],
+      available: [installedEntry],
+    });
+    await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
+    const pathOverride = join(project.root, "portable", "dependencies", "bin", "override");
+
+    const result = runManager(project, fake, ["upgrade", "--non-interactive"], {
+      desktopOverrideDir: null,
+      desktopOverridePathEntry: pathOverride,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const bridgeName = process.platform === "win32" ? "node.cmd" : "node";
+    assert.match(
+      await readFile(join(pathOverride, bridgeName), "utf8"),
+      /adaptive-model-router Desktop PATH compatibility bridge/,
+    );
   } finally {
     await project.cleanup();
   }
@@ -545,6 +723,212 @@ test("a host-surface change refuses hot upgrade before plugin re-registration is
   }
 });
 
+test("a plugin manifest UI change refuses hot upgrade before plugin re-registration is invoked", async () => {
+  const project = await temporaryProject("adaptive installer manifest reload ");
+  try {
+    const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+    const oldRoot = join(versionsRoot, "0.4.0+codex.20260812000000");
+    const newRoot = join(versionsRoot, runtimeVersion);
+    await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
+    const manifestPath = join(oldRoot, ".codex-plugin", "plugin.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.interface = { ...manifest.interface, shortDescription: "stale host-visible description" };
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    const installedEntry = {
+      pluginId: "adaptive-model-router@adaptive-model-router",
+      name: "adaptive-model-router",
+      marketplaceName: "adaptive-model-router",
+      source: { source: "local", path: oldRoot },
+    };
+    const fake = await fakeCodex(project, {
+      pluginInstallRoot: oldRoot,
+      marketplaces: [{
+        name: "adaptive-model-router",
+        marketplaceSource: {
+          sourceType: "git",
+          source: "https://github.com/Neil0619/adaptive-model-router.git",
+          ref: "stable",
+        },
+      }],
+      installed: [installedEntry],
+      available: [installedEntry],
+    });
+    await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
+    const installedManifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    installedManifest.interface = {
+      ...installedManifest.interface,
+      shortDescription: "stale host-visible description",
+    };
+    await writeFile(manifestPath, JSON.stringify(installedManifest));
+
+    const result = runManager(project, fake, ["upgrade", "--non-interactive"]);
+    assert.equal(result.status, 6);
+    assert.match(result.stderr, /HOST_RELOAD_REQUIRED/);
+    assert.deepEqual((await state(fake)).mutations.map((args) => args.join(" ")), [
+      "plugin marketplace upgrade adaptive-model-router",
+    ]);
+    await assert.rejects(access(newRoot), { code: "ENOENT" });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("a live workflow contract change refuses hot upgrade", async () => {
+  const project = await temporaryProject("adaptive installer workflow contract ");
+  try {
+    const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+    const oldRoot = join(versionsRoot, "0.4.0+codex.20260812000000");
+    const newRoot = join(versionsRoot, runtimeVersion);
+    await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
+    await writeFile(join(oldRoot, "compatibility.json"), JSON.stringify({
+      schemaVersion: 1,
+      liveWorkflowContractVersion: 2,
+      stdioBridgeContractVersion: 1,
+    }));
+    const installedEntry = {
+      pluginId: "adaptive-model-router@adaptive-model-router",
+      name: "adaptive-model-router",
+      marketplaceName: "adaptive-model-router",
+      source: { source: "local", path: oldRoot },
+    };
+    const fake = await fakeCodex(project, {
+      pluginInstallRoot: oldRoot,
+      marketplaces: [{
+        name: "adaptive-model-router",
+        marketplaceSource: {
+          sourceType: "git",
+          source: "https://github.com/Neil0619/adaptive-model-router.git",
+          ref: "stable",
+        },
+      }],
+      installed: [installedEntry],
+      available: [installedEntry],
+    });
+    await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
+    await writeFile(join(oldRoot, "compatibility.json"), JSON.stringify({
+      schemaVersion: 1,
+      liveWorkflowContractVersion: 2,
+      stdioBridgeContractVersion: 1,
+    }));
+
+    const result = runManager(project, fake, ["upgrade", "--non-interactive"]);
+    assert.equal(result.status, 6);
+    assert.match(result.stderr, /HOST_RELOAD_REQUIRED/);
+    await assert.rejects(access(newRoot), { code: "ENOENT" });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("a required Desktop node bridge fails before mutating historical shells when its directory is unavailable", async () => {
+  const project = await temporaryProject("adaptive installer missing Desktop bridge ");
+  try {
+    const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+    const oldRoot = join(versionsRoot, "0.4.0+codex.20260812000000");
+    const newRoot = join(versionsRoot, runtimeVersion);
+    await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
+    const installedEntry = {
+      pluginId: "adaptive-model-router@adaptive-model-router",
+      name: "adaptive-model-router",
+      marketplaceName: "adaptive-model-router",
+      source: { source: "local", path: oldRoot },
+    };
+    const fake = await fakeCodex(project, {
+      pluginInstallRoot: oldRoot,
+      marketplaces: [{
+        name: "adaptive-model-router",
+        marketplaceSource: {
+          sourceType: "git",
+          source: "https://github.com/Neil0619/adaptive-model-router.git",
+          ref: "stable",
+        },
+      }],
+      installed: [installedEntry],
+      available: [installedEntry],
+    });
+    await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
+    const unavailableOverride = join(project.root, "missing", "Desktop", "override");
+
+    const result = runManager(
+      project,
+      fake,
+      ["upgrade", "--non-interactive"],
+      { desktopOverrideDir: unavailableOverride },
+    );
+    assert.equal(result.status, 5);
+    assert.match(result.stderr, /DESKTOP_PATH_BRIDGE_REQUIRED/);
+    assert.equal(
+      JSON.parse(await readFile(join(oldRoot, ".mcp.json"), "utf8"))
+        .mcpServers["adaptive-model-router"].command,
+      "node",
+    );
+    await assert.rejects(access(newRoot), { code: "ENOENT" });
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("a failed hot-upgrade verification restores historical compatibility files and removes the candidate", async () => {
+  const project = await temporaryProject("adaptive installer transactional repair ");
+  try {
+    const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+    const oldRoot = join(versionsRoot, "0.4.0+codex.20260812000000");
+    const newRoot = join(versionsRoot, runtimeVersion);
+    await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
+    const legacySkill = `${await readFile(
+      join(oldRoot, "skills", "adaptive-model-router", "SKILL.md"),
+      "utf8",
+    )}\n<!-- historical-shell-marker -->\n`;
+    const installedEntry = {
+      pluginId: "adaptive-model-router@adaptive-model-router",
+      name: "adaptive-model-router",
+      marketplaceName: "adaptive-model-router",
+      source: { source: "local", path: oldRoot },
+    };
+    const fake = await fakeCodex(project, {
+      pluginInstallRoot: oldRoot,
+      mcpRegistered: false,
+      marketplaces: [{
+        name: "adaptive-model-router",
+        marketplaceSource: {
+          sourceType: "git",
+          source: "https://github.com/Neil0619/adaptive-model-router.git",
+          ref: "stable",
+        },
+      }],
+      installed: [installedEntry],
+      available: [installedEntry],
+    });
+    await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
+    await writeFile(
+      join(oldRoot, "skills", "adaptive-model-router", "SKILL.md"),
+      legacySkill,
+    );
+    await rm(join(oldRoot, "compatibility.json"), { force: true });
+    await rm(join(oldRoot, "scripts", "stdio-tool.mjs"), { force: true });
+    await rm(join(oldRoot, "scripts", "lib", "plugin-data.mjs"), { force: true });
+
+    const result = runManager(project, fake, ["upgrade", "--non-interactive"]);
+    assert.equal(result.status, 5);
+    assert.match(result.stderr, /MCP_REGISTRATION_INCOMPLETE/);
+    assert.equal(
+      JSON.parse(await readFile(join(oldRoot, ".mcp.json"), "utf8"))
+        .mcpServers["adaptive-model-router"].command,
+      "node",
+    );
+    assert.equal(
+      await readFile(join(oldRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8"),
+      legacySkill,
+    );
+    await assert.rejects(access(join(oldRoot, "compatibility.json")), { code: "ENOENT" });
+    await assert.rejects(access(join(oldRoot, "scripts", "stdio-tool.mjs")), { code: "ENOENT" });
+    await assert.rejects(access(join(oldRoot, "scripts", "lib", "plugin-data.mjs")), { code: "ENOENT" });
+    await assert.rejects(access(newRoot), { code: "ENOENT" });
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("compatible upgrade leaves the active immutable cache untouched", async () => {
   const project = await temporaryProject("adaptive installer removed old cache ");
   try {
@@ -587,7 +971,7 @@ test("compatible upgrade leaves the active immutable cache untouched", async () 
   }
 });
 
-test("compatible upgrade leaves every valid historical runtime untouched", async () => {
+test("compatible upgrade preserves historical runtime identities and refreshes their live old-task bridge", async () => {
   const project = await temporaryProject("adaptive installer all historical caches ");
   try {
     const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
@@ -619,6 +1003,12 @@ test("compatible upgrade leaves every valid historical runtime untouched", async
       available: [installedEntry],
     });
     await writePluginFixture(activeRoot, "0.4.0+codex.20260812000000");
+    const legacySkill = `---\nname: adaptive-model-router\ndescription: Choose whether a substantive Codex task stage should continue locally, ask the user, or run as one bounded subagent with a specific available model and reasoning effort. Use at task-stage boundaries, after verification failures, when the user explicitly controls adaptive routing, or when they ask which bounded model target is active or request route/model history.\n---\n\n# Legacy Router Skill\n`;
+    for (const root of [oldestRoot, activeRoot]) {
+      await writeFile(join(root, "skills", "adaptive-model-router", "SKILL.md"), legacySkill);
+      await rm(join(root, "scripts", "stdio-tool.mjs"), { force: true });
+      await rm(join(root, "scripts", "lib", "plugin-data.mjs"), { force: true });
+    }
 
     const result = runManager(project, fake, ["upgrade", "--non-interactive"]);
     assert.equal(result.status, 0, result.stderr);
@@ -631,6 +1021,16 @@ test("compatible upgrade leaves every valid historical runtime untouched", async
         JSON.parse(await readFile(join(root, "runtime.json"), "utf8")).runtimeVersion,
         version,
       );
+      assert.match(
+        await readFile(join(root, "skills", "adaptive-model-router", "SKILL.md"), "utf8"),
+        /Frozen task tool inventory/,
+      );
+      await access(join(root, "scripts", "stdio-tool.mjs"));
+      await access(join(root, "scripts", "lib", "plugin-data.mjs"));
+      const hooks = JSON.parse(await readFile(join(root, "hooks", "hooks.json"), "utf8"));
+      const prompt = hooks.hooks.UserPromptSubmit[0].hooks[0];
+      const command = process.platform === "win32" ? prompt.commandWindows : prompt.command;
+      assert.ok(command.includes(process.execPath));
     }
   } finally {
     await project.cleanup();

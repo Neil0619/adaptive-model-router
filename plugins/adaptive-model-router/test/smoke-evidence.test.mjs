@@ -14,6 +14,7 @@ import {
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const validator = join(repoRoot, "scripts", "validate-smoke-evidence.mjs");
+const releaseVerifier = join(repoRoot, "scripts", "verify-release-evidence.mjs");
 const macosTemplate = join(repoRoot, "docs", "release-evidence", "templates", "macos-v1.json");
 const requiredCheckIds = [
   "native-preflight",
@@ -30,6 +31,7 @@ const requiredCheckIds = [
   "host-model-intent",
   "negative-control",
   "native-and-wrapper-lifecycle",
+  "same-task-hot-upgrade",
   "cross-project-persistence",
   "final-state-settled",
 ];
@@ -64,7 +66,7 @@ function validEvidence() {
     },
     environment: {
       platform: "windows",
-      surface: "cli",
+      surface: "desktop",
       osVersion: "Microsoft Windows NT 10.0.26100.0",
       codexVersion: "codex-cli 0.145.0",
       nodeVersion: "v24.18.0",
@@ -78,6 +80,26 @@ function validEvidence() {
       verificationGate: "structured-check",
       pendingOutcomes: 0,
       stopHookUnknown: 0,
+    },
+    continuity: {
+      candidateCommitSha: "a".repeat(40),
+      taskIdentityBeforeSha256: "c".repeat(64),
+      taskIdentityAfterSha256: "c".repeat(64),
+      contextIdentityBeforeSha256: "d".repeat(64),
+      contextIdentityAfterSha256: "d".repeat(64),
+      rootModelBefore: "gpt-5.6-sol",
+      rootModelAfter: "gpt-5.6-sol",
+      runtimeBefore: "0.4.0+codex.20260812000000",
+      runtimeAfter: "0.4.0+codex.20260814000000",
+      transportBefore: "unavailable",
+      transportAfter: "stdio-bridge",
+      shimStatus: "verified",
+      routeIdSha256: "e".repeat(64),
+      outcomeRouteIdSha256: "e".repeat(64),
+      outcomeStatus: "passed",
+      delegatedTargetCount: 1,
+      recordedOutcomeCount: 1,
+      desktopStayedOpen: true,
     },
     diagnostics: { databaseHealth: "ok", classifierState: "closed", privacy: "PASS" },
     warnings: [],
@@ -133,6 +155,18 @@ test("smoke evidence validator rejects path leaks and inconsistent PASS claims",
     assert.notEqual(inconsistentResult.result.status, 0);
     assert.match(inconsistentResult.result.stderr, /status disagrees/u);
 
+    const replacedTask = validEvidence();
+    replacedTask.continuity.taskIdentityAfterSha256 = "f".repeat(64);
+    const replacedTaskResult = await runEvidence(project, replacedTask);
+    assert.notEqual(replacedTaskResult.result.status, 0);
+    assert.match(replacedTaskResult.result.stderr, /status disagrees/u);
+
+    const cliOnly = validEvidence();
+    cliOnly.environment.surface = "cli";
+    const cliOnlyResult = await runEvidence(project, cliOnly);
+    assert.notEqual(cliOnlyResult.result.status, 0);
+    assert.match(cliOnlyResult.result.stderr, /status disagrees/u);
+
     const incomplete = validEvidence();
     incomplete.checks.pop();
     const incompleteResult = await runEvidence(project, incomplete);
@@ -183,7 +217,182 @@ test("smoke evidence contract accepts macOS evidence and its checked-in FAIL tem
 
     const templateResult = spawnSync(process.execPath, [validator, macosTemplate], { encoding: "utf8" });
     assert.equal(templateResult.status, 0, templateResult.stderr);
+    const requiredTemplateResult = spawnSync(
+      process.execPath,
+      [validator, macosTemplate, "--require-pass"],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(requiredTemplateResult.status, 0);
+    assert.match(requiredTemplateResult.stderr, /require-pass/u);
     assert.match(templateResult.stdout, /macos-native FAIL/u);
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("release evidence gate binds both native PASS artifacts to one unchanged candidate tree", async () => {
+  const project = await temporaryProject("adaptive release evidence ");
+  const runGit = (...args) => spawnSync("git", args, {
+    cwd: project.root,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  try {
+    await mkdir(join(project.root, "plugins", "adaptive-model-router"), { recursive: true });
+    await writeFile(join(project.root, "plugins", "adaptive-model-router", "fixture.txt"), "candidate\n");
+    assert.equal(runGit("init", "-b", "codex/windows-smoke").status, 0);
+    assert.equal(runGit("config", "user.name", "Router Test").status, 0);
+    assert.equal(runGit("config", "user.email", "router@example.invalid").status, 0);
+    assert.equal(runGit("add", ".").status, 0);
+    assert.equal(runGit("commit", "-m", "candidate").status, 0);
+    const commit = runGit("rev-parse", "HEAD").stdout.trim();
+    const listing = runGit(
+      "ls-tree",
+      "-r",
+      "--full-tree",
+      commit,
+      "plugins/adaptive-model-router",
+    ).stdout.replace(/\r\n?/gu, "\n");
+    const pluginTreeSha256 = createHash("sha256").update(listing, "utf8").digest("hex");
+    const windows = validEvidence();
+    windows.candidate.commitSha = commit;
+    windows.candidate.pluginTreeSha256 = pluginTreeSha256;
+    windows.continuity.candidateCommitSha = commit;
+    const macos = structuredClone(windows);
+    macos.gate = "macos-native";
+    macos.environment.platform = "macos";
+    macos.environment.osVersion = "macOS 15.6.1";
+    const evidenceDirectory = join(project.root, "docs", "release-evidence", "v0.4.0");
+    const windowsPath = join(evidenceDirectory, "windows.json");
+    const macosPath = join(evidenceDirectory, "macos.json");
+    const waiverPath = join(project.root, "docs", "release-waivers", "v0.4.0-windows-native.json");
+    await mkdir(evidenceDirectory, { recursive: true });
+    await mkdir(dirname(waiverPath), { recursive: true });
+    await writeFile(windowsPath, `${JSON.stringify(windows)}\n`);
+    await writeFile(macosPath, `${JSON.stringify(macos)}\n`);
+
+    const accepted = spawnSync(process.execPath, [
+      releaseVerifier,
+      "--expected-ref=codex/windows-smoke",
+      windowsPath,
+      macosPath,
+    ], { cwd: project.root, encoding: "utf8", windowsHide: true });
+    assert.equal(accepted.status, 0, accepted.stderr);
+
+    const staleWindows = structuredClone(windows);
+    staleWindows.status = "FAIL";
+    staleWindows.candidate.commitSha = "a".repeat(40);
+    staleWindows.candidate.pluginTreeSha256 = "b".repeat(64);
+    staleWindows.continuity.candidateCommitSha = "a".repeat(40);
+    staleWindows.checks.find((check) => check.id === "same-task-hot-upgrade").status = "SKIP";
+    staleWindows.warnings = ["EVIDENCE_INVALIDATED_BY_CONTINUITY_GATE"];
+    await writeFile(windowsPath, `${JSON.stringify(staleWindows)}\n`);
+
+    const defaultRejected = spawnSync(process.execPath, [
+      releaseVerifier,
+      "--expected-ref=codex/windows-smoke",
+      windowsPath,
+      macosPath,
+    ], { cwd: project.root, encoding: "utf8", windowsHide: true });
+    assert.notEqual(defaultRejected.status, 0);
+    assert.match(defaultRejected.stderr, /does not bind one frozen candidate/u);
+
+    const waiver = {
+      schemaVersion: 1,
+      releaseTag: "v0.4.0",
+      gate: "windows-native",
+      scope: "same-task-continuity",
+      authorizedAt: "2026-08-14T07:00:00.000Z",
+      authorizedBy: "Neil0619",
+      reasonCode: "WINDOWS_NATIVE_SAME_TASK_SMOKE_DEFERRED",
+      candidate: {
+        ref: "codex/windows-smoke",
+        commitSha: commit,
+        pluginTreeSha256,
+      },
+      retainedEvidence: {
+        path: "docs/release-evidence/v0.4.0/windows.json",
+        sha256: createHash("sha256").update(await readFile(windowsPath)).digest("hex"),
+        status: "FAIL",
+      },
+      riskAcknowledgements: [
+        "DESKTOP_REDUCED_PATH_UNVERIFIED",
+        "NATIVE_FILE_LOCKING_UNVERIFIED",
+        "OLD_TASK_STDIO_BRIDGE_UNVERIFIED",
+      ],
+      futureReleaseReuse: false,
+    };
+    await writeFile(waiverPath, `${JSON.stringify(waiver, null, 2)}\n`);
+
+    const localBypassRejected = spawnSync(process.execPath, [
+      releaseVerifier,
+      "--expected-ref=codex/windows-smoke",
+      `--temporary-windows-waiver=${waiverPath}`,
+      windowsPath,
+      macosPath,
+    ], { cwd: project.root, encoding: "utf8", windowsHide: true });
+    assert.notEqual(localBypassRejected.status, 0);
+    assert.match(localBypassRejected.stderr, /official v0\.4\.0 GitHub tag workflow/u);
+
+    assert.equal(runGit("checkout", "-b", "release").status, 0);
+    assert.equal(runGit("add", "docs/release-waivers/v0.4.0-windows-native.json").status, 0);
+    assert.equal(runGit("commit", "-m", "record one-time waiver").status, 0);
+
+    const bypassAccepted = spawnSync(process.execPath, [
+      releaseVerifier,
+      "--expected-ref=codex/windows-smoke",
+      `--temporary-windows-waiver=${waiverPath}`,
+      windowsPath,
+      macosPath,
+    ], {
+      cwd: project.root,
+      encoding: "utf8",
+      windowsHide: true,
+      env: {
+        ...process.env,
+        GITHUB_ACTIONS: "true",
+        GITHUB_REPOSITORY: "Neil0619/adaptive-model-router",
+        GITHUB_REF_TYPE: "tag",
+        GITHUB_REF_NAME: "v0.4.0",
+      },
+    });
+    assert.equal(bypassAccepted.status, 0, bypassAccepted.stderr);
+    assert.match(bypassAccepted.stdout, /Windows evidence bypass active for v0\.4\.0/u);
+
+    const wrongTagBypassRejected = spawnSync(process.execPath, [
+      releaseVerifier,
+      "--expected-ref=codex/windows-smoke",
+      `--temporary-windows-waiver=${waiverPath}`,
+      windowsPath,
+      macosPath,
+    ], {
+      cwd: project.root,
+      encoding: "utf8",
+      windowsHide: true,
+      env: {
+        ...process.env,
+        GITHUB_ACTIONS: "true",
+        GITHUB_REPOSITORY: "Neil0619/adaptive-model-router",
+        GITHUB_REF_TYPE: "tag",
+        GITHUB_REF_NAME: "v0.4.1",
+      },
+    });
+    assert.notEqual(wrongTagBypassRejected.status, 0);
+    assert.match(wrongTagBypassRejected.stderr, /official v0\.4\.0 GitHub tag workflow/u);
+
+    await writeFile(windowsPath, `${JSON.stringify(windows)}\n`);
+
+    await writeFile(join(project.root, "plugins", "adaptive-model-router", "fixture.txt"), "changed\n");
+    assert.equal(runGit("add", ".").status, 0);
+    assert.equal(runGit("commit", "-m", "changed release tree").status, 0);
+    const rejected = spawnSync(process.execPath, [
+      releaseVerifier,
+      "--expected-ref=codex/windows-smoke",
+      windowsPath,
+      macosPath,
+    ], { cwd: project.root, encoding: "utf8", windowsHide: true });
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /release-relevant files differ/u);
   } finally {
     await project.cleanup();
   }

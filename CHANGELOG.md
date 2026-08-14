@@ -6,6 +6,41 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Already-created tasks whose Router function inventory was frozen while MCP
+  startup was broken now use a one-call installed stdio bridge for approved
+  lifecycle and inspection tools. The bridge invokes the same MCP
+  `tools/call`, preserves the Hook-injected context ID, shares the installed
+  plugin data directory even when launched from a source checkout, and exits
+  after one response. A missing native function no longer forces a replacement
+  task or a false local fail-open.
+- Compatible upgrades now refresh the live-read bridge helper and skill body in
+  every valid v0.4 cache shell, repair all historical bare-Node registrations,
+  and install an owned Node shim in Codex Desktop's runtime override directory
+  for already-loaded Hook commands. Runtime identities and host registration
+  remain unchanged. Explicit current-turn user prohibitions on subagents now
+  suppress automatic live routing for that stage.
+- Hot refresh now has explicit compatibility boundaries: Skill name/description
+  remain fixed identity, while the live-read workflow body and stdio helper are
+  accepted only under matching `liveWorkflowContractVersion` and
+  `stdioBridgeContractVersion`. The immutable runtime core remains separate
+  from the installer-owned launch, shim, Skill-body, and bridge compatibility
+  surface.
+- Desktop shim recovery is observable and fail-closed: an unresolved platform
+  path, unproved ownership, or failed reduced-`PATH` probe can no longer be
+  reported as successful old-task continuity.
+- Installer-managed MCP and Hook registrations now materialize the qualifying
+  Node executable as an absolute, platform-local command before verification.
+  This prevents Desktop's reduced GUI `PATH` from making either MCP startup or
+  trusted `UserPromptSubmit`, `SubagentStart`, and `Stop` Hooks fail before the
+  runtime launcher starts. Compatible upgrades repair the legacy bare `node`
+  entries once, stage every new sibling with absolute commands, and verify the
+  real installed launch configurations with an empty `PATH`.
+- Installer regression coverage now reads the staged `.mcp.json` instead of a
+  hard-coded fake transport, launches it under a Desktop-like environment, and
+  requires `route_stage` and `record_outcome` discovery, executes the installed
+  `router: global on` Hook, and checks its atomic-control context. Future
+  upgrades fail closed if either launch surface reintroduces an unresolved
+  `node` command.
 - Compatible runtime upgrades now stage an immutable sibling without invoking
   `codex plugin add`, so the installer no longer risks removing Router tools
   from already-created Desktop tasks. Host-surface and contract changes stop
@@ -13,8 +48,20 @@ All notable changes to this project are documented here.
   the staged version.
 - Upgrade diagnostics and documentation now distinguish new CLI task exposure,
   dynamic MCP path discovery, and same-Desktop-task tool continuity. A task
-  whose Router tools are already missing requires a genuinely new non-forked
-  task; restart/reopen and fork are not presented as in-place repairs.
+  whose native Router inventory is frozen continues a compatible v0.4 lifecycle
+  through the approved stdio bridge; a genuinely new non-forked task is reserved
+  for cold replacement or incompatible contracts. Restart/reopen and fork are
+  not presented as native-tool injection.
+- Native release gates now require one real Desktop task to stay open across a
+  compatible upgrade and complete `route_stage → delegate →
+  record_outcome` afterward in the same context. New CLI tasks and synthetic
+  same-process probes remain useful evidence but cannot substitute for this
+  consumer-identity gate.
+- The `v0.4.0` release records a maintainer-authorized, one-time native Windows
+  continuity exception. It retains the invalidated Windows `FAIL` artifact and
+  still requires macOS native continuity plus hosted Windows CI. The exception
+  is hard-bound to the official `v0.4.0` tag workflow and cannot authorize a
+  later release.
 
 ## [0.4.0] - 2026-07-26
 

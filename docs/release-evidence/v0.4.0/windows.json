@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "gate": "windows-native",
-  "status": "PASS",
+  "status": "FAIL",
   "generatedAt": "2026-08-03T03:23:57.9429947+00:00",
   "candidate": {
     "ref": "codex/windows-smoke",
@@ -88,6 +88,11 @@
       "status": "PASS"
     },
     {
+      "id": "same-task-hot-upgrade",
+      "blocking": true,
+      "status": "SKIP"
+    },
+    {
       "id": "cross-project-persistence",
       "blocking": true,
       "status": "PASS"
@@ -106,10 +111,30 @@
     "pendingOutcomes": 0,
     "stopHookUnknown": 0
   },
+  "continuity": {
+    "candidateCommitSha": "dc23f30a96c8e86e0251896986a1e1301840746d",
+    "taskIdentityBeforeSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "taskIdentityAfterSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "contextIdentityBeforeSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "contextIdentityAfterSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "rootModelBefore": "unavailable",
+    "rootModelAfter": "unavailable",
+    "runtimeBefore": "unavailable",
+    "runtimeAfter": "unavailable",
+    "transportBefore": "unavailable",
+    "transportAfter": "unavailable",
+    "shimStatus": "unavailable",
+    "routeIdSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "outcomeRouteIdSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "outcomeStatus": "unavailable",
+    "delegatedTargetCount": 0,
+    "recordedOutcomeCount": 0,
+    "desktopStayedOpen": false
+  },
   "diagnostics": {
     "databaseHealth": "ok",
     "classifierState": "closed",
     "privacy": "PASS"
   },
-  "warnings": []
+  "warnings": ["EVIDENCE_INVALIDATED_BY_CONTINUITY_GATE"]
 }

@@ -1,5 +1,14 @@
 # Incident: compatible upgrade removed Router tools from existing tasks
 
+> **Superseded recovery conclusion:** the original incident correctly states
+> that a task's native MCP inventory is immutable, but its conclusion that an
+> already-affected compatible v0.4 task must be replaced was superseded by the
+> later approved stdio-bridge repair documented in
+> [the Desktop bootstrap incident](INCIDENT-2026-08-14-DESKTOP-MCP-BOOTSTRAP.md).
+> The bridge preserves Router lifecycle continuity without claiming to inject
+> native tools. A genuinely new task remains required for a cold replacement or
+> an incompatible contract change.
+
 ## Summary
 
 The compatible-upgrade wrapper invoked `codex plugin add` after refreshing the
@@ -13,9 +22,11 @@ not reliably create a new tool inventory.
 The corrected compatible path never invokes plugin add/remove. It validates
 the installed shell and host surface, atomically stages a higher compatible
 runtime beside the pinned shell, then proves that the old shell activates that
-exact version. Updates that change MCP registration, Hooks, Skill instructions,
-or runtime contracts stop with `HOST_RELOAD_REQUIRED` before requesting host
-re-registration.
+exact version. Updates that change MCP registration, Hooks, Skill identity, UI
+metadata, or runtime contracts stop with `HOST_RELOAD_REQUIRED` before
+requesting host re-registration. The live-read Skill workflow body and stdio
+helper may refresh only when `liveWorkflowContractVersion` and
+`stdioBridgeContractVersion` match the pinned shell.
 
 ## Root cause
 
@@ -64,8 +75,12 @@ failed upgrade.
   or resolving to the newly staged sibling.
 - CLI smoke output is explicitly labeled as CLI evidence and cannot be used as
   proof about an already-created Desktop task.
-- Troubleshooting now requires a genuinely new non-forked task after tools are
-  already missing; it does not promise in-place recovery.
+- A frozen native inventory uses the approval-limited stdio bridge for
+  compatible v0.4 continuity; cold replacement and incompatible contract
+  changes still require a genuinely new non-forked task.
+- Release acceptance keeps one real Desktop task open across the compatible
+  upgrade and requires an ordered `route_stage → delegate →
+  record_outcome` lifecycle in that same context.
 
 ## Permanent rules
 
@@ -74,8 +89,9 @@ failed upgrade.
    independently; evidence for one never substitutes for another.
 3. Verify continuity against the same consumer identity. A new CLI task cannot
    prove an old Desktop task remained healthy.
-4. Treat task MCP inventory as immutable. Restart/reopen, fork, and later stage
-   boundaries are not repair mechanisms for missing initial tools.
+4. Treat task MCP inventory as immutable. Restart/reopen and fork do not add
+   native tools; compatible lifecycle continuity for a frozen inventory is
+   provided by the explicit bridge contract.
 5. Fail-open is a safety fallback, not successful upgrade evidence.
 6. Reject host-surface or contract changes from the hot path and print an exact
    cold-replacement boundary.
@@ -86,8 +102,9 @@ failed upgrade.
 
 ## Remaining host boundary
 
-The plugin cannot inject tools into a task that the Codex host created without
-them. An already-affected task must continue without Router or be replaced by a
-genuinely new non-forked task after installation has been verified. The repair
-prevents compatible upgrades from causing this condition again; it does not
-claim to rewrite the host's historical task inventory.
+The plugin cannot inject native functions into a task that the Codex host
+created without them. The later compatibility repair routes an already-affected
+v0.4 task through the approved stdio bridge instead, so replacement is not
+required for a compatible upgrade. Cold replacement and incompatible fixed or
+workflow contracts still require Hook review and a genuinely new non-forked
+task. Neither recovery path claims to rewrite historical host inventory.

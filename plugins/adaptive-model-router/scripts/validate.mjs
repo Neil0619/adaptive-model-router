@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { DATABASE_VERSION, STORAGE_CONTRACT_VERSION } from "./lib/constants.mjs";
+import { parseCompatibilityDescriptor } from "./lib/compatibility.mjs";
 import { supportsRuntime } from "./lib/runtime.mjs";
 import {
   parseRuntimeDescriptor,
@@ -44,6 +45,9 @@ const manifest = await json(join(pluginRoot, ".codex-plugin", "plugin.json"));
 const mcpConfig = await json(join(pluginRoot, ".mcp.json"));
 const packageJson = await json(join(pluginRoot, "package.json"));
 const runtimeDescriptor = parseRuntimeDescriptor(await json(join(pluginRoot, "runtime.json")));
+const compatibilityDescriptor = parseCompatibilityDescriptor(
+  await json(join(pluginRoot, "compatibility.json")),
+);
 const marketplace = await json(join(repoRoot, ".agents", "plugins", "marketplace.json"));
 const hooks = await json(join(pluginRoot, "hooks", "hooks.json"));
 const releaseWorkflow = await readFile(join(repoRoot, ".github", "workflows", "release.yml"), "utf8");
@@ -53,7 +57,9 @@ const macosSmoke = await readFile(join(repoRoot, "docs", "MACOS_SMOKE.md"), "utf
 const smokeEvidenceReadme = await readFile(join(repoRoot, "docs", "release-evidence", "README.md"), "utf8");
 const smokeEvidenceSchema = await json(join(repoRoot, "docs", "release-evidence", "schema-v1.json"));
 const macosEvidenceTemplate = await json(join(repoRoot, "docs", "release-evidence", "templates", "macos-v1.json"));
+const continuityReceiptTemplate = await json(join(repoRoot, "docs", "release-evidence", "templates", "continuity-receipt-v1.json"));
 const smokeEvidenceValidator = await readFile(join(repoRoot, "scripts", "validate-smoke-evidence.mjs"), "utf8");
+const releaseEvidenceVerifier = await readFile(join(repoRoot, "scripts", "verify-release-evidence.mjs"), "utf8");
 const installedCandidateVerifier = await readFile(join(repoRoot, "scripts", "verify-installed-candidate.mjs"), "utf8");
 const gateContentComparator = await readFile(join(repoRoot, "scripts", "compare-gate-content.mjs"), "utf8");
 const windowsSmokeRunnerPath = "scripts/windows-smoke.ps1";
@@ -73,11 +79,16 @@ assert(runtimeDescriptor.databaseVersion === DATABASE_VERSION, "runtime database
 assert(runtimeDescriptor.entrypoints.hook === "scripts/hook.mjs", "runtime hook entrypoint is invalid");
 assert(runtimeDescriptor.entrypoints.service === "scripts/lib/service.mjs", "runtime service entrypoint is invalid");
 assert(runtimeDescriptor.entrypoints.probe === "scripts/runtime-probe.mjs", "runtime probe entrypoint is invalid");
+assert(
+  compatibilityDescriptor.liveWorkflowContractVersion >= 1 &&
+    compatibilityDescriptor.stdioBridgeContractVersion >= 1,
+  "live compatibility contracts must be positive integers",
+);
 assert(Array.isArray(manifest.interface?.defaultPrompt) && manifest.interface.defaultPrompt.length <= 3, "manifest interface.defaultPrompt must contain at most 3 prompts");
 assert(packageJson.version === "0.4.0", "release base version must be 0.4.0");
 const releaseTag = `v${packageJson.version}`;
 const releaseArtifact = `adaptive-model-router-${releaseTag}`;
-const releaseCandidateRef = "codex/windows-smoke";
+const releaseCandidateRef = "codex/v040-hot-upgrade-release";
 for (const [name, document] of [
   ["release checklist", releaseChecklist],
   ["Windows smoke", windowsSmoke],
@@ -106,7 +117,18 @@ assert(smokeEvidenceSchema.properties?.schemaVersion?.const === 1, "smoke eviden
 assert(smokeEvidenceSchema.properties?.gate?.enum?.includes("macos-native"), "smoke evidence schema must support the blocking macOS gate");
 assert(smokeEvidenceSchema.properties?.route?.properties?.verificationGate?.enum?.includes("structured-check"), "smoke evidence schema must preserve structured review gates");
 assert(macosEvidenceTemplate.gate === "macos-native" && macosEvidenceTemplate.status === "FAIL", "macOS evidence template must fail closed");
-assert(macosEvidenceTemplate.checks?.length === 16, "macOS evidence template must contain all canonical checks");
+assert(macosEvidenceTemplate.checks?.length === 17, "macOS evidence template must contain all canonical checks");
+assert(
+  continuityReceiptTemplate.desktopStayedOpen === false &&
+    continuityReceiptTemplate.taskIdentityBeforeSha256 === "0".repeat(64),
+  "continuity receipt template must fail closed",
+);
+assert(
+  smokeEvidenceSchema.required?.includes("continuity") &&
+    smokeEvidenceSchema.properties?.continuity?.required?.includes("taskIdentityBeforeSha256") &&
+    smokeEvidenceSchema.properties?.continuity?.required?.includes("outcomeRouteIdSha256"),
+  "smoke evidence schema must bind the same-task continuity lifecycle",
+);
 assert(
   windowsSmoke.includes("[`" + windowsSmokeRunnerPath + "`](../" + windowsSmokeRunnerPath + ")"),
   "Windows smoke must link the canonical runner",
@@ -119,6 +141,8 @@ assert(windowsSmokeRunner.includes("[Parameter(Mandatory = $true)]"), "Windows s
 assert(windowsSmokeRunner.includes("validate-smoke-evidence.mjs"), "Windows smoke runner must validate its evidence");
 assert(windowsSmokeRunner.includes("candidate-automated-gate"), "Windows smoke runner must repeat the exact candidate automated gate");
 assert(windowsSmokeRunner.includes("-VerifyTaskTools"), "Windows smoke runner must verify task-level Router tool exposure after upgrade");
+assert(windowsSmokeRunner.includes("ContinuityReceiptPath"), "Windows smoke runner must require app-orchestrated same-task continuity evidence");
+assert(windowsSmokeRunner.includes("same-task-hot-upgrade"), "Windows smoke runner must retain the same-task hot-upgrade blocking check");
 assert(windowsSmokeRunner.includes("Assert-InstalledCandidate"), "Windows smoke runner must verify the installed candidate revision");
 assert(windowsSmokeRunner.includes("compare-gate-content.mjs"), "Windows smoke runner must compare gate content through the candidate comparator");
 assert(windowsSmokeRunner.includes("$InstalledRouterLauncher"), "Windows smoke runner must resolve router state through the installed runtime launcher");
@@ -168,6 +192,10 @@ assert(!taskToolVerifier.includes("--dangerously-bypass-hook-trust"), "task-tool
 assert(taskToolVerifier.includes('"diagnose_router", "route_stage"'), "task-tool smoke must exercise both Router diagnosis and routing");
 assert(windowsInstaller.includes("[switch]$VerifyTaskTools"), "Windows installer must expose the task-tool smoke switch");
 assert(smokeEvidenceValidator.includes("status disagrees with blocking checks"), "smoke evidence validator must enforce PASS consistency");
+assert(smokeEvidenceValidator.includes("--require-pass"), "smoke evidence validator must expose a release-only PASS requirement");
+assert(releaseEvidenceVerifier.includes('"--require-pass"'), "release evidence verifier must reject valid FAIL artifacts");
+assert(releaseEvidenceVerifier.includes("release-relevant files differ"), "release evidence verifier must bind the release tree to the smoked candidate");
+assert(releaseWorkflow.includes("verify-release-evidence.mjs"), "release workflow must block on both native continuity artifacts");
 assert(macosSmoke.includes("verify-installed-candidate.mjs"), "macOS smoke must verify the installed ref, revision, and version");
 assert(macosSmoke.includes("--expected-ref=\"$CandidateRef\"") && macosSmoke.includes("--expected-commit=\"$CandidateCommit\""), "macOS evidence must bind the expected ref and commit");
 assert(releaseChecklist.includes("docs/release-evidence/v0.4.0/macos.json"), "release checklist must retain canonical macOS evidence");
@@ -245,6 +273,10 @@ assert(skill.includes("already a bounded subagent"), "skill must prevent recursi
 assert(skill.includes("do not replay the"), "skill must prevent hook-owned control replay");
 assert(skill.includes("Never invent a `contextId`"), "skill must forbid invented router context IDs");
 assert(skillUi.includes("$adaptive-model-router"), "skill default prompt must explicitly invoke $adaptive-model-router");
+assert(
+  skill.includes("explicit current-turn user instruction that forbids subagents"),
+  "skill must preserve an explicit user prohibition on subagents",
+);
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "get_route_history"), "MCP must expose get_route_history");
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "resolve_host_model_intent"), "MCP must expose host-model intent resolution");
 for (const event of ["SubagentStart", "UserPromptSubmit", "Stop"]) {

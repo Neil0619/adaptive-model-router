@@ -1,8 +1,9 @@
 # Native macOS smoke test
 
-This is the blocking logged-in macOS gate for `v0.4.0`. Run it in Codex Desktop
-or CLI on native macOS against the frozen
-`codex/windows-smoke` ref.
+This is the blocking logged-in macOS gate for `v0.4.0`. Run the continuity
+portion in Codex Desktop on native macOS against the frozen
+`codex/v040-hot-upgrade-release` ref. CLI checks remain supplementary and cannot replace
+the same-Desktop-task gate.
 Do not create or push the release tag from this smoke task.
 
 <!-- smoke-contract: post-trust-agent-owned-v1 selector-optional-v1 -->
@@ -29,13 +30,20 @@ Do not create or push the release tag from this smoke task.
 - Status, history, diagnostics, Hook output, and SQLite contain no prompt,
   source, secret, or absolute project path.
 - Native and wrapper upgrade/uninstall/reinstall flows are idempotent.
+- One real Desktop task remains open across the compatible upgrade and, in the
+  same Hook-injected context afterward, completes `route_stage → delegate →
+  record_outcome` with the root model unchanged. A frozen native inventory must
+  report `stdio-bridge`; a native-tool task must retain native transport.
+- The Desktop shim path, ownership, and reduced-`PATH` probe are visible. A
+  skipped, unresolved, unowned, or failed shim is a blocking failure whenever
+  old-task continuity depends on it.
 - Automated same-process v0.4 compatible-runtime activation, quarantine, and
   rollback tests pass; no absolute cache path appears in the runtime pointer.
 
 ## 1. Prepare a Unicode project and candidate checkout
 
 ```bash
-CandidateRef="codex/windows-smoke"
+CandidateRef="codex/v040-hot-upgrade-release"
 SmokeRoot="$(mktemp -d)/Adaptive Router macOS 冒烟"
 Source="$SmokeRoot/source checkout"
 Project="$SmokeRoot/测试 project with spaces"
@@ -217,11 +225,24 @@ idempotent and leave AGENTS unpatched.
 The wrapper output must distinguish cold host-surface replacement from later
 compatible v0.4.x+ runtime-only updates. The compatible upgrade must not call
 `plugin add` or request Desktop plugin re-registration. Do not claim that every
-implementation-only upgrade needs a new task. The automated
-`runtime-hot-upgrade.test.mjs` is the blocking same-process activation test for
-this release; changes to Hook JSON, skill instructions, MCP schemas, or the
-storage contract still require cold replacement and a genuinely new non-forked
-task.
+implementation-only upgrade needs a new task. It must also report matching
+`liveWorkflowContractVersion` and `stdioBridgeContractVersion` values. The
+automated `runtime-hot-upgrade.test.mjs` is the blocking same-process
+activation test for the implementation seam, but it does not replace the
+following host-continuity gate.
+
+Before invoking the compatible upgrade, keep one real Codex Desktop task open
+and record its task/thread identity, Hook-injected Router context, root-model
+baseline, active runtime, and native-versus-frozen inventory state. Run the
+upgrade without closing Desktop or reopening, forking, or replacing the task.
+Then, in that exact task and context, submit an ordinary substantive stage and
+require one ordered `route_stage → delegate → record_outcome` lifecycle.
+Verify one bounded target, one final outcome, unchanged root model, the new
+compatible runtime, and the expected native or `stdio-bridge` transport. A
+shim/bridge skip, local fail-open, changed consumer identity, or missing outcome
+fails this smoke. Hook JSON, MCP schemas, storage semantics, Skill identity/UI
+metadata, or either workflow contract changing incompatibly requires cold
+replacement and a genuinely new non-forked task.
 
 Start Codex from a second temporary project without repeating `router: global
 on`. An unchanged Hook hash must not create a routine second trust step; if it
@@ -242,15 +263,19 @@ cp "$Source/docs/release-evidence/templates/macos-v1.json" "$EvidenceDir/macos.j
 
 Populate `macos.json` only from observed results. Replace the timestamp,
 candidate commit/tree hash, environment versions, route target/gate and final
-diagnostics. Map the 16 checks as follows:
+diagnostics. Populate every `continuity` field from the same real Desktop task:
+hash the raw task, context, route, and outcome-route IDs with SHA-256; record
+the candidate commit, unchanged root model, advancing runtime, before/after
+transport, shim status, one delegated target, one recorded passed outcome, and
+`desktopStayedOpen=true`. Map the 17 checks as follows:
 
 - preflight, frozen commit, exact-clone test/validate/eval, native install and
   both installed-revision verifications cover the first five IDs;
 - Hook trust/global activation, delegate/outcome, root/target separation, Luna
   guard, privacy, learning/shadow, host-model intent and negative control cover
   the next eight IDs;
-- native/wrapper lifecycle, second-project persistence and settled final status
-  cover the final three IDs.
+- native/wrapper lifecycle, same-task hot upgrade, second-project persistence
+  and settled final status cover the final four IDs.
 
 Change a check from `SKIP` to `PASS` only when its corresponding observation
 passed. For an overall PASS, set `warnings` to `[]`, set the strict route and
@@ -267,6 +292,11 @@ Retain `macos.json`, `macos.md`, and `macos.json.sha256`. The validator rejects
 placeholders, incomplete checks, mismatched platform/ref/commit, pending or
 Stop-finalized unknown outcomes, unhealthy diagnostics, and private path-like
 data from any `PASS` artifact.
+
+The template, schema, and validator bind the pre/post-upgrade task/thread
+identity, exact Router context, root-model baseline, old/new runtime,
+native-versus-bridge transport, route ID, and recorded outcome. Any missing or
+mismatched binding makes `PASS` invalid.
 
 Record that the current Hook definitions were reviewed and trusted before the
 run. The JSON is the blocking functional source of truth. The summary below is
@@ -297,6 +327,9 @@ Typed retry breakdown: PASS | FAIL
 Privacy assertion: PASS | FAIL
 Native and wrapper lifecycle: PASS | FAIL
 Compatible runtime hot-upgrade/rollback suite: PASS | FAIL
+Same Desktop task compatible-upgrade lifecycle: PASS | FAIL
+Continuity transport: native | stdio-bridge
+Desktop shim path/ownership/reduced-PATH probe: PASS | FAIL | NOT REQUIRED
 AGENTS marker cleanup: PASS | FAIL
 Unexpected sanitized warnings:
 ```

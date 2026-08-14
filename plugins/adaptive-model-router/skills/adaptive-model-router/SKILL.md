@@ -14,7 +14,49 @@ controls or root-model intent, spawn another routed subagent, or call
 `record_outcome`; the parent root task owns routing, verification, and outcome
 recording.
 
+## Frozen task tool inventory
+
+Prefer the native Adaptive Model Router MCP tools whenever the host exposes
+them. A task created while the MCP failed can retain a frozen tool inventory
+even after the installed server is repaired. In that root task, do not call the
+router unavailable and do not require a new task until the installed stdio
+bridge has also been tried.
+
+The bridge is allowed only when a trusted Router Hook injected the exact fixed
+`contextId` for the current task. Never invent, derive, or replace that value.
+Resolve `<plugin-root>` as the directory containing this skill's `skills/`
+directory, read `<plugin-root>/.mcp.json`, and start its exact `command` with
+`<plugin-root>/scripts/stdio-tool.mjs` as the sole argument. The helper accepts
+one JSON document on stdin with this shape and exits after one call:
+
+```json
+{"name":"route_stage","arguments":{"goal":"...","phase":"...","evidence":{},"contextId":"hook-injected-id"}}
+```
+
+Use the host's command-session input tool to send the JSON as one line followed
+by a newline. The helper processes that first line and exits without requiring
+the session input stream to be closed. The bridge invokes the installed MCP
+`tools/call`; treat a response with
+`transport="stdio-bridge"` and `isError=false` exactly like the corresponding
+native tool result. Use the same bridge for `record_outcome` and approved
+read-only Router tools when their native functions are absent. Include
+`transport=stdio-bridge` in the compact route notice. A bridge transport
+failure is not a Router `continue` result and must be reported separately.
+
+Never use the bridge for a tool that is not explicitly marked
+`approval_mode="approve"` in the installed `.mcp.json`. If neither the native
+tool nor this bridge can run, fail open locally and report both concrete
+transport failures without claiming that `route_stage` returned a decision.
+
 ## Route a stage
+
+An explicit current-turn user instruction that forbids subagents or delegation
+suppresses automatic live routing for that stage. Continue in the root without
+calling `route_stage`; a Router `delegate` result must never override that user
+constraint. If the user explicitly asks to inspect what the router would have
+preferred while still forbidding a launch, call `shadow_route_stage` only and
+label it as a non-live preference with no route or outcome lifecycle. This
+stage-local suppression does not change the global or session Router setting.
 
 1. Call `route_stage` with:
    - a concise stage `goal`;

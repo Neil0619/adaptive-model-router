@@ -10,7 +10,9 @@ It does **not** hot-switch the root task model. The root remains the orchestrato
 
 Requirements: Codex Desktop or CLI, Git, and Node.js 24.15.0 or newer. Windows 11 native PowerShell, macOS, and Linux are supported.
 
-Codex Desktop can resolve a different `node` than an interactive shell. The plugin launcher keeps the 24.15+ requirement and discovers a qualifying runtime from `ADAPTIVE_ROUTER_NODE`, `PATH`, common Node managers, and standard Windows/macOS/Linux install locations. It never falls back to running the router on an older Node release.
+Codex Desktop can expose a smaller `PATH` than an interactive shell. The installer therefore materializes a qualifying absolute Node executable into the installed MCP transport and all active-platform Hook commands, then verifies those exact commands with an empty `PATH`. After startup, the plugin launcher keeps the 24.15+ requirement and discovers a qualifying runtime from `ADAPTIVE_ROUTER_NODE`, `PATH`, common Node managers, and standard Windows/macOS/Linux install locations. It never falls back to running the router on an older Node release.
+
+If a task was created while MCP startup was broken, its native function inventory can remain frozen. Compatible upgrades keep that task usable through a verified one-call stdio bridge to the same installed MCP `tools/call`; reopening Desktop or creating a replacement task is not required.
 
 The native Codex commands are the primary installation path; no remote script execution is required:
 
@@ -75,8 +77,8 @@ evidence that an already-created Desktop task retained or received those tools.
 
 v0.4.0 introduces a stable launch shell for compatible runtime upgrades.
 After a v0.4.x-or-newer package is installed, an already-open task can pick up
-the newer Hook and MCP implementation on its next invocation without changing
-the root model or reopening the task. The pinned shell first checks the
+the newer compatible Hook/MCP implementation on its next invocation without
+changing the root model or reopening the task. The pinned shell first checks the
 candidate's shell, tool, and storage contracts, runs isolated health probes,
 and atomically activates it; a failed candidate is quarantined and the previous
 runtime remains active.
@@ -90,14 +92,24 @@ new `mcp list` queries to the staged sibling; that discovery is not a mutation
 of an already-created task's tool inventory. A direct `plugin add`
 is a cold install/replacement operation, not a hot-upgrade primitive.
 
-The v0.3.x to v0.4.0 transition still requires one new task because the v0.3
-shell did not contain this loader and its MCP contract was already fixed at
-task startup. Future changes to Hook definitions, skill instructions, MCP tool
-schemas, or the storage contract are intentionally rejected by the hot-upgrade
-path and require a cold replacement, Hook review, and a genuinely new
-non-forked task. Restarting Desktop or forking an affected task does not inject
-tools into that task's fixed inventory. Compatible implementation-only updates
-do not require a restart.
+The upgrade boundary is explicit:
+
+| Operation | Existing task with native Router tools | Existing task with a frozen native inventory |
+| --- | --- | --- |
+| Compatible hot upgrade | Keeps its native functions and activates the compatible sibling on its next call | Keeps the same task and uses the approved stdio bridge; the upgrade does not inject native tools |
+| Cold install/replacement | Review changed Hooks/contracts and start a genuinely new non-forked task | Review changed Hooks/contracts and start a genuinely new non-forked task |
+
+The v0.3.x to v0.4.0 transition is a cold replacement because v0.3 did not
+contain the stable loader. The Skill name and description remain fixed host
+identity. Compatible changes to its live-read workflow body and bridge are
+allowed only when the candidate declares matching
+`liveWorkflowContractVersion` and `stdioBridgeContractVersion` values in the
+plugin-root `compatibility.json`. Hook JSON, MCP schemas, storage semantics,
+Skill identity, UI metadata, or either workflow contract changing incompatibly
+must return `HOST_RELOAD_REQUIRED` before any host registration is changed.
+Restarting Desktop or forking never mutates a task's native inventory; the
+bridge is the continuity path for a compatible upgrade, not native-tool
+injection.
 
 For Windows-specific setup and failure recovery, see
 [troubleshooting](docs/TROUBLESHOOTING.md). Release maintainers should use the

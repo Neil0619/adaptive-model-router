@@ -4,7 +4,7 @@
   "status": "FAIL",
   "generatedAt": "2026-01-01T00:00:00.000Z",
   "candidate": {
-    "ref": "codex/windows-smoke",
+    "ref": "codex/v040-hot-upgrade-release",
     "commitSha": "0000000000000000000000000000000000000000",
     "pluginTreeSha256": "0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -31,6 +31,7 @@
     { "id": "host-model-intent", "blocking": true, "status": "SKIP" },
     { "id": "negative-control", "blocking": true, "status": "SKIP" },
     { "id": "native-and-wrapper-lifecycle", "blocking": true, "status": "SKIP" },
+    { "id": "same-task-hot-upgrade", "blocking": true, "status": "SKIP" },
     { "id": "cross-project-persistence", "blocking": true, "status": "SKIP" },
     { "id": "final-state-settled", "blocking": true, "status": "SKIP" }
   ],
@@ -41,6 +42,26 @@
     "verificationGate": "unavailable",
     "pendingOutcomes": 0,
     "stopHookUnknown": 0
+  },
+  "continuity": {
+    "candidateCommitSha": "0000000000000000000000000000000000000000",
+    "taskIdentityBeforeSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "taskIdentityAfterSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "contextIdentityBeforeSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "contextIdentityAfterSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "rootModelBefore": "unavailable",
+    "rootModelAfter": "unavailable",
+    "runtimeBefore": "unavailable",
+    "runtimeAfter": "unavailable",
+    "transportBefore": "unavailable",
+    "transportAfter": "unavailable",
+    "shimStatus": "unavailable",
+    "routeIdSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "outcomeRouteIdSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "outcomeStatus": "unavailable",
+    "delegatedTargetCount": 0,
+    "recordedOutcomeCount": 0,
+    "desktopStayedOpen": false
   },
   "diagnostics": {
     "databaseHealth": "unavailable",

@@ -13,7 +13,10 @@ flowchart LR
     Observe --> Intent["automatic / pending / manual_root"]
     OptIn --> Root["Root Codex task"]
     Intent --> Root
-    Root --> Route["route_stage"]
+    Root --> Native["native MCP function"]
+    Root -. "frozen inventory" .-> Bridge["one-call stdio bridge"]
+    Native --> Route["route_stage"]
+    Bridge --> Route
     Route --> Deterministic["Deterministic scoring"]
     Deterministic -. "borderline only" .-> Classifier["Redacted auxiliary classifier"]
     Route --> SQLite["Project-local policy and outcomes"]
@@ -38,6 +41,11 @@ flowchart LR
   qualifying Node 24.15+ runtime, resolves a compatible installed Router
   runtime, and preserves stdio, arguments, environment, signals, and exit
   status across the handoff.
+- `scripts/manage-install.mjs` materializes the installer runtime's absolute
+  Node executable into each installed `.mcp.json` and the active-platform
+  command for every bundled Hook. These first-process bootstraps cannot depend
+  on Desktop inheriting an interactive-shell `PATH`; runtime discovery begins
+  only after an absolute command has started the launcher.
 - `runtime.json`, `scripts/lib/runtime-loader.mjs`, and
   `scripts/runtime-probe.mjs` define the hot-runtime boundary. The shell accepts
   only matching shell/tool/storage contracts, validates the candidate with
@@ -46,6 +54,11 @@ flowchart LR
 - `scripts/mcp-server.mjs` exposes strict, closed JSON schemas and emits only
   JSON-RPC on stdout. The schema stays pinned for a task, while each tool call
   may import a newer contract-compatible service implementation.
+- `scripts/stdio-tool.mjs` is the old-task compatibility transport. It accepts
+  one JSON request, permits only tools marked `approval_mode="approve"` in the
+  installed MCP contract, invokes the same MCP `tools/call`, returns the raw
+  structured result, and exits. It uses the trusted Hook's fixed context ID and
+  the same stable plugin data directory as Hooks and native MCP.
 - `scripts/lib/router.mjs` applies deterministic scoring, override priority, catalog capability checks, and monotonic escalation.
 - `scripts/lib/scorer.mjs` evaluates an immutable scoring-profile definition;
   approved project category offsets remain a separate bounded layer.
@@ -131,9 +144,28 @@ learning windows.
 
 ## Compatible runtime upgrades
 
-Codex resolves Hook definitions, MCP schemas, and skill instructions when a
-task starts. v0.4.0 therefore keeps those host-facing contracts in a small
-stable shell and separates them from the runtime implementation:
+Codex resolves Hook definitions, MCP schemas, skill identity metadata, and the
+native function inventory when a task starts. The skill body is read from its
+installed path when used. v0.4.0 therefore keeps the fixed host-facing
+contracts in a small stable shell and separates them from the runtime
+implementation:
+
+The seam has two ownership classes:
+
+- **Immutable runtime core:** the versioned runtime implementation, runtime
+  descriptor, route/storage behavior, and each cache identity. A compatible
+  upgrade creates a new sibling; it never rewrites an old core identity.
+- **Installer-owned compatibility surface:** materialized absolute Node launch
+  fields, the owned Desktop override shim, the stdio bridge helper, and the
+  live-read Skill workflow body. These files may be refreshed across compatible
+  v0.4 shells only under explicit contracts and without host registration.
+
+The Skill name and description are fixed host identity. The refreshable Skill
+body is governed by `liveWorkflowContractVersion`; the helper and its request,
+approval, transport, storage, and response behavior are governed by
+`stdioBridgeContractVersion`. Both values live in the plugin-root
+`compatibility.json` and must match the pinned shell for a hot upgrade. A
+mismatch is a host reload boundary, not a best-effort repair.
 
 1. The managed compatible-upgrade path atomically stages another immutable
    sibling cache directory without invoking host plugin re-registration.
@@ -153,14 +185,24 @@ The installation module enforces this seam operationally. For a healthy
 compatible installation it refreshes marketplace metadata, validates the
 runtime and host-surface contracts, copies the reviewed source into a temporary
 sibling, validates it, and atomically renames it to the immutable version path.
-It never invokes `plugin add` on this path, so every historical runtime and an
-already-created task's fixed tool inventory remain untouched. Codex may resolve
-later MCP-list queries to the staged sibling. Independently, the previously
-pinned MCP shell must report the staged runtime version. Host-surface or
-contract changes fail with
+Before validation it writes the qualifying platform-local Node executable into
+the staged MCP transport and active-platform Hook definitions. A legacy v0.4
+cache whose only defect is a bare `node` bootstrap is repaired once without
+plugin re-registration; normalized host-surface comparison treats those
+installer-owned absolute paths as the stable `node` templates rather than a
+contract change.
+It never invokes `plugin add` on this path, so every historical runtime identity
+and an already-created task's fixed native tool inventory remain intact. The
+installer may repair installer-owned Node launch fields and refresh the
+live-read skill/stdio bridge files across compatible historical shells only
+when their explicit workflow contracts match. Codex
+may resolve later MCP-list queries to the staged sibling. Independently, the
+previously pinned MCP shell must report the staged runtime version. Fixed
+host-surface or contract changes fail with
 `HOST_RELOAD_REQUIRED` before registration is mutated. The optional logged-in
 smoke verifies only a newly created Codex CLI task; it is not evidence about an
-already-created Desktop task's fixed tool inventory.
+already-created Desktop task's fixed tool inventory and cannot satisfy the
+blocking same-Desktop-task release gate.
 
 The pointer stores only cache directory names, versions, and a bounded failed
 list under plugin data; it never stores an absolute cache path. Concurrent
@@ -169,12 +211,27 @@ converge through atomic replacement. Quarantine wins over a later success from
 the same immutable cache directory. Database transactions continue to provide
 process-level state safety.
 
-This mechanism deliberately does not hot-reload task-pinned skill prose or add
-new MCP tools. A changed shell protocol, tool schema, storage contract, Hook
-definition, or skill workflow requires a cold host replacement and a genuinely
-new non-forked task. Restarting or forking an already-affected task does not
-recompute its tool inventory. The v0.3.x → v0.4.0 upgrade is the one-time
-bootstrap transition because v0.3 has no stable loader.
+This mechanism deliberately does not add native MCP functions to a frozen task
+inventory. Instead, the live-read skill uses `scripts/stdio-tool.mjs` to invoke
+the same approved MCP lifecycle and inspection calls. A changed shell protocol,
+tool schema, storage contract, Hook definition, Skill identity, UI metadata,
+`liveWorkflowContractVersion`, or `stdioBridgeContractVersion` still requires a
+cold host replacement and a genuinely new non-forked task.
+The v0.3.x → v0.4.0 upgrade is the one-time bootstrap transition because v0.3
+has no stable loader.
+
+### Upgrade compatibility matrix
+
+| Upgrade path | Task started with native Router functions | Task started with a frozen native inventory |
+| --- | --- | --- |
+| Compatible hot upgrade; all fixed and workflow contracts match | Existing task keeps native MCP functions and activates the sibling runtime on the next call | Existing task keeps its frozen native inventory and uses the approved stdio bridge to the same lifecycle |
+| Cold first install, v0.3 → v0.4, or any incompatible contract/host-surface change | Review Hooks/contracts and start a genuinely new non-forked task | Review Hooks/contracts and start a genuinely new non-forked task |
+
+The bridge preserves lifecycle continuity; it does not claim to mutate the
+host's native function inventory. A compatible release is not accepted until
+one real already-open Desktop task crosses the upgrade and completes
+`route_stage → delegate → record_outcome` with the same context, unchanged
+root model, one bounded target, and one final outcome.
 
 Storage contract 1 permits only forward-compatible, additive database
 migrations: existing tables and columns remain, and additions must not make old
@@ -226,6 +283,16 @@ transaction that creates its immutable child revision.
 - Storage failure during routing or hooks: sanitized fail-open behavior; outcome writes report an error because silently losing a final outcome would be misleading.
 - Two completed automatic reasoning escalations: ask the user on the following failure.
 - Node below 24.15: the launcher probes bounded standard runtime locations and either re-executes with a qualifying Node or exits with one generic error; router code never runs on the older runtime.
+- Desktop GUI `PATH` does not contain Node: the installer-created absolute MCP
+  and Hook commands start the launcher anyway; installation fails before
+  success if the materialized MCP cannot expose the required tools or the
+  materialized control Hook cannot return its atomic context under an empty
+  `PATH`.
+- An already-loaded Hook still requires the owned Desktop shim: installation
+  must report the resolved shim path and successful reduced-`PATH` probe. If
+  the platform location cannot be resolved, ownership cannot be proven, or the
+  probe fails, the continuity repair fails closed and the installer must not
+  claim that the existing task was repaired.
 
 For operational symptoms and recovery steps, see
 [Troubleshooting](TROUBLESHOOTING.md).

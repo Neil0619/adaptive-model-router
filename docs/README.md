@@ -36,7 +36,11 @@ specification.
   macOS gate for automatic routing and host-model intent.
 - [Changelog](../CHANGELOG.md): release-visible behavior changes.
 - [2026-08-14 hot-upgrade incident](INCIDENT-2026-08-14-HOT-UPGRADE.md): root
-  cause, corrective controls, and permanent continuity rules.
+  cause, corrective controls, and the superseded original replacement-task
+  conclusion.
+- [2026-08-14 Desktop MCP bootstrap incident](INCIDENT-2026-08-14-DESKTOP-MCP-BOOTSTRAP.md):
+  MCP/Hook bare-Node PATH failures, bridge-based old-task recovery,
+  installed-command verification, and permanent upgrade regression controls.
 
 The release checklist is authoritative for release gates. The platform
 runbooks are authoritative for native Windows and macOS smoke procedures.
