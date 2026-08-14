@@ -13,6 +13,7 @@
     "environment",
     "checks",
     "route",
+    "continuity",
     "diagnostics",
     "warnings"
   ],
@@ -51,8 +52,8 @@
     },
     "checks": {
       "type": "array",
-      "minItems": 16,
-      "maxItems": 16,
+      "minItems": 17,
+      "maxItems": 17,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -75,6 +76,70 @@
         "verificationGate": { "enum": ["light-checks", "targeted-tests", "structured-check", "full-checks", "unavailable"] },
         "pendingOutcomes": { "type": "integer", "minimum": 0 },
         "stopHookUnknown": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "continuity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidateCommitSha",
+        "taskIdentityBeforeSha256",
+        "taskIdentityAfterSha256",
+        "contextIdentityBeforeSha256",
+        "contextIdentityAfterSha256",
+        "rootModelBefore",
+        "rootModelAfter",
+        "runtimeBefore",
+        "runtimeAfter",
+        "transportBefore",
+        "transportAfter",
+        "shimStatus",
+        "routeIdSha256",
+        "outcomeRouteIdSha256",
+        "outcomeStatus",
+        "delegatedTargetCount",
+        "recordedOutcomeCount",
+        "desktopStayedOpen"
+      ],
+      "properties": {
+        "candidateCommitSha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "taskIdentityBeforeSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "taskIdentityAfterSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "contextIdentityBeforeSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "contextIdentityAfterSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "rootModelBefore": {
+          "anyOf": [
+            { "const": "unavailable" },
+            { "type": "string", "pattern": "^gpt-[a-z0-9.-]+$", "maxLength": 80 }
+          ]
+        },
+        "rootModelAfter": {
+          "anyOf": [
+            { "const": "unavailable" },
+            { "type": "string", "pattern": "^gpt-[a-z0-9.-]+$", "maxLength": 80 }
+          ]
+        },
+        "runtimeBefore": {
+          "anyOf": [
+            { "const": "unavailable" },
+            { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+[0-9A-Za-z.+-]*$", "maxLength": 128 }
+          ]
+        },
+        "runtimeAfter": {
+          "anyOf": [
+            { "const": "unavailable" },
+            { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+[0-9A-Za-z.+-]*$", "maxLength": 128 }
+          ]
+        },
+        "transportBefore": { "enum": ["native", "stdio-bridge", "unavailable"] },
+        "transportAfter": { "enum": ["native", "stdio-bridge", "unavailable"] },
+        "shimStatus": { "enum": ["verified", "not-required", "unavailable"] },
+        "routeIdSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "outcomeRouteIdSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "outcomeStatus": { "enum": ["passed", "failed", "unknown", "unavailable"] },
+        "delegatedTargetCount": { "type": "integer", "minimum": 0 },
+        "recordedOutcomeCount": { "type": "integer", "minimum": 0 },
+        "desktopStayedOpen": { "type": "boolean" }
       }
     },
     "diagnostics": {

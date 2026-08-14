@@ -4,6 +4,9 @@ param(
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._/-]*$')]
     [string]$CandidateRef,
 
+    [Parameter(Mandatory = $true)]
+    [string]$ContinuityReceiptPath,
+
     [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\docs\release-evidence\v0.4.0')
 )
 
@@ -38,6 +41,7 @@ $RequiredWindowsChecks = @(
     'host-model-intent',
     'negative-control',
     'native-and-wrapper-lifecycle',
+    'same-task-hot-upgrade',
     'cross-project-persistence',
     'final-state-settled'
 )
@@ -54,6 +58,26 @@ $RouteEvidence = [ordered]@{
     verificationGate = 'unavailable'
     pendingOutcomes = 0
     stopHookUnknown = 0
+}
+$ContinuityEvidence = [ordered]@{
+    candidateCommitSha = ('0' * 40)
+    taskIdentityBeforeSha256 = ('0' * 64)
+    taskIdentityAfterSha256 = ('0' * 64)
+    contextIdentityBeforeSha256 = ('0' * 64)
+    contextIdentityAfterSha256 = ('0' * 64)
+    rootModelBefore = 'unavailable'
+    rootModelAfter = 'unavailable'
+    runtimeBefore = 'unavailable'
+    runtimeAfter = 'unavailable'
+    transportBefore = 'unavailable'
+    transportAfter = 'unavailable'
+    shimStatus = 'unavailable'
+    routeIdSha256 = ('0' * 64)
+    outcomeRouteIdSha256 = ('0' * 64)
+    outcomeStatus = 'unavailable'
+    delegatedTargetCount = 0
+    recordedOutcomeCount = 0
+    desktopStayedOpen = $false
 }
 $DiagnosticEvidence = [ordered]@{
     databaseHealth = 'unavailable'
@@ -478,6 +502,29 @@ try {
     $CandidateCommit = (Invoke-Process -FilePath 'git' -ArgumentList @('-C', $Source, 'rev-parse', 'HEAD')).Stdout.Trim()
     if ($CandidateCommit -notmatch '^[0-9a-f]{40}$') { throw 'candidate commit is not a full SHA' }
     $PluginTreeSha256 = Get-PluginTreeHash -Commit $CandidateCommit
+    if (-not [IO.Path]::IsPathFullyQualified($ContinuityReceiptPath) -or -not (Test-Path -LiteralPath $ContinuityReceiptPath -PathType Leaf)) {
+        throw 'ContinuityReceiptPath must name the app-orchestrated same-Desktop-task receipt'
+    }
+    $continuityReceipt = Get-Content -LiteralPath $ContinuityReceiptPath -Raw | ConvertFrom-Json -Depth 20
+    $requiredContinuityFields = @(
+        'candidateCommitSha',
+        'taskIdentityBeforeSha256', 'taskIdentityAfterSha256',
+        'contextIdentityBeforeSha256', 'contextIdentityAfterSha256',
+        'rootModelBefore', 'rootModelAfter', 'runtimeBefore', 'runtimeAfter',
+        'transportBefore', 'transportAfter', 'shimStatus', 'routeIdSha256',
+        'outcomeRouteIdSha256', 'outcomeStatus', 'delegatedTargetCount',
+        'recordedOutcomeCount', 'desktopStayedOpen'
+    )
+    $actualContinuityFields = @($continuityReceipt.PSObject.Properties.Name | Sort-Object)
+    if (($actualContinuityFields -join ',') -ne (($requiredContinuityFields | Sort-Object) -join ',')) {
+        throw 'same-Desktop-task continuity receipt fields differ from schema v1'
+    }
+    if ([string]$continuityReceipt.candidateCommitSha -ne $CandidateCommit) {
+        throw 'same-Desktop-task continuity receipt targets another candidate commit'
+    }
+    $ContinuityEvidence = $continuityReceipt
+    $EnvironmentEvidence.surface = 'desktop'
+    Add-SmokeCheck -Id 'same-task-hot-upgrade' -Blocking $true -Status 'PASS'
     Assert-CandidateGateFiles
     Invoke-Process -FilePath 'git' -ArgumentList @('-C', $Project, 'init') | Out-Null
     Invoke-Process -FilePath 'git' -ArgumentList @('-C', $Project2, 'init') | Out-Null
@@ -689,11 +736,14 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'remove', 'adaptive-model-router@adaptive-model-router') | Out-Null
     Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'marketplace', 'remove', 'adaptive-model-router') | Out-Null
     $wrapperInstall = Invoke-Wrapper -Arguments @('-PatchAgents', '-Ref', $CandidateRef)
-    $wrapperUpgrade = Invoke-Wrapper -Arguments @('-Action', 'Upgrade', '-PatchAgents', '-Ref', $CandidateRef)
+    $wrapperUpgrade = Invoke-Wrapper -Arguments @('-Action', 'Upgrade', '-PatchAgents', '-VerifyTaskTools', '-Ref', $CandidateRef)
     foreach ($wrapperResult in @($wrapperInstall, $wrapperUpgrade)) {
         if ($wrapperResult.Stdout -notmatch 'v0\.3\.x' -or $wrapperResult.Stdout -notmatch 'Compatible v0\.4\.x\+' -or $wrapperResult.Stdout -notmatch 'upgrades preserve this setting') {
             throw 'wrapper lifecycle did not emit the required upgrade and persistence guidance'
         }
+    }
+    if ($wrapperUpgrade.Stdout -notmatch 'no disposable Codex CLI task was started') {
+        throw 'wrapper upgrade did not preserve the in-place hot-upgrade verification boundary'
     }
     $agentsPath = Join-Path $DedicatedCodexHome 'AGENTS.md'
     $agentsText = if (Test-Path -LiteralPath $agentsPath) { Get-Content -LiteralPath $agentsPath -Raw } else { '' }
@@ -796,6 +846,7 @@ $evidence = [ordered]@{
     environment = $EnvironmentEvidence
     checks = @($Checks)
     route = $RouteEvidence
+    continuity = $ContinuityEvidence
     diagnostics = $DiagnosticEvidence
     warnings = @($Warnings)
 }

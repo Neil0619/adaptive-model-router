@@ -11,13 +11,22 @@ const forbiddenKeys = new Set([
   "prompt", "source", "stdout", "stderr", "log", "logs", "sessionId", "contextId", "error", "errors",
 ]);
 const topLevelKeys = [
-  "schemaVersion", "gate", "status", "generatedAt", "candidate", "environment", "checks", "route", "diagnostics", "warnings",
+  "schemaVersion", "gate", "status", "generatedAt", "candidate", "environment", "checks", "route", "continuity", "diagnostics", "warnings",
 ];
 const nestedKeys = {
   candidate: ["ref", "commitSha", "pluginTreeSha256"],
   environment: ["platform", "surface", "osVersion", "codexVersion", "nodeVersion", "gitVersion"],
   check: ["id", "blocking", "status"],
   route: ["action", "targetFamily", "targetEffort", "verificationGate", "pendingOutcomes", "stopHookUnknown"],
+  continuity: [
+    "candidateCommitSha",
+    "taskIdentityBeforeSha256", "taskIdentityAfterSha256",
+    "contextIdentityBeforeSha256", "contextIdentityAfterSha256",
+    "rootModelBefore", "rootModelAfter", "runtimeBefore", "runtimeAfter",
+    "transportBefore", "transportAfter", "shimStatus", "routeIdSha256",
+    "outcomeRouteIdSha256", "outcomeStatus", "delegatedTargetCount",
+    "recordedOutcomeCount", "desktopStayedOpen",
+  ],
   diagnostics: ["databaseHealth", "classifierState", "privacy"],
 };
 const requiredCheckIds = [
@@ -35,6 +44,7 @@ const requiredCheckIds = [
   "host-model-intent",
   "negative-control",
   "native-and-wrapper-lifecycle",
+  "same-task-hot-upgrade",
   "cross-project-persistence",
   "final-state-settled",
 ];
@@ -129,6 +139,30 @@ function validateSafeText(serialized) {
   }
 }
 
+function numericVersion(value) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+(.+))?$/u.exec(value);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3]), match[4] || "", match[5] || ""];
+}
+
+function compareRuntimeVersions(left, right) {
+  const a = numericVersion(left);
+  const b = numericVersion(right);
+  if (!a || !b) return left.localeCompare(right);
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] - b[index];
+  }
+  if (a[3] !== b[3]) {
+    if (!a[3]) return 1;
+    if (!b[3]) return -1;
+    return a[3].localeCompare(b[3]);
+  }
+  if (a[4] === b[4]) return 0;
+  if (!a[4]) return -1;
+  if (!b[4]) return 1;
+  return a[4].localeCompare(b[4]);
+}
+
 function validate(evidence, schema, options = {}) {
   validateAgainstSchema(evidence, schema);
   exactKeys(evidence, topLevelKeys, "root");
@@ -180,6 +214,33 @@ function validate(evidence, schema, options = {}) {
     if (!Number.isInteger(evidence.route[key]) || evidence.route[key] < 0) fail(`route.${key} must be a non-negative integer`);
   }
 
+  exactKeys(evidence.continuity, nestedKeys.continuity, "continuity");
+  if (!/^[0-9a-f]{40}$/u.test(evidence.continuity.candidateCommitSha)) {
+    fail("continuity.candidateCommitSha must be a full commit SHA");
+  }
+  const hashFields = [
+    "taskIdentityBeforeSha256", "taskIdentityAfterSha256",
+    "contextIdentityBeforeSha256", "contextIdentityAfterSha256",
+    "routeIdSha256", "outcomeRouteIdSha256",
+  ];
+  for (const key of hashFields) {
+    if (!/^[0-9a-f]{64}$/u.test(evidence.continuity[key])) {
+      fail(`continuity.${key} must be a SHA-256 digest`);
+    }
+  }
+  enumValue(evidence.continuity.transportBefore, ["native", "stdio-bridge", "unavailable"], "continuity.transportBefore");
+  enumValue(evidence.continuity.transportAfter, ["native", "stdio-bridge", "unavailable"], "continuity.transportAfter");
+  enumValue(evidence.continuity.shimStatus, ["verified", "not-required", "unavailable"], "continuity.shimStatus");
+  enumValue(evidence.continuity.outcomeStatus, ["passed", "failed", "unknown", "unavailable"], "continuity.outcomeStatus");
+  for (const key of ["delegatedTargetCount", "recordedOutcomeCount"]) {
+    if (!Number.isInteger(evidence.continuity[key]) || evidence.continuity[key] < 0) {
+      fail(`continuity.${key} must be a non-negative integer`);
+    }
+  }
+  if (typeof evidence.continuity.desktopStayedOpen !== "boolean") {
+    fail("continuity.desktopStayedOpen must be boolean");
+  }
+
   exactKeys(evidence.diagnostics, nestedKeys.diagnostics, "diagnostics");
   enumValue(evidence.diagnostics.databaseHealth, ["ok", "degraded", "unavailable"], "diagnostics.databaseHealth");
   enumValue(evidence.diagnostics.classifierState, ["closed", "open", "unavailable"], "diagnostics.classifierState");
@@ -193,6 +254,32 @@ function validate(evidence, schema, options = {}) {
   if (evidence.environment.platform !== expectedPlatform) fail("gate and environment.platform disagree");
 
   const blockingFailed = evidence.checks.some((check) => check.blocking && check.status !== "PASS");
+  const zeroDigest = "0".repeat(64);
+  const continuityTransportValid =
+    (evidence.continuity.transportBefore === "native" && evidence.continuity.transportAfter === "native") ||
+    (evidence.continuity.transportBefore === "stdio-bridge" && evidence.continuity.transportAfter === "stdio-bridge") ||
+    (evidence.continuity.transportBefore === "unavailable" && evidence.continuity.transportAfter === "stdio-bridge");
+  const continuityValid =
+    evidence.environment.surface === "desktop" &&
+    evidence.continuity.candidateCommitSha === evidence.candidate.commitSha &&
+    evidence.continuity.taskIdentityBeforeSha256 !== zeroDigest &&
+    evidence.continuity.taskIdentityBeforeSha256 === evidence.continuity.taskIdentityAfterSha256 &&
+    evidence.continuity.contextIdentityBeforeSha256 !== zeroDigest &&
+    evidence.continuity.contextIdentityBeforeSha256 === evidence.continuity.contextIdentityAfterSha256 &&
+    evidence.continuity.rootModelBefore !== "unavailable" &&
+    evidence.continuity.rootModelBefore === evidence.continuity.rootModelAfter &&
+    evidence.continuity.runtimeBefore !== "unavailable" &&
+    evidence.continuity.runtimeAfter !== "unavailable" &&
+    compareRuntimeVersions(evidence.continuity.runtimeAfter, evidence.continuity.runtimeBefore) > 0 &&
+    continuityTransportValid &&
+    evidence.continuity.shimStatus ===
+      (evidence.continuity.transportAfter === "stdio-bridge" ? "verified" : "not-required") &&
+    evidence.continuity.routeIdSha256 !== zeroDigest &&
+    evidence.continuity.routeIdSha256 === evidence.continuity.outcomeRouteIdSha256 &&
+    evidence.continuity.outcomeStatus === "passed" &&
+    evidence.continuity.delegatedTargetCount === 1 &&
+    evidence.continuity.recordedOutcomeCount === 1 &&
+    evidence.continuity.desktopStayedOpen;
   const passInvariant =
     !blockingFailed &&
     evidence.candidate.commitSha !== "0".repeat(40) &&
@@ -204,11 +291,13 @@ function validate(evidence, schema, options = {}) {
     evidence.route.verificationGate !== "unavailable" &&
     evidence.route.pendingOutcomes === 0 &&
     evidence.route.stopHookUnknown === 0 &&
+    continuityValid &&
     evidence.diagnostics.databaseHealth === "ok" &&
     evidence.diagnostics.classifierState === "closed" &&
     evidence.diagnostics.privacy === "PASS" &&
     evidence.warnings.length === 0;
   if ((evidence.status === "PASS") !== passInvariant) fail("status disagrees with blocking checks, privacy, or pending outcomes");
+  if (options.requirePass && evidence.status !== "PASS") fail("--require-pass rejects non-PASS evidence");
   walk(evidence);
   validateSafeText(JSON.stringify(evidence));
 }
@@ -216,20 +305,22 @@ function validate(evidence, schema, options = {}) {
 function markdown(evidence) {
   const checks = evidence.checks.map((check) => `| ${check.id} | ${check.blocking ? "yes" : "no"} | ${check.status} |`).join("\n");
   return `# ${evidence.gate} smoke evidence\n\n` +
-    `Status: **${evidence.status}**  \n` +
-    `Generated: ${evidence.generatedAt}  \n` +
-    `Candidate: \`${evidence.candidate.ref}\` at \`${evidence.candidate.commitSha}\`  \n` +
+    `Status: **${evidence.status}**\n\n` +
+    `Generated: ${evidence.generatedAt}\n\n` +
+    `Candidate: \`${evidence.candidate.ref}\` at \`${evidence.candidate.commitSha}\`\n\n` +
     `Plugin tree SHA-256: \`${evidence.candidate.pluginTreeSha256}\`\n\n` +
     `| Check | Blocking | Status |\n|---|---:|---:|\n${checks}\n\n` +
-    `Route: ${evidence.route.action}; target ${evidence.route.targetFamily}/${evidence.route.targetEffort}; gate ${evidence.route.verificationGate}.  \n` +
-    `Pending outcomes: ${evidence.route.pendingOutcomes}; Stop-auto-finalized unknown: ${evidence.route.stopHookUnknown}.  \n` +
+    `Route: ${evidence.route.action}; target ${evidence.route.targetFamily}/${evidence.route.targetEffort}; gate ${evidence.route.verificationGate}.\n\n` +
+    `Pending outcomes: ${evidence.route.pendingOutcomes}; Stop-auto-finalized unknown: ${evidence.route.stopHookUnknown}.\n\n` +
+    `Same Desktop task/context: ${evidence.continuity.taskIdentityBeforeSha256 === evidence.continuity.taskIdentityAfterSha256 && evidence.continuity.contextIdentityBeforeSha256 === evidence.continuity.contextIdentityAfterSha256 ? "yes" : "no"}; runtime ${evidence.continuity.runtimeBefore} → ${evidence.continuity.runtimeAfter}; transport ${evidence.continuity.transportAfter}.\n\n` +
     `Database: ${evidence.diagnostics.databaseHealth}; classifier: ${evidence.diagnostics.classifierState}; privacy: ${evidence.diagnostics.privacy}.\n`;
 }
 
 function parseArgs(values) {
-  const parsed = { writeDerivatives: false, path: null, expectedRef: null, expectedCommit: null };
+  const parsed = { writeDerivatives: false, requirePass: false, path: null, expectedRef: null, expectedCommit: null };
   for (const value of values) {
     if (value === "--write-derivatives") parsed.writeDerivatives = true;
+    else if (value === "--require-pass") parsed.requirePass = true;
     else if (value.startsWith("--expected-ref=")) parsed.expectedRef = value.slice(15);
     else if (value.startsWith("--expected-commit=")) parsed.expectedCommit = value.slice(18);
     else if (!parsed.path) parsed.path = resolve(value);

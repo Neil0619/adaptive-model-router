@@ -1,7 +1,7 @@
 import { execFile, spawnSync } from "node:child_process";
 import { access, constants as fsConstants } from "node:fs/promises";
 import { accessSync } from "node:fs";
-import { delimiter, resolve } from "node:path";
+import { delimiter, dirname, resolve, win32 } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -92,12 +92,45 @@ function quoteCmd(value) {
   return `"${escaped}"`;
 }
 
+function portableBasename(path) {
+  return String(path).replaceAll("\\", "/").split("/").at(-1).toLowerCase();
+}
+
+function commandEnvironment(resolved, env) {
+  const next = { ...env };
+  const pathKey = Object.keys(next).find((key) => key.toLowerCase() === "path") || "PATH";
+  const windowsPath = /^(?:[A-Za-z]:[\\/]|\\\\)/u.test(resolved.path) && win32.isAbsolute(resolved.path);
+  const directory = windowsPath ? win32.dirname(resolved.path) : dirname(resolved.path);
+  if (directory && directory !== ".") {
+    const separator = windowsPath ? ";" : delimiter;
+    next[pathKey] = [directory, next[pathKey] || ""].filter(Boolean).join(separator);
+  }
+  return next;
+}
+
 export function spawnSpec(resolved, args, env = process.env) {
-  if (resolved.kind !== "cmd") return { command: resolved.path, args, windowsVerbatimArguments: false };
-  const commandLine = [quoteCmd(resolved.path), ...args.map(quoteCmd)].join(" ");
+  const executable = portableBasename(resolved.path);
+  const allowed = resolved.kind === "cmd"
+    ? ["codex.cmd", "codex.bat"]
+    : ["codex", "codex.exe"];
+  if (!allowed.includes(executable)) throw new Error("resolved Codex command has an unexpected executable name");
+  const childEnv = commandEnvironment(resolved, env);
+  if (resolved.kind !== "cmd") {
+    return { command: executable, args, env: childEnv, windowsVerbatimArguments: false };
+  }
+  // A batch file found by PATH receives only its basename as %0, so wrappers
+  // that use %~dp0 (including npm's codex.cmd) resolve files from the caller's
+  // working directory. Ask cmd.exe to expand the fixed, allow-listed basename
+  // through PATH first. This preserves the caller cwd without embedding an
+  // environment-selected absolute path in the command line.
+  const commandLine = [
+    `for %I in (${executable}) do @"%~$PATH:I"`,
+    ...args.map(quoteCmd),
+  ].join(" ");
   return {
-    command: env.ComSpec || env.COMSPEC || "cmd.exe",
+    command: "cmd.exe",
     args: ["/d", "/v:off", "/s", "/c", `"${commandLine}"`],
+    env: childEnv,
     windowsVerbatimArguments: true,
   };
 }

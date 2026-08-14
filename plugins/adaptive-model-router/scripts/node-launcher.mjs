@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { discoverNodeRuntime } from "./lib/node-discovery.mjs";
 import { emitDiagnostic } from "./lib/diagnostics.mjs";
+import { environmentWithPluginData } from "./lib/plugin-data.mjs";
 import {
   activateRuntimeTrial,
   markRuntimeFailed,
@@ -19,30 +19,6 @@ const targetArgs = process.argv.slice(3);
 const failure = "Adaptive Model Router requires Node.js 24.15.0 or newer\n";
 const startedAt = Date.now();
 let stage = "arguments";
-
-function inferInstalledPluginData() {
-  // Windows hook launches receive PLUGIN_DATA, but MCP launches may only expose
-  // the installed cache path. Mirror Codex's adjacent plugins/data layout.
-  const scriptsRoot = dirname(fileURLToPath(import.meta.url));
-  const versionRoot = dirname(scriptsRoot);
-  const pluginRoot = dirname(versionRoot);
-  const marketplaceRoot = dirname(pluginRoot);
-  const cacheRoot = dirname(marketplaceRoot);
-  const pluginsRoot = dirname(cacheRoot);
-  if (basename(cacheRoot).toLowerCase() !== "cache" || basename(pluginsRoot).toLowerCase() !== "plugins") {
-    return null;
-  }
-  return join(pluginsRoot, "data", `${basename(marketplaceRoot)}-${basename(pluginRoot)}`);
-}
-
-function childEnvironment() {
-  const env = { ...process.env };
-  if (!env.ADAPTIVE_ROUTER_HOME && !env.PLUGIN_DATA && !env.CLAUDE_PLUGIN_DATA) {
-    const pluginData = inferInstalledPluginData();
-    if (pluginData) env.PLUGIN_DATA = pluginData;
-  }
-  return env;
-}
 
 function runtimeSelectionFailureCategory(error) {
   if (error?.message === "runtime pointer is busy") return "pointer_busy";
@@ -66,7 +42,7 @@ if (!runtime) {
   process.exit(2);
 }
 
-const launchEnv = childEnvironment();
+const launchEnv = environmentWithPluginData(import.meta.url);
 let resolvedTarget = target;
 let selectedResolution = null;
 try {

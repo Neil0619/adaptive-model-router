@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "releaseTag": "v0.4.0",
+  "gate": "windows-native",
+  "scope": "same-task-continuity",
+  "authorizedAt": "2026-08-14T07:23:33Z",
+  "authorizedBy": "Neil0619",
+  "reasonCode": "WINDOWS_NATIVE_SAME_TASK_SMOKE_DEFERRED",
+  "candidate": {
+    "ref": "codex/v040-hot-upgrade-release",
+    "commitSha": "d72ab717b5a7145c34989052d7b02972479a226d",
+    "pluginTreeSha256": "0625efe2565e8f4cc1e1dffc03b20d131185a8eb0e620074051f98ea7b76d961"
+  },
+  "retainedEvidence": {
+    "path": "docs/release-evidence/v0.4.0/windows.json",
+    "sha256": "64f177a8c4161d213de03b6db93d83c14e33e42aac3a9ccd721f357fa75921f2",
+    "status": "FAIL"
+  },
+  "riskAcknowledgements": [
+    "DESKTOP_REDUCED_PATH_UNVERIFIED",
+    "NATIVE_FILE_LOCKING_UNVERIFIED",
+    "OLD_TASK_STDIO_BRIDGE_UNVERIFIED"
+  ],
+  "futureReleaseReuse": false
+}

@@ -10,7 +10,9 @@ Adaptive Model Router 是一个 local-first 的 Codex 插件。它会在有意�
 
 要求：Codex Desktop 或 CLI、Git、Node.js 24.15.0 及以上。支持 Windows 11 原生 PowerShell、macOS 和 Linux。
 
-Codex Desktop 解析到的 `node` 可能与交互式终端不同。插件启动器仍严格要求 24.15+，并会依次从 `ADAPTIVE_ROUTER_NODE`、`PATH`、常见 Node 版本管理器及 Windows/macOS/Linux 标准安装位置寻找合格运行时；不会退回旧版 Node 执行路由器。
+Codex Desktop 的 `PATH` 可能比交互式终端更精简。安装器会把合格 Node 的绝对路径物化到已安装 MCP transport 和当前平台的全部 Hook 命令，并用空 `PATH` 验证这些真实启动命令。启动后，插件启动器仍严格要求 24.15+，并会依次从 `ADAPTIVE_ROUTER_NODE`、`PATH`、常见 Node 版本管理器及 Windows/macOS/Linux 标准安装位置寻找合格运行时；不会退回旧版 Node 执行路由器。
+
+如果任务是在 MCP 启动故障期间创建的，其原生函数清单可能已经冻结。兼容升级会让该任务通过已验证的一次性 stdio bridge 调用同一个已安装 MCP `tools/call`，无需重启 Desktop，也无需新建替代任务。
 
 原生 Codex 命令是主安装路径，无需执行远程脚本：
 
@@ -51,8 +53,11 @@ codex plugin add adaptive-model-router@adaptive-model-router
 ## 升级与卸载
 
 ```bash
-codex plugin marketplace upgrade adaptive-model-router
-codex plugin add adaptive-model-router@adaptive-model-router
+./install.sh upgrade
+```
+
+```powershell
+.\install.ps1 -Action Upgrade
 ```
 
 ```bash
@@ -60,17 +65,49 @@ codex plugin remove adaptive-model-router@adaptive-model-router
 codex plugin marketplace remove adaptive-model-router
 ```
 
-包装脚本对应为 `./install.sh upgrade`、`./install.sh uninstall`、`.\install.ps1 -Action Upgrade` 和 `.\install.ps1 -Action Uninstall`。
+卸载包装脚本为 `./install.sh uninstall` 和 `.\install.ps1 -Action Uninstall`。
+
+安装器始终核验不可变安装包、已注册 MCP 命令和 MCP 工具契约。冷首次安装时，
+`--verify-task-tools`（macOS/Linux）或 `-VerifyTaskTools`（Windows）还会启动一个
+一次性登录态 Codex CLI 任务，并要求实际调用 `diagnose_router` 与 `route_stage`。
+兼容热升级时，同一参数只执行固定壳内的 MCP、Hook 与 stdio bridge 探针，不启动
+新 CLI 任务，因为新任务可能触发宿主重整正在使用的插件缓存。两类结果都不能代替
+下文“同一个 Desktop 任务跨升级”的连续性验收。
+
+兼容热升级必须使用仓库包装脚本。脚本在刷新 marketplace 前，先把所有已验证的兼容
+运行壳归档到稳定 plugin data 下的严格原子 vault；刷新后重新读取宿主注册，再把已
+审阅的新包原子旁加载成不可变兄弟运行时。若 Codex 在重整时清理了旧的宿主缓存，包装
+脚本会先把索引中的历史壳恢复到原来的不可变路径，再刷新其 live bridge。冷安装也会
+为当前运行时建立首个归档；若刷新在清理缓存后失败，脚本会先恢复历史壳再返回失败。
+整个安装生命周期由 plugin data 下的 SQLite 事务跨进程串行化，安装器退出或崩溃后
+事务会自动释放；索引只在持锁时合并写入，已验证的不可变归档不会被原地替换。整个热
+路径不会调用 `codex plugin add`，也不会请求插件
+重新注册；直接执行 `plugin add` 属于冷安装/替换，不是热升级操作。
+
+vault 只保存经过验证的插件包副本和运行时目录名索引，位于宿主管理缓存之外；它不
+保存 prompt、项目数据或路由数据库，也不是可绕过校验的备用执行源。恢复前必须重新
+通过 runtime、host surface、符号链接和兼容契约检查，再以目录 rename 原子安装。
+索引或归档损坏时升级会 fail closed。
 
 v0.4.0 增加了稳定启动壳。安装后续兼容的 v0.4.x 或更高版本后，已经打开的任务会在
 下一次 Hook 或 MCP 调用时加载新实现，不需要更换根模型，也不必重新开任务。旧壳会先
 核对 shell、工具和存储契约，在隔离目录运行健康探针，再原子切换活动运行时；候选
 失败会被隔离，并继续使用上一版。
 
-从 v0.3.x 升到 v0.4.0 仍需一次性新开任务，因为 v0.3 的启动壳没有热加载能力，
-而且 MCP 契约已在任务开始时固定。以后如果更新 Hook 定义、skill 指令、MCP 工具
-Schema 或存储契约，也会被视为不兼容升级，需要重新审阅 Hook 并新开任务；只改兼容
-实现的升级不需要。
+升级边界固定如下：
+
+| 操作 | 已有原生 Router 工具的任务 | 原生工具库存已冻结的任务 |
+| --- | --- | --- |
+| 兼容热升级 | 保留原生函数，并在下次调用激活兼容兄弟运行时 | 保留同一任务并使用受限 stdio bridge；升级不会向库存注入原生工具 |
+| 冷安装/替换 | 审阅变化的 Hook/契约，并创建真正全新的非派生任务 | 审阅变化的 Hook/契约，并创建真正全新的非派生任务 |
+
+从 v0.3.x 升到 v0.4.0 属于冷替换，因为 v0.3 没有稳定启动壳。Skill 的名称和描述
+是固定的宿主身份；live-read 工作流 body 与 bridge 只有在候选版本声明匹配的
+插件根目录 `compatibility.json` 中的 `liveWorkflowContractVersion` 和
+`stdioBridgeContractVersion` 时才允许兼容刷新。Hook JSON、MCP Schema、存储语义、
+Skill identity、UI metadata 或任一工作流契约发生不兼容变化时，升级必须在改写
+宿主注册前返回 `HOST_RELOAD_REQUIRED`。重启 Desktop 或 fork 都不会改变任务的
+原生工具库存；bridge 是兼容升级的连续性通道，不是原生工具注入。
 
 Windows 环境问题参见[故障排查](docs/TROUBLESHOOTING.md)。发布维护者应直接使用
 [原生 Windows 11](docs/WINDOWS_SMOKE.md)和

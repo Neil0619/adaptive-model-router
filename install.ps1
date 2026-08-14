@@ -4,6 +4,7 @@ param(
     [string]$Ref = "stable",
     [switch]$PatchAgents,
     [switch]$NonInteractive,
+    [switch]$VerifyTaskTools,
     [switch]$Yes
 )
 
@@ -56,6 +57,7 @@ $manager = Join-Path $PSScriptRoot "plugins/adaptive-model-router/scripts/manage
 $managerArgs = @($Action.ToLowerInvariant(), "--ref=$Ref")
 if ($PatchAgents) { $managerArgs += "--patch-agents" }
 if ($NonInteractive) { $managerArgs += "--non-interactive" }
+if ($VerifyTaskTools) { $managerArgs += "--verify-task-tools" }
 if ($Yes) { $managerArgs += "--yes" }
 
 & $node.Source $manager @managerArgs

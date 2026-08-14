@@ -28,18 +28,27 @@ jobs:
           npm test
           npm run validate
           npm run eval
+      - name: Verify native same-task continuity evidence
+        run: |-
+          node scripts/verify-release-evidence.mjs \
+            --expected-ref=codex/v040-hot-upgrade-release \
+            --temporary-windows-waiver=docs/release-waivers/v0.4.0-windows-native.json \
+            docs/release-evidence/v0.4.0/windows.json \
+            docs/release-evidence/v0.4.0/macos.json
       - name: Build source archive, SBOM, and checksums
         run: |-
           mkdir -p dist
           git archive --format=tar.gz --prefix=adaptive-model-router-v0.4.0/ -o dist/adaptive-model-router-v0.4.0.tar.gz HEAD
           node plugins/adaptive-model-router/scripts/generate-sbom.mjs > dist/adaptive-model-router-v0.4.0.spdx.json
+          cp docs/release-waivers/v0.4.0-windows-native.json dist/adaptive-model-router-v0.4.0-windows-native-waiver.json
           cd dist
-          sha256sum adaptive-model-router-v0.4.0.tar.gz adaptive-model-router-v0.4.0.spdx.json > SHA256SUMS
+          sha256sum adaptive-model-router-v0.4.0.tar.gz adaptive-model-router-v0.4.0.spdx.json adaptive-model-router-v0.4.0-windows-native-waiver.json > SHA256SUMS
       - uses: actions/attest-build-provenance@v3
         with:
           subject-path: |-
             dist/adaptive-model-router-v0.4.0.tar.gz
             dist/adaptive-model-router-v0.4.0.spdx.json
+            dist/adaptive-model-router-v0.4.0-windows-native-waiver.json
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -13,17 +13,30 @@ The canonical automated entry point is
 [`scripts/windows-smoke.ps1`](../scripts/windows-smoke.ps1):
 
 ```powershell
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-smoke'
+.\scripts\windows-smoke.ps1 `
+  -CandidateRef 'codex/v040-hot-upgrade-release' `
+  -ContinuityReceiptPath 'C:\path\to\redacted-continuity-receipt.json'
 ```
 
-It accepts only the frozen candidate ref and an optional evidence output
-directory. It uses native `codex exec --json`/`resume` turns, never bypasses
+It accepts the frozen candidate ref, the app-orchestrated continuity receipt,
+and an optional evidence output directory. It uses native `codex exec
+--json`/`resume` turns for supplementary checks, never bypasses
 Hook trust, independently reads router status/history/diagnostics, exercises
 the lifecycle in this runbook, and emits a strict redacted JSON artifact plus
 derived Markdown and SHA-256 files under `docs/release-evidence/v0.4.0/`.
 Its candidate gate normalizes only CRLF/CR versus LF when comparing tracked
 text files, so ordinary Windows checkout conversion is accepted while every
 other byte change remains blocking.
+The receipt must be produced by the persistent Codex App orchestrator from
+the real task that stayed open across the compatible upgrade. It contains no
+raw task, context, route, or outcome identifiers—only their SHA-256 digests—
+and records the candidate commit, unchanged root model, old/new runtime,
+native-versus-bridge transport, shim status, exactly one delegated target and
+recorded outcome, and `desktopStayedOpen=true`. The runner rejects a receipt
+for another candidate; the schema validator rejects mismatched identity pairs
+or a CLI-only lifecycle.
+Start from `docs/release-evidence/templates/continuity-receipt-v1.json`; never
+copy forward a receipt or fill it from a new/forked task.
 Review and trust the three hooks before running it. A failure produces only
 stable warning codes in the artifact; raw prompts, events, session/context
 identifiers, errors, source, secrets, logs, and absolute paths are excluded.
@@ -33,8 +46,10 @@ and final restoration; it must not ask the operator to repeat sections 5 or 6.
 
 The runner refuses to use the default Codex Home. Prepare a disposable Windows
 test account or dedicated Codex Home, add the explicit smoke marker, log in
-there, install the exact candidate once, and trust its three Hook hashes. Then
-expose only that directory to the runner:
+there, install the exact candidate once, and trust its three Hook hashes. A real
+Desktop task in that Home is mandatory for the compatible-upgrade continuity
+gate; the runner's disposable CLI lifecycle is supplementary. Then expose only
+that directory to the runner:
 
 ```powershell
 $SmokeCodexHome = 'D:\codex-smoke-home'
@@ -42,7 +57,10 @@ New-Item -ItemType Directory -Force -Path $SmokeCodexHome | Out-Null
 Set-Content -LiteralPath (Join-Path $SmokeCodexHome '.adaptive-router-smoke-home') -Value 'adaptive-model-router smoke home v1' -NoNewline
 $env:CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-smoke'
+$ContinuityReceipt = Join-Path $SmokeCodexHome 'redacted-continuity-receipt.json'
+.\scripts\windows-smoke.ps1 `
+  -CandidateRef 'codex/v040-hot-upgrade-release' `
+  -ContinuityReceiptPath $ContinuityReceipt
 ```
 
 All plugin, marketplace, AGENTS marker, global-routing, session, and learning
@@ -57,6 +75,7 @@ Suggested handoff prompt after the three Hook definitions are trusted:
 
 ```text
 请完整读取 docs/WINDOWS_SMOKE.md。在我完成三个 Hook 的审查和信任后，只运行
+使用 Codex App 原生任务协调为同一 Desktop 任务生成脱敏 continuity receipt，然后运行
 scripts/windows-smoke.ps1 的 canonical 自动流程；不要让我手工粘贴第 5/6 节提示、
 切换模型或发送 router 控制。遇到 Stop conditions 中任一情况立即停止并返回 FAIL。
 不要创建或推送 v0.4.0 tag，也不要调用 clear_project_data。
@@ -97,12 +116,19 @@ The smoke passes only when all of the following succeed:
   project path;
 - native upgrade and uninstall;
 - idempotent PowerShell wrapper install/upgrade/uninstall/reinstall;
+- one real Desktop task kept open across a compatible upgrade, followed in the
+  same Hook-injected context by one ordered `route_stage → delegate →
+  record_outcome` lifecycle with unchanged root model and the expected native
+  or `stdio-bridge` transport;
+- visible shim path/ownership/reduced-`PATH` evidence whenever continuity uses
+  an already-loaded bare command; skipped or unverifiable shim setup fails;
 - optional AGENTS marker insertion exactly once and complete marker removal.
 
 ## 1. Prerequisites
 
 - Windows 11, running natively.
-- A logged-in current Codex Desktop or CLI session.
+- A logged-in current Codex Desktop session for the same-task continuity gate;
+  the canonical CLI session remains supplementary orchestration evidence.
 - A dedicated, disposable Codex Home named by
   `ADAPTIVE_ROUTER_SMOKE_CODEX_HOME`; the default `~/.codex` is rejected.
 - Git.
@@ -125,7 +151,7 @@ Stop if Node is older than `24.15.0` or Codex is not logged in.
 ## 2. Clone into a path with spaces and Unicode
 
 ```powershell
-$CandidateRef = "codex/windows-smoke"
+$CandidateRef = "codex/v040-hot-upgrade-release"
 $SmokeRoot = Join-Path $env:TEMP ("Adaptive Router Windows 冒烟 " + (Get-Date -Format "yyyyMMdd-HHmmss"))
 $Source = Join-Path $SmokeRoot "source checkout"
 $Project = Join-Path $SmokeRoot "测试 project with spaces"
@@ -322,9 +348,10 @@ safety auto-rollback. Do not mutate the smoke project's active profile.
 
 ## 9. Exercise upgrade, uninstall, and wrappers
 
-The runner exits the smoke task, then executes the native lifecycle below.
-These commands document the automated contract; the operator does not run them
-as separate smoke steps:
+The runner stops the smoke target and every Adaptive Router launcher/server,
+then executes the native lifecycle below as an explicitly destructive cold
+replacement test. These commands are not the compatible hot-upgrade path and
+the operator does not run them as separate smoke steps:
 
 ```powershell
 codex plugin marketplace upgrade adaptive-model-router
@@ -338,8 +365,12 @@ It then tests the repository wrapper from the Unicode checkout:
 ```powershell
 Set-Location $Source
 .\install.ps1 -PatchAgents -Ref $CandidateRef
-.\install.ps1 -Action Upgrade -PatchAgents -Ref $CandidateRef
+.\install.ps1 -Action Upgrade -PatchAgents -VerifyTaskTools -Ref $CandidateRef
 ```
+
+For the compatible upgrade, `-VerifyTaskTools` runs pinned in-place MCP, Hook,
+and stdio-bridge probes and must not launch a disposable CLI task. The persistent
+native smoke target remains the blocking continuity consumer.
 
 Verify the owned marker occurs exactly once:
 
@@ -373,12 +404,29 @@ codex plugin marketplace list
 codex plugin list
 ```
 
-The runner confirms that wrapper output distinguishes the one-time v0.3.x → v0.4.0
-fresh-task transition from later compatible v0.4.x+ implementation updates.
+The runner confirms that wrapper output distinguishes cold host-surface
+replacement from later compatible v0.4.x+ runtime-only updates, and that the
+compatible path never invokes `plugin add` or requests Desktop plugin
+re-registration. It also verifies the strict stable-plugin-data vault and any
+indexed historical-cache restoration, and requires matching `liveWorkflowContractVersion` and
+`stdioBridgeContractVersion` values.
 The automated `runtime-hot-upgrade.test.mjs` must have demonstrated one
 long-lived MCP process, concurrent old Hook shells, damaged-candidate
-quarantine, active-runtime rollback, and a path-free pointer. Hook JSON, skill,
-MCP-schema, or storage-contract changes remain explicit new-task boundaries.
+quarantine, active-runtime rollback, and a path-free pointer. That
+implementation test is not same-task Desktop evidence.
+
+Before the compatible wrapper upgrade, keep one real Desktop task open and
+record its task/thread identity, Hook-injected Router context, root-model
+baseline, active runtime, and native-versus-frozen inventory state. Run the
+upgrade without closing Desktop or reopening, forking, or replacing that task.
+Then dispatch an ordinary substantive stage to that same task and require one
+ordered `route_stage → delegate → record_outcome` lifecycle. Verify one
+bounded target, one final outcome, unchanged root model, the new compatible
+runtime, and the expected native or `stdio-bridge` transport. A local fail-open,
+shim/bridge skip, changed consumer identity, or missing outcome fails the
+canonical smoke. Hook JSON, MCP schemas, storage semantics, Skill identity/UI
+metadata, or either workflow contract changing incompatibly remains a cold-
+replacement and genuinely-new-non-forked-task boundary.
 
 The runner starts Codex again from a second temporary project without sending
 `router: global on` again:
@@ -403,9 +451,14 @@ isolation of task-specific manual state.
 Retain the generated `windows.json`, `windows.md`, and
 `windows.json.sha256` files. The validated JSON artifact is the sole
 functional source of truth for sections 5–9. It binds the frozen candidate,
-environment, all 16 blocking checks, route/target/gate summary, settled outcome
+environment, all 17 blocking checks, route/target/gate summary, settled outcome
 counts, diagnostics, and privacy result. No separate operator-completed report
 or model-selector transcript is required.
+
+The artifact must also bind the pre/post-upgrade task/thread identity, exact
+Router context, root-model baseline, old/new runtime, transport, route ID, and
+recorded outcome for the same-Desktop-task continuity gate. The validator
+requires these bindings and rejects CLI-only evidence.
 
 Record that the three current Hook definitions were reviewed and trusted before
 the run. An optional visual UX note may state whether the Desktop selector or

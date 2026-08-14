@@ -10,7 +10,9 @@ It does **not** hot-switch the root task model. The root remains the orchestrato
 
 Requirements: Codex Desktop or CLI, Git, and Node.js 24.15.0 or newer. Windows 11 native PowerShell, macOS, and Linux are supported.
 
-Codex Desktop can resolve a different `node` than an interactive shell. The plugin launcher keeps the 24.15+ requirement and discovers a qualifying runtime from `ADAPTIVE_ROUTER_NODE`, `PATH`, common Node managers, and standard Windows/macOS/Linux install locations. It never falls back to running the router on an older Node release.
+Codex Desktop can expose a smaller `PATH` than an interactive shell. The installer therefore materializes a qualifying absolute Node executable into the installed MCP transport and all active-platform Hook commands, then verifies those exact commands with an empty `PATH`. After startup, the plugin launcher keeps the 24.15+ requirement and discovers a qualifying runtime from `ADAPTIVE_ROUTER_NODE`, `PATH`, common Node managers, and standard Windows/macOS/Linux install locations. It never falls back to running the router on an older Node release.
+
+If a task was created while MCP startup was broken, its native function inventory can remain frozen. Compatible upgrades keep that task usable through a verified one-call stdio bridge to the same installed MCP `tools/call`; reopening Desktop or creating a replacement task is not required.
 
 The native Codex commands are the primary installation path; no remote script execution is required:
 
@@ -52,8 +54,11 @@ If a legacy `adaptive-local` installation is present, an interactive wrapper ask
 ## Upgrade and uninstall
 
 ```bash
-codex plugin marketplace upgrade adaptive-model-router
-codex plugin add adaptive-model-router@adaptive-model-router
+./install.sh upgrade
+```
+
+```powershell
+.\install.ps1 -Action Upgrade
 ```
 
 ```bash
@@ -61,22 +66,67 @@ codex plugin remove adaptive-model-router@adaptive-model-router
 codex plugin marketplace remove adaptive-model-router
 ```
 
-Wrapper equivalents are `./install.sh upgrade`, `./install.sh uninstall`, `.\install.ps1 -Action Upgrade`, and `.\install.ps1 -Action Uninstall`.
+Uninstall wrapper equivalents are `./install.sh uninstall` and `.\install.ps1 -Action Uninstall`.
+
+The installer always verifies the immutable installed package, the registered
+MCP command, and the installed MCP tool contract. On a cold first install,
+after the current Hook definitions are trusted, `--verify-task-tools` on
+macOS/Linux or `-VerifyTaskTools` on Windows also runs a disposable logged-in
+Codex CLI task that must call `diagnose_router` and `route_stage`. On a
+compatible hot upgrade, the same flag runs only pinned in-place MCP, Hook, and
+stdio-bridge probes: starting a new CLI task there can make the host reconcile
+the live cache. Neither result proves that an already-created Desktop task
+retained or received native tools.
 
 v0.4.0 introduces a stable launch shell for compatible runtime upgrades.
 After a v0.4.x-or-newer package is installed, an already-open task can pick up
-the newer Hook and MCP implementation on its next invocation without changing
-the root model or reopening the task. The pinned shell first checks the
+the newer compatible Hook/MCP implementation on its next invocation without
+changing the root model or reopening the task. The pinned shell first checks the
 candidate's shell, tool, and storage contracts, runs isolated health probes,
 and atomically activates it; a failed candidate is quarantined and the previous
 runtime remains active.
 
-The v0.3.x to v0.4.0 transition still requires one new task because the v0.3
-shell did not contain this loader and its MCP contract was already fixed at
-task startup. Future changes to Hook definitions, skill instructions, MCP tool
-schemas, or the storage contract are intentionally treated as incompatible and
-also require Hook review and a new task. Compatible implementation-only
-updates do not.
+A compatible upgrade must use the repository wrapper. It refreshes marketplace
+metadata, reloads the resulting host registration, atomically stages the
+reviewed package as a new immutable sibling, and verifies that the previously
+pinned MCP shell activates that exact runtime. Before marketplace refresh it
+archives every verified compatible shell in a strict, atomic vault under stable
+plugin data. If Codex reconciliation prunes an old host-managed cache, the
+wrapper restores the indexed shell to the same immutable path before repairing
+its live bridge. If reconciliation fails after pruning, restoration runs before
+the failure is returned. A plugin-data SQLite transaction serializes the whole
+lifecycle across installers and releases automatically if an installer exits;
+index updates occur under that lock, and a valid immutable archive is never
+replaced in place. Cold installation seeds the same vault. The wrapper
+deliberately does not call `codex plugin add` or request plugin
+re-registration. A direct `plugin add` is a cold install/replacement operation,
+not a hot-upgrade primitive.
+
+The vault contains only validated copies of the plugin package plus an index of
+runtime directory names. It is outside Codex's host-managed cache, never stores
+prompts or project data, and is not an alternate executable source: restored
+trees must pass the current runtime, host-surface, symlink, and compatibility
+checks before an atomic directory rename. An invalid index or entry fails the
+upgrade closed.
+
+The upgrade boundary is explicit:
+
+| Operation | Existing task with native Router tools | Existing task with a frozen native inventory |
+| --- | --- | --- |
+| Compatible hot upgrade | Keeps its native functions and activates the compatible sibling on its next call | Keeps the same task and uses the approved stdio bridge; the upgrade does not inject native tools |
+| Cold install/replacement | Review changed Hooks/contracts and start a genuinely new non-forked task | Review changed Hooks/contracts and start a genuinely new non-forked task |
+
+The v0.3.x to v0.4.0 transition is a cold replacement because v0.3 did not
+contain the stable loader. The Skill name and description remain fixed host
+identity. Compatible changes to its live-read workflow body and bridge are
+allowed only when the candidate declares matching
+`liveWorkflowContractVersion` and `stdioBridgeContractVersion` values in the
+plugin-root `compatibility.json`. Hook JSON, MCP schemas, storage semantics,
+Skill identity, UI metadata, or either workflow contract changing incompatibly
+must return `HOST_RELOAD_REQUIRED` before any host registration is changed.
+Restarting Desktop or forking never mutates a task's native inventory; the
+bridge is the continuity path for a compatible upgrade, not native-tool
+injection.
 
 For Windows-specific setup and failure recovery, see
 [troubleshooting](docs/TROUBLESHOOTING.md). Release maintainers should use the

@@ -20,8 +20,8 @@ it after artifact creation.
 
 Keep `stable` on the last published release until the release workflow has
 created the new artifacts. For logged-in smoke testing, freeze a dedicated
-candidate ref at the reviewed commit. For v0.4.0 the handoff ref is
-`codex/windows-smoke`; do not move it after smoke evidence is
+candidate ref at the reviewed commit. For the final v0.4.0 hot-upgrade repair
+the handoff ref is `codex/v040-hot-upgrade-release`; do not move it after smoke evidence is
 collected.
 
 Record the candidate:
@@ -30,7 +30,7 @@ Record the candidate:
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/main
-git rev-parse origin/codex/windows-smoke
+git rev-parse origin/codex/v040-hot-upgrade-release
 git rev-parse origin/stable
 ```
 
@@ -39,9 +39,10 @@ The worktree must be clean. The candidate ref must contain the reviewed tree;
 verify that the release-relevant trees are byte-identical:
 
 ```bash
-git diff --exit-code origin/main origin/codex/windows-smoke -- \
+git diff --exit-code origin/main origin/codex/v040-hot-upgrade-release -- \
   .agents plugins scripts docs/release-evidence/schema-v1.json \
   docs/release-evidence/templates/macos-v1.json \
+  docs/release-evidence/templates/continuity-receipt-v1.json \
   docs/WINDOWS_SMOKE.md docs/MACOS_SMOKE.md docs/RELEASE.md \
   install.sh install.ps1 .github/workflows/release.yml
 ```
@@ -67,6 +68,11 @@ rerun the smoke gate.
   upgrade, activates the same candidate from old Hook shells under concurrency,
   rejects a damaged candidate, rolls a later-failing active Hook back, and
   asserts that the pointer contains no absolute path.
+- Compatibility tests reject mismatched `liveWorkflowContractVersion` or
+  `stdioBridgeContractVersion`, require first-use bridge state to converge on the
+  stable installed plugin data directory, and require the Desktop shim to be
+  observable and fail closed when its path, ownership, or reduced-`PATH` probe
+  cannot be established.
 - Syntax, manifest, marketplace, plugin, and skill validation pass.
 - The native Windows runner repeats test/validate/eval against the exact cloned
   candidate and rejects installed marketplace metadata or Git checkout identity
@@ -94,7 +100,10 @@ New-Item -ItemType Directory -Force -Path $SmokeCodexHome | Out-Null
 Set-Content -LiteralPath (Join-Path $SmokeCodexHome '.adaptive-router-smoke-home') -Value 'adaptive-model-router smoke home v1' -NoNewline
 $env:CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
-.\scripts\windows-smoke.ps1 -CandidateRef 'codex/windows-smoke'
+$ContinuityReceipt = Join-Path $SmokeCodexHome 'redacted-continuity-receipt.json'
+.\scripts\windows-smoke.ps1 `
+  -CandidateRef 'codex/v040-hot-upgrade-release' `
+  -ContinuityReceiptPath $ContinuityReceipt
 ```
 
 After Hook trust, the runner requires no operator-entered prompts, control
@@ -104,7 +113,8 @@ and restores the full functional lifecycle inside its disposable session.
 Validate and retain `docs/release-evidence/v0.4.0/windows.json`, its generated
 Markdown view, and its `.sha256` sidecar. The JSON must match schema v1, the
 frozen ref and commit, contain no raw operational data, and report `PASS` only
-when every blocking check passes, privacy passes, and pending outcomes are zero.
+when all 17 blocking checks pass, privacy passes, pending outcomes are zero,
+and the hashed same-Desktop-task continuity bindings match.
 Record that the current Hook definitions were reviewed and trusted before the
 run. The validated Windows artifact is the blocking functional source of truth;
 visible selector/status-line observations are optional, non-blocking UX notes.
@@ -116,9 +126,44 @@ template and validated with both `--expected-ref` and `--expected-commit` as
 specified by `MACOS_SMOKE.md`. Record the required Hook trust prerequisite;
 selector/status-line observations remain optional and non-blocking.
 
+The release workflow runs `scripts/verify-release-evidence.mjs` with
+`--require-pass` semantics for both native artifacts. It rejects a moved
+candidate ref, a mismatched plugin-tree hash, a valid `FAIL` artifact, or any
+release-relevant tree change after evidence collection.
+
+### One-time v0.4.0 native Windows exception
+
+The maintainer explicitly authorized publishing `v0.4.0` without rerunning the
+native Windows same-Desktop-task continuity gate. This is a release exception,
+not a passing Windows result. The checked-in Windows artifact must remain a
+schema-valid `FAIL` with `EVIDENCE_INVALIDATED_BY_CONTINUITY_GATE`; the macOS
+native artifact must still be a validated `PASS`, the six hosted Windows CI
+matrix/syntax jobs remain blocking, and all automated tests, validation, and
+evaluation still run in the release workflow.
+
+The verifier accepts this exception only when all of the following are true:
+
+- it is invoked with the checked-in
+  `docs/release-waivers/v0.4.0-windows-native.json` receipt;
+- it is running in the official `Neil0619/adaptive-model-router` GitHub Actions
+  tag workflow for exactly `v0.4.0`;
+- the receipt binds the frozen candidate commit and plugin-tree hash, the exact
+  SHA-256 of the retained Windows `FAIL` artifact, the maintainer identity and
+  authorization time, and the three explicitly accepted Windows risks;
+- the retained Windows artifact is `FAIL` with the invalidation warning above.
+
+Other tags, local invocations, missing diagnostic evidence, and future releases
+remain fail-closed. The receipt is shipped as a signed-release asset. Remove the
+workflow waiver argument after publishing `v0.4.0`; retain the receipt as
+historical evidence and do not generalize or rename the exception for a later
+version.
+
 ## 3. Logged-in smoke gate
 
-Run the complete route lifecycle once on macOS and once on native Windows 11:
+Run the complete route lifecycle once on macOS and once on native Windows 11.
+For each platform, the blocking continuity consumer is one real Desktop task
+that remains open across the compatible upgrade; a disposable CLI task or a
+new Desktop task cannot substitute for it:
 
 1. Install from the frozen candidate ref with the two native Codex commands;
    published `stable` remains on v0.3.0 until all smoke evidence passes.
@@ -144,11 +189,32 @@ Run the complete route lifecycle once on macOS and once on native Windows 11:
    restore the initial model and automatic mode. Record that effort-only changes
    are not observable by the Hook.
 9. Exercise upgrade, uninstall, reinstall, idempotence, and optional AGENTS
-   marker removal. Confirm the installer explains the one-time v0.3 → v0.4
-   restart boundary and the compatible v0.4+ no-restart path.
-10. Confirm database v3 learning status, a versioned scoring profile, typed
+   marker removal. Confirm the installer keeps compatible v0.4+ runtime staging
+   separate from cold host replacement, never uses `plugin add` for the hot
+   path, archives compatible historical shells before marketplace refresh,
+   reloads the post-refresh registration, restores any indexed cache paths the
+   host pruned, restores them before returning any post-prune refresh failure,
+   serializes concurrent installers with a crash-releasing plugin-data
+   transaction, and explains the genuinely-new-non-forked-task boundary. Before the
+   compatible upgrade, retain the Desktop process, task/thread ID, exact Router
+   context, root-model baseline, and whether its native inventory is present or
+   frozen. Do not close, reopen, fork, or replace that task during the upgrade.
+10. In that same real Desktop task and context after the compatible upgrade,
+    submit an ordinary substantive stage and require the ordered lifecycle
+    `route_stage → delegate → record_outcome`. Verify exactly one bounded
+    target and outcome, unchanged root model, advanced compatible runtime, and
+    the expected native or `stdio-bridge` transport. Any shim/bridge skip,
+    fallback-local result, or consumer-identity change is a blocking failure.
+11. Confirm database v3 learning status, a versioned scoring profile, typed
     retry breakdown, and shadow scoring with no route/outcome/proposal/cursor
     changes.
+
+The compatibility classification used by the gate is:
+
+| Operation | Existing native-tool task | Existing frozen-inventory task |
+| --- | --- | --- |
+| Compatible hot upgrade | Same task, native transport | Same task, approved stdio bridge |
+| Cold replacement or incompatible fixed/workflow contract | New non-forked task after review | New non-forked task after review |
 
 Use [WINDOWS_SMOKE.md](WINDOWS_SMOKE.md) and
 [MACOS_SMOKE.md](MACOS_SMOKE.md) for the platform-specific evidence and report

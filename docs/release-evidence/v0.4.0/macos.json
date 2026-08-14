@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "gate": "macos-native",
+  "status": "PASS",
+  "generatedAt": "2026-08-14T10:36:56Z",
+  "candidate": {
+    "ref": "codex/v040-hot-upgrade-release",
+    "commitSha": "d72ab717b5a7145c34989052d7b02972479a226d",
+    "pluginTreeSha256": "0625efe2565e8f4cc1e1dffc03b20d131185a8eb0e620074051f98ea7b76d961"
+  },
+  "environment": {
+    "platform": "macos",
+    "surface": "desktop",
+    "osVersion": "26.5.2",
+    "codexVersion": "codex-cli 0.148.0-alpha.9",
+    "nodeVersion": "v24.18.0",
+    "gitVersion": "git version 2.50.1 (Apple Git-155)"
+  },
+  "checks": [
+    { "id": "native-preflight", "blocking": true, "status": "PASS" },
+    { "id": "candidate-frozen", "blocking": true, "status": "PASS" },
+    { "id": "candidate-automated-gate", "blocking": true, "status": "PASS" },
+    { "id": "native-install", "blocking": true, "status": "PASS" },
+    { "id": "installed-candidate-integrity", "blocking": true, "status": "PASS" },
+    { "id": "hook-trust-and-global-on", "blocking": true, "status": "PASS" },
+    { "id": "route-subagent-outcome", "blocking": true, "status": "PASS" },
+    { "id": "root-target-boundary", "blocking": true, "status": "PASS" },
+    { "id": "capability-boundary", "blocking": true, "status": "PASS" },
+    { "id": "redacted-observability", "blocking": true, "status": "PASS" },
+    { "id": "learning-and-shadow", "blocking": true, "status": "PASS" },
+    { "id": "host-model-intent", "blocking": true, "status": "PASS" },
+    { "id": "negative-control", "blocking": true, "status": "PASS" },
+    { "id": "native-and-wrapper-lifecycle", "blocking": true, "status": "PASS" },
+    { "id": "same-task-hot-upgrade", "blocking": true, "status": "PASS" },
+    { "id": "cross-project-persistence", "blocking": true, "status": "PASS" },
+    { "id": "final-state-settled", "blocking": true, "status": "PASS" }
+  ],
+  "route": {
+    "action": "delegate",
+    "targetFamily": "sol",
+    "targetEffort": "high",
+    "verificationGate": "full-checks",
+    "pendingOutcomes": 0,
+    "stopHookUnknown": 0
+  },
+  "continuity": {
+    "candidateCommitSha": "d72ab717b5a7145c34989052d7b02972479a226d",
+    "taskIdentityBeforeSha256": "bf97c1942480ec468a01c6eb9490d1abde3b785eca61759221663cb0a3de6890",
+    "taskIdentityAfterSha256": "bf97c1942480ec468a01c6eb9490d1abde3b785eca61759221663cb0a3de6890",
+    "contextIdentityBeforeSha256": "bf97c1942480ec468a01c6eb9490d1abde3b785eca61759221663cb0a3de6890",
+    "contextIdentityAfterSha256": "bf97c1942480ec468a01c6eb9490d1abde3b785eca61759221663cb0a3de6890",
+    "rootModelBefore": "gpt-5.6-sol",
+    "rootModelAfter": "gpt-5.6-sol",
+    "runtimeBefore": "0.4.0+codex.20260814095433",
+    "runtimeAfter": "0.4.0+codex.20260814181412",
+    "transportBefore": "stdio-bridge",
+    "transportAfter": "stdio-bridge",
+    "shimStatus": "verified",
+    "routeIdSha256": "a9d0bfea7c45a0c01e871ccbec19e85927e9480a7fb49290b7dd07b4d196aba6",
+    "outcomeRouteIdSha256": "a9d0bfea7c45a0c01e871ccbec19e85927e9480a7fb49290b7dd07b4d196aba6",
+    "outcomeStatus": "passed",
+    "delegatedTargetCount": 1,
+    "recordedOutcomeCount": 1,
+    "desktopStayedOpen": true
+  },
+  "diagnostics": {
+    "databaseHealth": "ok",
+    "classifierState": "closed",
+    "privacy": "PASS"
+  },
+  "warnings": []
+}

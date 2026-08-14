@@ -22,18 +22,97 @@ files, or Codex credentials into a public issue.
    codex plugin list
    ```
 
-2. Refresh and reinstall:
+2. For a compatible runtime-only update, use the managed upgrade:
 
    ```bash
-   codex plugin marketplace upgrade adaptive-model-router
-   codex plugin add adaptive-model-router@adaptive-model-router
+   ./install.sh upgrade
    ```
 
+   The wrapper stages a new immutable sibling and verifies it through the
+   previously pinned MCP shell. It does not call `plugin add` or request plugin
+   re-registration. Before marketplace refresh it archives all verified
+   compatible shells in stable plugin data; after refresh it reloads the actual
+   registration and restores indexed historical paths that Codex cache
+   reconciliation pruned. Codex may resolve later `mcp list` queries to the
+   staged sibling; this does not alter an existing task's fixed tool inventory.
+   If it reports `HOST_RELOAD_REQUIRED`, fully exit
+   Desktop and all other Codex CLI processes, then run the exact cold
+   replacement command it prints from a fresh terminal. Review Hooks and create
+   a genuinely new non-forked task afterward; do not present that operation as
+   a hot upgrade.
+
+   The wrapper also materializes an absolute Node executable in the installed
+   MCP transport and every active-platform Hook command, then verifies those
+   exact commands with an empty `PATH`. This is required because Desktop's GUI
+   process may not inherit `/usr/local/bin`, an NVM directory, or another
+   interactive-shell Node location. Legacy bare `node` entries are repaired
+   once; later compatible upgrades inherit the same invariant and fail rather
+   than reporting a false success.
+
+   For already-loaded bare Hook commands, the installer must also print the
+   owned Desktop shim path and prove that exact shim under Desktop's reduced
+   `PATH`. An unresolved platform location, an existing unowned shim, or a
+   failed probe is a failed continuity repair. Do not interpret a skipped shim
+   as successful in-place recovery.
+
+   Hook trust is recorded against the exact definition hash. The one-time
+   repair changes that definition, so review and trust the repaired Hooks once.
+   Compatible upgrades that keep the same materialized executable retain the
+   same definition and do not create a new trust prompt.
+
 3. On a first install, a v0.3.x → v0.4.0 upgrade, or an incompatible contract
-   update, start a new Codex task. For a compatible v0.4.x+ runtime update,
-   invoke the Hook or any Router MCP tool in the existing task; no task restart
-   is required. If the ChatGPT desktop app still shows stale plugin state after
-   a required restart, restart the app and open another task.
+   update, create a genuinely new non-forked Codex task after the required Hook
+   review. For a compatible v0.4 update, a task whose native Router functions
+   were already lost uses the installed one-call stdio bridge instead; do not
+   replace the task merely to rebuild its fixed tool inventory.
+
+   The bridge accepts one approved Router tool request, invokes the same MCP
+   `tools/call`, and exits after its response. It requires the exact context ID
+   injected by a trusted Hook and never invents one. Hook, native MCP, installed
+   cache bridge, and source-checkout bridge all resolve the same stable plugin
+   data directory. A transport failure is reported as a bridge failure, never
+   disguised as a `route_stage` `continue` result.
+
+4. After trusting the current Hooks, a cold first install with
+   `--verify-task-tools` or `-VerifyTaskTools` uses one disposable Codex CLI task
+   and fails unless `diagnose_router` and `route_stage` both complete. A
+   compatible `upgrade --verify-task-tools` deliberately does not create a new
+   task; it runs only pinned in-place MCP, Hook, and stdio-bridge probes because
+   a fresh CLI task can trigger host cache reconciliation. Neither check proves
+   that an already-created Desktop task retained its fixed tool inventory; use
+   the same-task release gate below for that claim.
+
+If a verification failure is followed by `HOT_UPGRADE_ROLLBACK_FAILED`, stop
+all affected Router processes and preserve the recovery-snapshot identifier printed
+by the wrapper. It identifies a directory under the system temporary directory.
+The installer deliberately retains that complete tree instead of deleting the
+last known-good backup; restore or inspect it before retrying any lifecycle
+command.
+
+`RUNTIME_VAULT_DAMAGED`, `RUNTIME_VAULT_ARCHIVE_FAILED`, or
+`RUNTIME_VAULT_RESTORE_FAILED` is not a normal routing fallback. The installer
+has refused to trust or replace a historical shell. Preserve the stable plugin
+data and installed cache, verify that `runtime-shell-vault/index.json` and every
+indexed directory came from reviewed plugin packages, and repair from the exact
+reviewed versions before retrying. Do not delete the index, bypass symlink
+checks, or run `plugin add` while existing tasks depend on those paths.
+
+`INSTALLER_LIFECYCLE_BUSY` means another install, upgrade, or uninstall owns
+the plugin-data SQLite lifecycle transaction. Wait for that process to finish
+and retry. Do not delete the lock database: SQLite releases the transaction
+automatically if its owner exits or crashes, and the next wrapper run can then
+restore any indexed cache paths pruned before that crash.
+
+If marketplace refresh itself fails, the wrapper restores every indexed
+missing or damaged historical shell before returning the refresh error. A
+`MARKETPLACE_RECOVERY_FAILED` result is stronger: preserve both plugin data and
+the host cache, because the wrapper could not prove that all old-task paths were
+recovered.
+
+An installed runtime containing a symbolic link, duplicate enabled Router MCP
+registration, or changed cache-directory identity is treated as damaged. The
+wrapper stops before replacement; inspect the cache and registration rather
+than bypassing this guard.
 
 If a marketplace named `adaptive-model-router` points to a different source or
 ref, the wrapper stops rather than replacing it. Inspect the marketplace list
@@ -91,21 +170,53 @@ the next MCP call. `previousVersion` is the rollback target and
 
 If it does not advance:
 
-1. Confirm the new package appears in `codex plugin list`.
+1. Confirm the new immutable sibling was staged by the wrapper. Depending on
+   host discovery timing, `codex mcp list --json` may point to either the
+   previous shell or the staged sibling; the installer must accept both and
+   separately verify the previous shell can activate the staged runtime.
 2. Run `npm run validate` in a source checkout and confirm `runtime.json`
    matches the plugin manifest.
-3. Check whether the new version changed the shell protocol, tool schemas, or
-   storage contract. Such a version is intentionally ignored by the old shell
-   and needs a new task.
+3. Check whether the new version changed the shell protocol, tool schemas,
+   storage contract, `liveWorkflowContractVersion`, or
+   `stdioBridgeContractVersion`. Such a version is intentionally ignored by the
+   old shell and needs a cold replacement plus a new task.
 4. If `failedRuntimeCount` increased, the old shell rejected the candidate's
    contract probe, isolated database probe, or first real initialization and
    kept the prior runtime active. Reinstall a fixed, higher version; do not edit
    the pointer by hand.
 
-Hook definitions and skill text themselves remain task-pinned. If an update
-depends on new Hook JSON, a new tool, or new skill instructions, review the
-Hook hash and start a new task even if its implementation files are otherwise
-compatible.
+Hook definitions, MCP schemas, Skill identity metadata, and the native function
+inventory remain task-pinned. The Skill body is live-read, but it may be
+refreshed in a compatible upgrade only when its declared
+`liveWorkflowContractVersion` matches; the helper likewise requires a matching
+`stdioBridgeContractVersion`. If an update changes Hook JSON, adds a native tool, or
+changes either workflow contract incompatibly, review the Hook/contract and
+start a new task after a cold replacement.
+
+## A task says Router MCP tools are unavailable
+
+Task tool registration is fixed when that task starts. If its initial tool
+inventory never contained `route_stage`, `record_outcome`, or
+`diagnose_router`, a later plugin upgrade cannot add native functions to that
+same inventory. Restarting Desktop or forking does not change that fact.
+
+For a compatible v0.4 repair, this is not a reason to replace the task. The
+live-read Skill must use the installed, approval-limited stdio bridge with the
+trusted Hook's exact context ID. Verify that the bridge reports its transport,
+uses the stable installed plugin data directory, and can complete the required
+lifecycle. A bridge startup or storage error is a tooling failure; it must not
+be presented as a normal `continue` route.
+
+Create a genuinely new non-forked task only after a cold install/replacement or
+an incompatible fixed/workflow contract change. A task that already owns the
+pinned Router MCP shell continues through its native functions; a frozen task
+continues through the bridge. Neither path claims that the host inventory was
+mutated.
+
+Release acceptance requires more than the installer's in-place probes: keep one real
+Desktop task open across the compatible upgrade and prove, in that same task
+and context, one ordered `route_stage → delegate → record_outcome`
+lifecycle with an unchanged root model and exactly one bounded target/outcome.
 
 ## Node.js is missing or too old
 
@@ -116,10 +227,13 @@ and the runtime visible to Codex:
 node --version
 ```
 
-The launcher searches `ADAPTIVE_ROUTER_NODE`, `PATH`, common Node managers, and
-standard Windows/macOS/Linux locations. Set `ADAPTIVE_ROUTER_NODE` to an
-absolute qualifying executable only when Codex cannot discover the intended
-runtime. The router never runs under an older Node release.
+The installer writes its qualifying Node executable as an absolute MCP and Hook
+command, so starting the launcher does not depend on Desktop's reduced `PATH`.
+After the launcher starts, it searches `ADAPTIVE_ROUTER_NODE`, `PATH`, common
+Node managers, and standard Windows/macOS/Linux locations. Set
+`ADAPTIVE_ROUTER_NODE` to an absolute qualifying executable only when Codex
+cannot discover the intended runtime. The router never runs under an older Node
+release.
 
 ## PowerShell cannot run `install.ps1`
 
