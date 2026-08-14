@@ -161,7 +161,8 @@ test("Windows discovery uses fixed launchers for explicit paths with spaces and 
   assert.deepEqual(spec.args.slice(0, 4), ["/d", "/v:off", "/s", "/c"]);
   assert.equal(spec.windowsVerbatimArguments, true);
   assert.doesNotMatch(spec.args[4], /Codex 中文/);
-  assert.match(spec.args[4], /codex\.cmd/i);
+  assert.match(spec.args[4], /for %I in \(codex\.cmd\)/i);
+  assert.match(spec.args[4], /do @"%~\$PATH:I"/u);
   assert.match(spec.args[4], /stdio:\/\//);
 });
 

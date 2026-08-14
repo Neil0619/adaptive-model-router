@@ -215,6 +215,14 @@ test("smoke evidence contract accepts macOS evidence and its checked-in FAIL tem
     ]);
     assert.equal(result.status, 0, result.stderr);
 
+    const repeatedBridgeUpgrade = validEvidence();
+    repeatedBridgeUpgrade.gate = "macos-native";
+    repeatedBridgeUpgrade.environment.platform = "macos";
+    repeatedBridgeUpgrade.environment.osVersion = "macOS 15.6.1";
+    repeatedBridgeUpgrade.continuity.transportBefore = "stdio-bridge";
+    const repeatedBridgeResult = await runEvidence(project, repeatedBridgeUpgrade);
+    assert.equal(repeatedBridgeResult.result.status, 0, repeatedBridgeResult.result.stderr);
+
     const templateResult = spawnSync(process.execPath, [validator, macosTemplate], { encoding: "utf8" });
     assert.equal(templateResult.status, 0, templateResult.stderr);
     const requiredTemplateResult = spawnSync(

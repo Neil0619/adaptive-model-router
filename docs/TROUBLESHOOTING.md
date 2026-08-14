@@ -97,6 +97,18 @@ indexed directory came from reviewed plugin packages, and repair from the exact
 reviewed versions before retrying. Do not delete the index, bypass symlink
 checks, or run `plugin add` while existing tasks depend on those paths.
 
+`INSTALLER_LIFECYCLE_BUSY` means another install, upgrade, or uninstall owns
+the plugin-data SQLite lifecycle transaction. Wait for that process to finish
+and retry. Do not delete the lock database: SQLite releases the transaction
+automatically if its owner exits or crashes, and the next wrapper run can then
+restore any indexed cache paths pruned before that crash.
+
+If marketplace refresh itself fails, the wrapper restores every indexed
+missing or damaged historical shell before returning the refresh error. A
+`MARKETPLACE_RECOVERY_FAILED` result is stronger: preserve both plugin data and
+the host cache, because the wrapper could not prove that all old-task paths were
+recovered.
+
 An installed runtime containing a symbolic link, duplicate enabled Router MCP
 registration, or changed cache-directory identity is treated as damaged. The
 wrapper stops before replacement; inspect the cache and registration rather

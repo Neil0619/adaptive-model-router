@@ -118,7 +118,15 @@ export function spawnSpec(resolved, args, env = process.env) {
   if (resolved.kind !== "cmd") {
     return { command: executable, args, env: childEnv, windowsVerbatimArguments: false };
   }
-  const commandLine = [quoteCmd(executable), ...args.map(quoteCmd)].join(" ");
+  // A batch file found by PATH receives only its basename as %0, so wrappers
+  // that use %~dp0 (including npm's codex.cmd) resolve files from the caller's
+  // working directory. Ask cmd.exe to expand the fixed, allow-listed basename
+  // through PATH first. This preserves the caller cwd without embedding an
+  // environment-selected absolute path in the command line.
+  const commandLine = [
+    `for %I in (${executable}) do @"%~$PATH:I"`,
+    ...args.map(quoteCmd),
+  ].join(" ");
   return {
     command: "cmd.exe",
     args: ["/d", "/v:off", "/s", "/c", `"${commandLine}"`],

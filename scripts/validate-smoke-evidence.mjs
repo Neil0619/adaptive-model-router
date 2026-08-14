@@ -228,7 +228,7 @@ function validate(evidence, schema, options = {}) {
       fail(`continuity.${key} must be a SHA-256 digest`);
     }
   }
-  enumValue(evidence.continuity.transportBefore, ["native", "unavailable"], "continuity.transportBefore");
+  enumValue(evidence.continuity.transportBefore, ["native", "stdio-bridge", "unavailable"], "continuity.transportBefore");
   enumValue(evidence.continuity.transportAfter, ["native", "stdio-bridge", "unavailable"], "continuity.transportAfter");
   enumValue(evidence.continuity.shimStatus, ["verified", "not-required", "unavailable"], "continuity.shimStatus");
   enumValue(evidence.continuity.outcomeStatus, ["passed", "failed", "unknown", "unavailable"], "continuity.outcomeStatus");
@@ -257,6 +257,7 @@ function validate(evidence, schema, options = {}) {
   const zeroDigest = "0".repeat(64);
   const continuityTransportValid =
     (evidence.continuity.transportBefore === "native" && evidence.continuity.transportAfter === "native") ||
+    (evidence.continuity.transportBefore === "stdio-bridge" && evidence.continuity.transportAfter === "stdio-bridge") ||
     (evidence.continuity.transportBefore === "unavailable" && evidence.continuity.transportAfter === "stdio-bridge");
   const continuityValid =
     evidence.environment.surface === "desktop" &&

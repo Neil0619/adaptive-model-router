@@ -131,7 +131,7 @@
             { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+[0-9A-Za-z.+-]*$", "maxLength": 128 }
           ]
         },
-        "transportBefore": { "enum": ["native", "unavailable"] },
+        "transportBefore": { "enum": ["native", "stdio-bridge", "unavailable"] },
         "transportAfter": { "enum": ["native", "stdio-bridge", "unavailable"] },
         "shimStatus": { "enum": ["verified", "not-required", "unavailable"] },
         "routeIdSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },

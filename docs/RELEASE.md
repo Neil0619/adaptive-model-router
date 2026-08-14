@@ -193,7 +193,9 @@ new Desktop task cannot substitute for it:
    separate from cold host replacement, never uses `plugin add` for the hot
    path, archives compatible historical shells before marketplace refresh,
    reloads the post-refresh registration, restores any indexed cache paths the
-   host pruned, and explains the genuinely-new-non-forked-task boundary. Before the
+   host pruned, restores them before returning any post-prune refresh failure,
+   serializes concurrent installers with a crash-releasing plugin-data
+   transaction, and explains the genuinely-new-non-forked-task boundary. Before the
    compatible upgrade, retain the Desktop process, task/thread ID, exact Router
    context, root-model baseline, and whether its native inventory is present or
    frozen. Do not close, reopen, fork, or replace that task during the upgrade.

@@ -304,6 +304,12 @@ identity, exact Router context, root-model baseline, old/new runtime,
 native-versus-bridge transport, route ID, and recorded outcome. Any missing or
 mismatched binding makes `PASS` invalid.
 
+A task whose native inventory was already frozen may legitimately use
+`stdio-bridge` both before and after a later compatible upgrade. The evidence
+must record that exact repeated bridge path; `unavailable` is reserved for the
+one-time transition in which the task had no usable Router transport before the
+compatibility bridge was installed.
+
 Record that the current Hook definitions were reviewed and trusted before the
 run. The JSON is the blocking functional source of truth. The summary below is
 agent-produced; its selector field is optional, non-blocking UX information.

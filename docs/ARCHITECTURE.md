@@ -170,6 +170,16 @@ MCP registration and atomically restores any indexed shell whose immutable
 cache path is missing or damaged. Unindexed directories are ignored; invalid,
 future, incompatible, or symlinked entries fail closed.
 
+One plugin-data SQLite `BEGIN IMMEDIATE` transaction spans state discovery,
+archive/index merge, marketplace reconciliation, cache restoration, staging,
+verification, and rollback. It excludes concurrent installers without a stale
+lock file and is released by SQLite when a process exits or crashes. A valid
+version archive is immutable and retained rather than displaced; publishing a
+new archive and atomically replacing the index happen while the lifecycle lock
+is held. If marketplace mutation, post-refresh state discovery, or refreshed
+registration health fails after caches were pruned, the installer restores all
+indexed missing or damaged paths before propagating the original failure.
+
 The Skill name and description are fixed host identity. The refreshable Skill
 body is governed by `liveWorkflowContractVersion`; the helper and its request,
 approval, transport, storage, and response behavior are governed by
@@ -227,9 +237,12 @@ process-level state safety.
 
 The vault is separate from the active pointer and routing database. Its index
 stores only immutable runtime directory names; each indexed directory is a
-validated plugin-package copy. Archive and restore use staging directories and
-atomic directory rename. A vault entry is never selected directly by the
-runtime loader, and an orphan directory absent from the index is never restored.
+validated plugin-package copy. Archive/index mutation is serialized by the
+installer lifecycle transaction; an existing valid archive is never replaced.
+Archive and restore use private staging workspaces plus atomic directory rename,
+and validate directory identity before cleanup. A vault entry is never selected
+directly by the runtime loader, and an orphan directory absent from the index is
+never restored.
 
 This mechanism deliberately does not add native MCP functions to a frozen task
 inventory. Instead, the live-read skill uses `scripts/stdio-tool.mjs` to invoke

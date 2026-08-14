@@ -92,8 +92,15 @@ failed upgrade.
   marketplace refresh. Post-refresh host state is reloaded, and cache paths
   pruned by host reconciliation are restored and revalidated before mutation.
 - Vault regression tests model the host deleting the old cache during
-  marketplace refresh, a later host prune, an unindexed orphan, and a symlinked
-  indexed entry. Restoration never invokes plugin re-registration.
+  marketplace refresh, refresh-command and state-read failures after pruning,
+  missing or damaged post-refresh registration, a later host prune, an
+  unindexed orphan, and symlinked archive/recovery paths. Restoration never
+  invokes plugin re-registration.
+- The complete installer lifecycle holds one plugin-data SQLite transaction.
+  Concurrent installers cannot lose an index merge, and a killed installer
+  releases the lock so the next wrapper run can restore the archived paths.
+  Existing valid immutable archive directories are retained, never displaced
+  through a crash-visible missing-path window.
 - The transaction snapshots every compatible runtime tree, not only the live
   bridge files, and restores missing non-bridge files on verification failure.
 - A successful rollback deletes its temporary snapshot; a failed rollback

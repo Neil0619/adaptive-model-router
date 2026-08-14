@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { access, chmod, cp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
@@ -26,6 +26,7 @@ const save = () => writeFileSync(path, JSON.stringify(state));
 if (args[0] === "--version") { process.stdout.write("codex 1.0.0\\n"); process.exit(0); }
 if (args.join(" ") === "plugin marketplace list --json") {
   if (state.failStateReadAfterPluginAdd && state.pluginAddFailed) { process.stderr.write("state unavailable\\n"); process.exit(1); }
+  if (state.failStateReadAfterMarketplaceUpgrade && state.marketplaceUpgradeFinished) { process.stderr.write("state unavailable\\n"); process.exit(1); }
   process.stdout.write(JSON.stringify({marketplaces:state.marketplaces})); process.exit(0);
 }
 if (args.join(" ") === "plugin list --available --json") { process.stdout.write(JSON.stringify({installed:state.installed,available:state.available})); process.exit(0); }
@@ -103,6 +104,16 @@ if (args[0] === "plugin" && args[1] === "marketplace" && args[2] === "add") {
     for (const root of state.removeRootsOnMarketplaceUpgrade || []) {
       if (root !== state.reconciledPluginRoot) rmSync(root,{recursive:true,force:true});
     }
+  }
+  state.marketplaceUpgradeFinished=true;
+  if (state.unregisterMcpAfterMarketplaceUpgrade) state.mcpRegistered=false;
+  if (state.damageReconciledRuntimeAfterMarketplaceUpgrade && state.reconciledPluginRoot) {
+    try { unlinkSync(state.reconciledPluginRoot+"/runtime.json"); } catch {}
+  }
+  save();
+  if (state.failMarketplaceUpgradeAfterReconcile) {
+    process.stderr.write("marketplace upgrade failed after reconciliation\\n");
+    process.exit(1);
   }
 } else if (args[0] === "plugin" && args[1] === "add") {
   if (state.dropDesktopTaskToolsOnPluginAdd) state.desktopTaskTools = false;
@@ -193,7 +204,7 @@ async function fakeCodex(project, initial = {}) {
   return { executable, statePath, bin };
 }
 
-function runManager(project, fake, args = [], {
+function managerEnvironment(project, fake, {
   useCodexBin = true,
   desktopOverrideDir,
   desktopOverridePathEntry = null,
@@ -217,6 +228,11 @@ function runManager(project, fake, args = [], {
   if (effectiveDesktopOverride) {
     env.ADAPTIVE_ROUTER_DESKTOP_OVERRIDE_DIR = effectiveDesktopOverride;
   }
+  return { codexHome, env };
+}
+
+function runManager(project, fake, args = [], options = {}) {
+  const { codexHome, env } = managerEnvironment(project, fake, options);
   const result = spawnSync(process.execPath, [manager, ...args], {
     encoding: "utf8",
     env,
@@ -236,6 +252,40 @@ function runtimeVault(codexHome) {
     DEFAULT_PLUGIN_DATA_DIRECTORY,
     "runtime-shell-vault",
   );
+}
+
+async function marketplacePruneFixture(name, behavior = {}) {
+  const project = await temporaryProject(name);
+  const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+  const oldVersion = "0.4.0+codex.20260812000000";
+  const oldRoot = join(versionsRoot, oldVersion);
+  const newRoot = join(versionsRoot, runtimeVersion);
+  const installedEntry = {
+    pluginId: "adaptive-model-router@adaptive-model-router",
+    name: "adaptive-model-router",
+    marketplaceName: "adaptive-model-router",
+    source: { source: "local", path: oldRoot },
+  };
+  const fake = await fakeCodex(project, {
+    pluginInstallRoot: oldRoot,
+    reconciledPluginRoot: newRoot,
+    reconcileOnMarketplaceUpgrade: true,
+    removeRootsOnMarketplaceUpgrade: [oldRoot],
+    marketplaces: [{
+      name: "adaptive-model-router",
+      marketplaceSource: {
+        sourceType: "git",
+        source: "https://github.com/Neil0619/adaptive-model-router.git",
+        ref: "stable",
+      },
+    }],
+    installed: [installedEntry],
+    available: [installedEntry],
+    ...behavior,
+  });
+  await writePluginFixture(oldRoot, oldVersion);
+  await writePluginFixture(newRoot, runtimeVersion);
+  return { project, fake, oldRoot, oldVersion, newRoot };
 }
 
 test("runtime boundary accepts 24.15 and rejects 24.14", () => {
@@ -1520,6 +1570,126 @@ test("marketplace reconciliation can prune an old cache before the installer res
   }
 });
 
+test("marketplace failures after pruning restore every archived old-task runtime", async (t) => {
+  const scenarios = [
+    {
+      name: "upgrade command failure",
+      behavior: { failMarketplaceUpgradeAfterReconcile: true },
+      expected: /plugin marketplace upgrade adaptive-model-router failed/iu,
+    },
+    {
+      name: "post-upgrade state read failure",
+      behavior: { failStateReadAfterMarketplaceUpgrade: true },
+      expected: /plugin marketplace list --json failed/iu,
+    },
+    {
+      name: "missing post-upgrade MCP registration",
+      behavior: { unregisterMcpAfterMarketplaceUpgrade: true },
+      expected: /CACHE_DAMAGED: RECOVERY_REQUIRED/iu,
+    },
+    {
+      name: "damaged post-upgrade runtime",
+      behavior: { damageReconciledRuntimeAfterMarketplaceUpgrade: true },
+      expected: /CACHE_DAMAGED: RECOVERY_REQUIRED/iu,
+    },
+  ];
+  for (const scenario of scenarios) {
+    await t.test(scenario.name, async () => {
+      const fixture = await marketplacePruneFixture(
+        `adaptive installer marketplace recovery ${scenario.name} `,
+        scenario.behavior,
+      );
+      try {
+        const result = runManager(fixture.project, fixture.fake, ["upgrade", "--non-interactive"]);
+        assert.equal(result.status, 5);
+        assert.match(result.stderr, scenario.expected);
+        assert.match(result.stderr, /restored [1-9]\d* missing or damaged historical Router runtime shells?/iu);
+        assert.equal(
+          JSON.parse(await readFile(join(fixture.oldRoot, "runtime.json"), "utf8")).runtimeVersion,
+          fixture.oldVersion,
+        );
+      } finally {
+        await fixture.project.cleanup();
+      }
+    });
+  }
+});
+
+test("marketplace recovery refuses a symlinked restore workspace without touching its target", {
+  skip: process.platform === "win32" ? "POSIX symlink safety regression" : false,
+}, async () => {
+  const fixture = await marketplacePruneFixture(
+    "adaptive installer marketplace symlink recovery ",
+    { failMarketplaceUpgradeAfterReconcile: true },
+  );
+  try {
+    const outside = join(fixture.project.root, "outside restore target");
+    await mkdir(outside, { recursive: true });
+    await writeFile(join(outside, "marker.txt"), "untouched\n");
+    const recoveryPath = join(dirname(fixture.oldRoot), ".adaptive-router-vault-restore");
+    await symlink(outside, recoveryPath);
+
+    const result = runManager(fixture.project, fixture.fake, ["upgrade", "--non-interactive"]);
+    assert.equal(result.status, 5);
+    assert.match(result.stderr, /MARKETPLACE_RECOVERY_FAILED/iu);
+    assert.equal(await readFile(join(outside, "marker.txt"), "utf8"), "untouched\n");
+    assert.deepEqual(await readdir(outside), ["marker.txt"]);
+  } finally {
+    await fixture.project.cleanup();
+  }
+});
+
+test("the installer lifecycle lock serializes processes and releases after a crash", {
+  timeout: 20_000,
+}, async () => {
+  const fixture = await marketplacePruneFixture("adaptive installer lifecycle lock crash recovery ");
+  let holder = null;
+  try {
+    const prepared = runManager(fixture.project, fixture.fake, ["upgrade", "--non-interactive"]);
+    assert.equal(prepared.status, 0, prepared.stderr);
+    await rm(fixture.oldRoot, { recursive: true, force: true });
+    const lockDatabase = join(dirname(runtimeVault(prepared.codexHome)), "installer-lifecycle.sqlite3");
+    const holderSource = [
+      'const { DatabaseSync } = require("node:sqlite");',
+      "const database = new DatabaseSync(process.argv[1]);",
+      "database.exec('BEGIN IMMEDIATE;');",
+      "process.stdout.write('locked\\n');",
+      "setInterval(() => {}, 1000);",
+    ].join("\n");
+    holder = spawn(process.execPath, ["-e", holderSource, lockDatabase], {
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    holder.stdout.setEncoding("utf8");
+    await new Promise((resolveLocked, reject) => {
+      holder.once("error", reject);
+      holder.stdout.once("data", (chunk) => {
+        if (chunk.trim() === "locked") resolveLocked();
+        else reject(new Error("lifecycle lock holder did not start"));
+      });
+    });
+
+    const contender = runManager(fixture.project, fixture.fake, ["upgrade", "--non-interactive"]);
+    assert.equal(contender.status, 5);
+    assert.match(contender.stderr, /INSTALLER_LIFECYCLE_BUSY/iu);
+
+    const holderExit = new Promise((resolveExit) => holder.once("exit", resolveExit));
+    holder.kill();
+    await holderExit;
+    const recovered = runManager(fixture.project, fixture.fake, ["upgrade", "--non-interactive"]);
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.match(recovered.stdout, /Restored 1 compatible historical Router runtime shell/iu);
+    assert.equal(
+      JSON.parse(await readFile(join(fixture.oldRoot, "runtime.json"), "utf8")).runtimeVersion,
+      fixture.oldVersion,
+    );
+    const index = JSON.parse(await readFile(join(runtimeVault(recovered.codexHome), "index.json"), "utf8"));
+    assert.deepEqual(index.directories, [fixture.oldVersion, runtimeVersion].sort());
+  } finally {
+    if (holder && holder.exitCode === null && holder.signalCode === null) holder.kill();
+    await fixture.project.cleanup();
+  }
+});
+
 test("a later hot upgrade restores indexed historical shells pruned by the host", async () => {
   const project = await temporaryProject("adaptive installer stable runtime vault restore ");
   try {
@@ -1555,6 +1725,8 @@ test("a later hot upgrade restores indexed historical shells pruned by the host"
     const vault = runtimeVault(first.codexHome);
     const firstIndex = JSON.parse(await readFile(join(vault, "index.json"), "utf8"));
     assert.deepEqual(firstIndex.directories, [oldVersion, runtimeVersion].sort());
+    const immutableArchiveMarker = join(vault, oldVersion, "archive-identity-marker.txt");
+    await writeFile(immutableArchiveMarker, "original immutable archive\n");
 
     const orphanVaultRoot = join(vault, orphanVersion);
     await cp(join(vault, oldVersion), orphanVaultRoot, { recursive: true });
@@ -1583,6 +1755,7 @@ test("a later hot upgrade restores indexed historical shells pruned by the host"
       await readFile(join(oldRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8"),
       /Frozen task tool inventory/,
     );
+    assert.equal(await readFile(immutableArchiveMarker, "utf8"), "original immutable archive\n");
     await assert.rejects(access(join(versionsRoot, orphanVersion)));
     assert.equal(
       (await state(fake)).mutations.some((args) => args.join(" ") === "plugin add adaptive-model-router@adaptive-model-router"),

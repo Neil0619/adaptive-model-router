@@ -93,7 +93,11 @@ pinned MCP shell activates that exact runtime. Before marketplace refresh it
 archives every verified compatible shell in a strict, atomic vault under stable
 plugin data. If Codex reconciliation prunes an old host-managed cache, the
 wrapper restores the indexed shell to the same immutable path before repairing
-its live bridge. Cold installation seeds the same vault. The wrapper
+its live bridge. If reconciliation fails after pruning, restoration runs before
+the failure is returned. A plugin-data SQLite transaction serializes the whole
+lifecycle across installers and releases automatically if an installer exits;
+index updates occur under that lock, and a valid immutable archive is never
+replaced in place. Cold installation seeds the same vault. The wrapper
 deliberately does not call `codex plugin add` or request plugin
 re-registration. A direct `plugin add` is a cold install/replacement operation,
 not a hot-upgrade primitive.

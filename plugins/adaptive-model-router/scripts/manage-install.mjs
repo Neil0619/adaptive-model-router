@@ -4,6 +4,7 @@ import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readF
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import {
   AGENTS_MARKER_END,
@@ -58,6 +59,9 @@ const installWait = new Int32Array(new SharedArrayBuffer(4));
 const DESKTOP_NODE_BRIDGE_MARKER = "adaptive-model-router Desktop PATH compatibility bridge";
 const RUNTIME_VAULT_DIRECTORY = "runtime-shell-vault";
 const RUNTIME_VAULT_INDEX = "index.json";
+const INSTALLER_LIFECYCLE_DATABASE = "installer-lifecycle.sqlite3";
+const INSTALLER_LIFECYCLE_TIMEOUT_MS = 5_000;
+let installerLifecycleLock = null;
 
 if (
   SOURCE_MANIFEST.name !== "adaptive-model-router" ||
@@ -460,6 +464,13 @@ function assertDirectoryIdentity(path, expected) {
   }
 }
 
+function assertDirectoryObjectIdentity(path, expected) {
+  const observed = directoryIdentity(path);
+  if (observed.device !== expected.device || observed.inode !== expected.inode) {
+    throw new Error("runtime directory object changed during the upgrade");
+  }
+}
+
 function assertSafeRuntimeTree(root) {
   const metadata = lstatSync(root);
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
@@ -489,12 +500,19 @@ function restoreRuntimeTree(entry) {
   if (!recoveryMetadata.isDirectory() || recoveryMetadata.isSymbolicLink()) {
     throw new Error("runtime recovery path is not a real directory");
   }
+  const recoveryRootIdentity = directoryIdentity(recoveryRoot);
   const nonce = `${process.pid}-${randomBytes(5).toString("hex")}`;
-  const staged = join(recoveryRoot, `restore-${nonce}`);
-  const displaced = join(recoveryRoot, `displaced-${basename(root)}-${nonce}`);
+  const workspace = join(recoveryRoot, `transaction-${nonce}`);
+  mkdirSync(workspace, { mode: 0o700 });
+  const workspaceIdentity = directoryIdentity(workspace);
+  const staged = join(workspace, "restore");
+  const displaced = join(workspace, `displaced-${basename(root)}`);
   let displacedCurrent = false;
+  let displacedIdentity = null;
   let installedRestore = false;
   try {
+    assertDirectoryIdentity(recoveryRoot, recoveryRootIdentity);
+    assertDirectoryIdentity(workspace, workspaceIdentity);
     cpSync(backup, staged, {
       recursive: true,
       errorOnExist: true,
@@ -503,9 +521,18 @@ function restoreRuntimeTree(entry) {
     });
     assertSafeRuntimeTree(staged);
     assertDirectoryIdentity(versionsRoot, versionsRootIdentity);
-    if (existsSync(root)) {
+    assertDirectoryIdentity(recoveryRoot, recoveryRootIdentity);
+    const currentMetadata = lstatIfPresent(root);
+    let currentIdentity = null;
+    if (currentMetadata) {
+      if (!currentMetadata.isDirectory() || currentMetadata.isSymbolicLink()) {
+        throw new Error("runtime rollback target is not a real directory");
+      }
+      currentIdentity = directoryIdentity(root);
       renameSync(root, displaced);
       displacedCurrent = true;
+      displacedIdentity = currentIdentity;
+      assertDirectoryObjectIdentity(displaced, currentIdentity);
     }
     renameSync(staged, root);
     installedRestore = true;
@@ -513,22 +540,17 @@ function restoreRuntimeTree(entry) {
   } catch (error) {
     if (displacedCurrent && !installedRestore && !existsSync(root)) {
       try {
+        assertDirectoryObjectIdentity(displaced, displacedIdentity);
         renameSync(displaced, root);
         displacedCurrent = false;
       } catch {}
     }
     throw error;
   } finally {
-    if (!installedRestore) {
-      try {
-        rmSync(staged, { recursive: true, force: true });
-      } catch {}
-    }
-    if (installedRestore && displacedCurrent) {
-      try {
-        rmSync(displaced, { recursive: true, force: true });
-      } catch {}
-    }
+    try {
+      assertDirectoryIdentity(workspace, workspaceIdentity);
+      rmSync(workspace, { recursive: true, force: true });
+    } catch {}
   }
 }
 
@@ -569,8 +591,91 @@ function installerPluginDataRoot() {
   return configured ? resolve(configured) : defaultPluginData(process.env);
 }
 
+function verifiedInstallerPluginDataRoot() {
+  const root = installerPluginDataRoot();
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  const metadata = lstatSync(root);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new InstallError(
+      "INSTALLER_LIFECYCLE_LOCK_FAILED: the stable plugin-data path is not a real directory",
+      5,
+      "INSTALLER_LIFECYCLE_LOCK_FAILED",
+    );
+  }
+  return root;
+}
+
+function acquireInstallerLifecycleLock() {
+  if (installerLifecycleLock) throw new Error("installer lifecycle lock is already held");
+  const databasePath = join(verifiedInstallerPluginDataRoot(), INSTALLER_LIFECYCLE_DATABASE);
+  const existing = lstatIfPresent(databasePath);
+  if (existing && (!existing.isFile() || existing.isSymbolicLink())) {
+    throw new InstallError(
+      "INSTALLER_LIFECYCLE_LOCK_FAILED: the installer lock database is not a regular file",
+      5,
+      "INSTALLER_LIFECYCLE_LOCK_FAILED",
+    );
+  }
+  let database = null;
+  try {
+    database = new DatabaseSync(databasePath);
+    const opened = lstatSync(databasePath);
+    if (!opened.isFile() || opened.isSymbolicLink()) {
+      throw new Error("installer lock database path changed during acquisition");
+    }
+    chmodSync(databasePath, 0o600);
+    database.exec(`PRAGMA busy_timeout = ${INSTALLER_LIFECYCLE_TIMEOUT_MS}; BEGIN IMMEDIATE;`);
+    installerLifecycleLock = { database, databasePath };
+    return installerLifecycleLock;
+  } catch (error) {
+    try {
+      database?.close();
+    } catch {}
+    if (/busy|locked/iu.test(error?.message || "")) {
+      throw new InstallError(
+        "INSTALLER_LIFECYCLE_BUSY: another Adaptive Model Router lifecycle operation is still running",
+        5,
+        "INSTALLER_LIFECYCLE_BUSY",
+      );
+    }
+    throw new InstallError(
+      "INSTALLER_LIFECYCLE_LOCK_FAILED: the installer could not acquire its stable lifecycle lock",
+      5,
+      "INSTALLER_LIFECYCLE_LOCK_FAILED",
+    );
+  }
+}
+
+function releaseInstallerLifecycleLock(lock) {
+  if (!lock || installerLifecycleLock !== lock) return;
+  try {
+    try {
+      lock.database.exec("ROLLBACK;");
+    } catch {
+      process.stderr.write("Warning: the installer lifecycle transaction could not be rolled back cleanly.\n");
+    }
+  } finally {
+    try {
+      try {
+        lock.database.close();
+      } catch {
+        process.stderr.write("Warning: the installer lifecycle lock database could not be closed cleanly.\n");
+      }
+    } finally {
+      installerLifecycleLock = null;
+    }
+  }
+}
+
+function assertInstallerLifecycleLock() {
+  if (!installerLifecycleLock) {
+    throw new Error("installer lifecycle lock is required for runtime-vault mutation");
+  }
+}
+
 function runtimeVaultRoot() {
-  const root = join(installerPluginDataRoot(), RUNTIME_VAULT_DIRECTORY);
+  assertInstallerLifecycleLock();
+  const root = join(verifiedInstallerPluginDataRoot(), RUNTIME_VAULT_DIRECTORY);
   mkdirSync(root, { recursive: true, mode: 0o700 });
   const metadata = lstatSync(root);
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
@@ -654,8 +759,6 @@ function archiveRuntimeRoot(vaultRoot, root) {
   const nonce = `${process.pid}-${randomBytes(5).toString("hex")}`;
   const staged = join(vaultRoot, `.archive-${nonce}`);
   const target = join(vaultRoot, directory);
-  const displaced = join(vaultRoot, `.displaced-${directory}-${nonce}`);
-  let displacedExisting = false;
   let installedArchive = false;
   try {
     cpSync(root, staged, {
@@ -680,18 +783,17 @@ function archiveRuntimeRoot(vaultRoot, root) {
         throw new Error("existing vault entry is not a real directory");
       }
       if (!vaultRuntimeHealth(target, directory)) throw new Error("existing vault entry is invalid");
-      renameSync(target, displaced);
-      displacedExisting = true;
+      // Runtime version directories are immutable. Keeping an already verified
+      // archive avoids any interval in which an indexed entry is absent if the
+      // installer or host crashes.
+      return directory;
     }
     renameSync(staged, target);
     installedArchive = true;
   } catch {
-    if (displacedExisting && !installedArchive && !existsSync(target)) {
-      try {
-        renameSync(displaced, target);
-        displacedExisting = false;
-      } catch {}
-    }
+    // A non-installer process may have published the same valid immutable
+    // archive after our preflight. Accept it without replacing it.
+    if (vaultRuntimeHealth(target, directory)) return directory;
     throw new InstallError(
       "RUNTIME_VAULT_ARCHIVE_FAILED: the verified runtime could not be archived atomically",
       5,
@@ -701,11 +803,6 @@ function archiveRuntimeRoot(vaultRoot, root) {
     if (!installedArchive) {
       try {
         rmSync(staged, { recursive: true, force: true });
-      } catch {}
-    }
-    if (installedArchive && displacedExisting) {
-      try {
-        rmSync(displaced, { recursive: true, force: true });
       } catch {}
     }
   }
@@ -773,12 +870,19 @@ function restoreVaultedRuntimeRoot(vaultRoot, versionsRoot, versionsRootIdentity
       "RUNTIME_VAULT_RESTORE_FAILED",
     );
   }
+  const recoveryRootIdentity = directoryIdentity(recoveryRoot);
   const nonce = `${process.pid}-${randomBytes(5).toString("hex")}`;
-  const staged = join(recoveryRoot, `restore-${directory}-${nonce}`);
-  const displaced = join(recoveryRoot, `displaced-${directory}-${nonce}`);
+  const workspace = join(recoveryRoot, `transaction-${directory}-${nonce}`);
+  mkdirSync(workspace, { mode: 0o700 });
+  const workspaceIdentity = directoryIdentity(workspace);
+  const staged = join(workspace, "restore");
+  const displaced = join(workspace, `displaced-${directory}`);
   let displacedExisting = false;
+  let displacedIdentity = null;
   let installedRestore = false;
   try {
+    assertDirectoryIdentity(recoveryRoot, recoveryRootIdentity);
+    assertDirectoryIdentity(workspace, workspaceIdentity);
     cpSync(source, staged, {
       recursive: true,
       errorOnExist: true,
@@ -797,15 +901,20 @@ function restoreVaultedRuntimeRoot(vaultRoot, versionsRoot, versionsRootIdentity
       throw new Error("restored runtime failed validation");
     }
     assertDirectoryIdentity(versionsRoot, versionsRootIdentity);
+    assertDirectoryIdentity(recoveryRoot, recoveryRootIdentity);
     if (targetMetadata) {
+      const targetIdentity = directoryIdentity(target);
       renameSync(target, displaced);
       displacedExisting = true;
+      displacedIdentity = targetIdentity;
+      assertDirectoryObjectIdentity(displaced, targetIdentity);
     }
     renameSync(staged, target);
     installedRestore = true;
   } catch {
     if (displacedExisting && !installedRestore && !existsSync(target)) {
       try {
+        assertDirectoryObjectIdentity(displaced, displacedIdentity);
         renameSync(displaced, target);
         displacedExisting = false;
       } catch {}
@@ -816,16 +925,10 @@ function restoreVaultedRuntimeRoot(vaultRoot, versionsRoot, versionsRootIdentity
       "RUNTIME_VAULT_RESTORE_FAILED",
     );
   } finally {
-    if (!installedRestore) {
-      try {
-        rmSync(staged, { recursive: true, force: true });
-      } catch {}
-    }
-    if (installedRestore && displacedExisting) {
-      try {
-        rmSync(displaced, { recursive: true, force: true });
-      } catch {}
-    }
+    try {
+      assertDirectoryIdentity(workspace, workspaceIdentity);
+      rmSync(workspace, { recursive: true, force: true });
+    } catch {}
   }
   return true;
 }
@@ -843,6 +946,21 @@ function restoreVaultedRuntimeRoots(anchorRoot) {
     }
   }
   return restored;
+}
+
+function restoreVaultAfterMarketplaceFailure(beforeHealth) {
+  try {
+    const restored = restoreVaultedRuntimeRoots(beforeHealth.root);
+    process.stderr.write(
+      `Marketplace reconciliation failed; restored ${restored.length} missing or damaged historical Router runtime shell${restored.length === 1 ? "" : "s"} from stable plugin data.\n`,
+    );
+  } catch {
+    throw new InstallError(
+      "MARKETPLACE_RECOVERY_FAILED: marketplace reconciliation failed and the archived historical Router shells could not all be restored",
+      5,
+      "MARKETPLACE_RECOVERY_FAILED",
+    );
+  }
 }
 
 function defaultDesktopOverrideDirectory() {
@@ -1724,29 +1842,34 @@ async function installOrUpgrade(args, state) {
     archiveRuntimeRoots(roots);
   }
   let currentState = state;
-  if (!currentMarketplace) {
-    codex(["plugin", "marketplace", "add", REPOSITORY, "--ref", args.ref]);
-  } else if (!localRepositoryMarketplace(currentMarketplace)) {
-    codex(["plugin", "marketplace", "upgrade", MARKETPLACE]);
-    currentState = loadState();
-  }
-  const currentHealth = installedPluginHealth(currentState);
-  if (["damaged", "unverifiable"].includes(currentHealth.state)) {
-    throw new InstallError(
-      "CACHE_DAMAGED: RECOVERY_REQUIRED: marketplace refresh did not leave one healthy registered Router cache; plugin re-registration was refused to protect existing tasks",
-      5,
-      "CACHE_DAMAGED",
-    );
-  }
-  if (
-    beforeHealth.state === "healthy" &&
-    currentHealth.state !== "healthy"
-  ) {
-    throw new InstallError(
-      "CACHE_DAMAGED: RECOVERY_REQUIRED: marketplace refresh did not leave one healthy registered Router cache; plugin re-registration was refused to protect existing tasks",
-      5,
-      "CACHE_DAMAGED",
-    );
+  let marketplaceMutationStarted = false;
+  let currentHealth;
+  try {
+    if (!currentMarketplace) {
+      marketplaceMutationStarted = true;
+      codex(["plugin", "marketplace", "add", REPOSITORY, "--ref", args.ref]);
+      currentState = loadState();
+    } else if (!localRepositoryMarketplace(currentMarketplace)) {
+      marketplaceMutationStarted = true;
+      codex(["plugin", "marketplace", "upgrade", MARKETPLACE]);
+      currentState = loadState();
+    }
+    currentHealth = installedPluginHealth(currentState);
+    if (
+      ["damaged", "unverifiable"].includes(currentHealth.state) ||
+      (beforeHealth.state === "healthy" && currentHealth.state !== "healthy")
+    ) {
+      throw new InstallError(
+        "CACHE_DAMAGED: RECOVERY_REQUIRED: marketplace refresh did not leave one healthy registered Router cache; plugin re-registration was refused to protect existing tasks",
+        5,
+        "CACHE_DAMAGED",
+      );
+    }
+  } catch (error) {
+    if (beforeHealth.state === "healthy" && marketplaceMutationStarted) {
+      restoreVaultAfterMarketplaceFailure(beforeHealth);
+    }
+    throw error;
   }
   const hotUpgrade = currentHealth.state === "healthy";
   if (hotUpgrade) {
@@ -1793,10 +1916,15 @@ function uninstall(args, state) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   preflight();
-  if (args.patchAgents || args.action === "uninstall") markerState();
-  const state = loadState();
-  if (args.action === "uninstall") uninstall(args, state);
-  else await installOrUpgrade(args, state);
+  const lifecycleLock = acquireInstallerLifecycleLock();
+  try {
+    if (args.patchAgents || args.action === "uninstall") markerState();
+    const state = loadState();
+    if (args.action === "uninstall") uninstall(args, state);
+    else await installOrUpgrade(args, state);
+  } finally {
+    releaseInstallerLifecycleLock(lifecycleLock);
+  }
 }
 
 main().catch((error) => {
