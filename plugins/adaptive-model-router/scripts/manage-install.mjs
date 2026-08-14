@@ -1011,13 +1011,15 @@ function desktopNodeBridgeContent() {
 }
 
 function verifyDesktopNodeBridge(directory) {
-  const command = process.platform === "win32" ? "cmd.exe" : "node";
-  const args = process.platform === "win32"
-    ? ["/d", "/v:off", "/s", "/c", "node --version"]
-    : ["--version"];
+  const windows = process.platform === "win32";
+  const command = windows ? "node --version" : "node";
+  const args = windows ? [] : ["--version"];
   const result = spawnSync(command, args, {
     encoding: "utf8",
     env: { ...process.env, PATH: directory },
+    // Windows cannot execute node.cmd directly. Let Node select the native
+    // command processor before the reduced PATH is applied to the bridge.
+    shell: windows,
     windowsHide: true,
     timeout: 5_000,
   });
