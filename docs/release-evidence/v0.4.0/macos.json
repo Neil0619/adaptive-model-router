@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "gate": "macos-native",
   "status": "PASS",
-  "generatedAt": "2026-08-14T10:36:56Z",
+  "generatedAt": "2026-08-14T11:29:58Z",
   "candidate": {
     "ref": "codex/v040-hot-upgrade-release",
-    "commitSha": "d72ab717b5a7145c34989052d7b02972479a226d",
-    "pluginTreeSha256": "0625efe2565e8f4cc1e1dffc03b20d131185a8eb0e620074051f98ea7b76d961"
+    "commitSha": "f8ace644d90f60992093d391625d094c424c65d1",
+    "pluginTreeSha256": "4f5fbde8b911629a83f94363a795c4fa598344f583c0c81c50d5e53b16ac80ef"
   },
   "environment": {
     "platform": "macos",
@@ -44,20 +44,20 @@
     "stopHookUnknown": 0
   },
   "continuity": {
-    "candidateCommitSha": "d72ab717b5a7145c34989052d7b02972479a226d",
+    "candidateCommitSha": "f8ace644d90f60992093d391625d094c424c65d1",
     "taskIdentityBeforeSha256": "bf97c1942480ec468a01c6eb9490d1abde3b785eca61759221663cb0a3de6890",
     "taskIdentityAfterSha256": "bf97c1942480ec468a01c6eb9490d1abde3b785eca61759221663cb0a3de6890",
     "contextIdentityBeforeSha256": "bf97c1942480ec468a01c6eb9490d1abde3b785eca61759221663cb0a3de6890",
     "contextIdentityAfterSha256": "bf97c1942480ec468a01c6eb9490d1abde3b785eca61759221663cb0a3de6890",
     "rootModelBefore": "gpt-5.6-sol",
     "rootModelAfter": "gpt-5.6-sol",
-    "runtimeBefore": "0.4.0+codex.20260814095433",
-    "runtimeAfter": "0.4.0+codex.20260814181412",
-    "transportBefore": "stdio-bridge",
-    "transportAfter": "stdio-bridge",
-    "shimStatus": "verified",
-    "routeIdSha256": "a9d0bfea7c45a0c01e871ccbec19e85927e9480a7fb49290b7dd07b4d196aba6",
-    "outcomeRouteIdSha256": "a9d0bfea7c45a0c01e871ccbec19e85927e9480a7fb49290b7dd07b4d196aba6",
+    "runtimeBefore": "0.4.0+codex.20260814181412",
+    "runtimeAfter": "0.4.0+codex.20260814185904",
+    "transportBefore": "native",
+    "transportAfter": "native",
+    "shimStatus": "not-required",
+    "routeIdSha256": "0f2afad9e1731fe080c11cd69471c346fe5620c68e25d2336748ae68c251cba4",
+    "outcomeRouteIdSha256": "0f2afad9e1731fe080c11cd69471c346fe5620c68e25d2336748ae68c251cba4",
     "outcomeStatus": "passed",
     "delegatedTargetCount": 1,
     "recordedOutcomeCount": 1,

@@ -8,8 +8,8 @@
   "reasonCode": "WINDOWS_NATIVE_SAME_TASK_SMOKE_DEFERRED",
   "candidate": {
     "ref": "codex/v040-hot-upgrade-release",
-    "commitSha": "d72ab717b5a7145c34989052d7b02972479a226d",
-    "pluginTreeSha256": "0625efe2565e8f4cc1e1dffc03b20d131185a8eb0e620074051f98ea7b76d961"
+    "commitSha": "f8ace644d90f60992093d391625d094c424c65d1",
+    "pluginTreeSha256": "4f5fbde8b911629a83f94363a795c4fa598344f583c0c81c50d5e53b16ac80ef"
   },
   "retainedEvidence": {
     "path": "docs/release-evidence/v0.4.0/windows.json",

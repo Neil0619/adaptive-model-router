@@ -16,6 +16,12 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..")
 const validator = join(repoRoot, "scripts", "validate-smoke-evidence.mjs");
 const releaseVerifier = join(repoRoot, "scripts", "verify-release-evidence.mjs");
 const macosTemplate = join(repoRoot, "docs", "release-evidence", "templates", "macos-v1.json");
+const githubReleaseEnvironmentKeys = [
+  "GITHUB_ACTIONS",
+  "GITHUB_REPOSITORY",
+  "GITHUB_REF_TYPE",
+  "GITHUB_REF_NAME",
+];
 const requiredCheckIds = [
   "native-preflight",
   "candidate-frozen",
@@ -35,6 +41,12 @@ const requiredCheckIds = [
   "cross-project-persistence",
   "final-state-settled",
 ];
+
+function releaseVerifierEnvironment(overrides = {}) {
+  const environment = { ...process.env };
+  for (const key of githubReleaseEnvironmentKeys) delete environment[key];
+  return { ...environment, ...overrides };
+}
 
 test("release gate comparison ignores only line-ending transformations", async () => {
   assert.deepEqual(normalizeLineEndings(Buffer.from("one\r\ntwo\rthree\n")), Buffer.from("one\ntwo\nthree\n"));
@@ -284,7 +296,12 @@ test("release evidence gate binds both native PASS artifacts to one unchanged ca
       "--expected-ref=codex/windows-smoke",
       windowsPath,
       macosPath,
-    ], { cwd: project.root, encoding: "utf8", windowsHide: true });
+    ], {
+      cwd: project.root,
+      encoding: "utf8",
+      windowsHide: true,
+      env: releaseVerifierEnvironment(),
+    });
     assert.equal(accepted.status, 0, accepted.stderr);
 
     const staleWindows = structuredClone(windows);
@@ -301,7 +318,12 @@ test("release evidence gate binds both native PASS artifacts to one unchanged ca
       "--expected-ref=codex/windows-smoke",
       windowsPath,
       macosPath,
-    ], { cwd: project.root, encoding: "utf8", windowsHide: true });
+    ], {
+      cwd: project.root,
+      encoding: "utf8",
+      windowsHide: true,
+      env: releaseVerifierEnvironment(),
+    });
     assert.notEqual(defaultRejected.status, 0);
     assert.match(defaultRejected.stderr, /does not bind one frozen candidate/u);
 
@@ -338,7 +360,12 @@ test("release evidence gate binds both native PASS artifacts to one unchanged ca
       `--temporary-windows-waiver=${waiverPath}`,
       windowsPath,
       macosPath,
-    ], { cwd: project.root, encoding: "utf8", windowsHide: true });
+    ], {
+      cwd: project.root,
+      encoding: "utf8",
+      windowsHide: true,
+      env: releaseVerifierEnvironment(),
+    });
     assert.notEqual(localBypassRejected.status, 0);
     assert.match(localBypassRejected.stderr, /official v0\.4\.0 GitHub tag workflow/u);
 
@@ -356,13 +383,12 @@ test("release evidence gate binds both native PASS artifacts to one unchanged ca
       cwd: project.root,
       encoding: "utf8",
       windowsHide: true,
-      env: {
-        ...process.env,
+      env: releaseVerifierEnvironment({
         GITHUB_ACTIONS: "true",
         GITHUB_REPOSITORY: "Neil0619/adaptive-model-router",
         GITHUB_REF_TYPE: "tag",
         GITHUB_REF_NAME: "v0.4.0",
-      },
+      }),
     });
     assert.equal(bypassAccepted.status, 0, bypassAccepted.stderr);
     assert.match(bypassAccepted.stdout, /Windows evidence bypass active for v0\.4\.0/u);
@@ -377,13 +403,12 @@ test("release evidence gate binds both native PASS artifacts to one unchanged ca
       cwd: project.root,
       encoding: "utf8",
       windowsHide: true,
-      env: {
-        ...process.env,
+      env: releaseVerifierEnvironment({
         GITHUB_ACTIONS: "true",
         GITHUB_REPOSITORY: "Neil0619/adaptive-model-router",
         GITHUB_REF_TYPE: "tag",
         GITHUB_REF_NAME: "v0.4.1",
-      },
+      }),
     });
     assert.notEqual(wrongTagBypassRejected.status, 0);
     assert.match(wrongTagBypassRejected.stderr, /official v0\.4\.0 GitHub tag workflow/u);
@@ -398,7 +423,12 @@ test("release evidence gate binds both native PASS artifacts to one unchanged ca
       "--expected-ref=codex/windows-smoke",
       windowsPath,
       macosPath,
-    ], { cwd: project.root, encoding: "utf8", windowsHide: true });
+    ], {
+      cwd: project.root,
+      encoding: "utf8",
+      windowsHide: true,
+      env: releaseVerifierEnvironment(),
+    });
     assert.notEqual(rejected.status, 0);
     assert.match(rejected.stderr, /release-relevant files differ/u);
   } finally {
