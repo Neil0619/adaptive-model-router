@@ -9,42 +9,61 @@ import { environmentWithPluginData } from "./lib/plugin-data.mjs";
 
 const MAX_INPUT_BYTES = 1_048_576;
 const TIMEOUT_MS = 15_000;
+const requestedInputTimeout = Number(process.env.ADAPTIVE_ROUTER_STDIO_INPUT_TIMEOUT_MS || 5_000);
+const INPUT_TIMEOUT_MS = Number.isInteger(requestedInputTimeout) &&
+  requestedInputTimeout >= 1 && requestedInputTimeout <= 60_000
+  ? requestedInputTimeout
+  : 5_000;
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function readRequest() {
   return new Promise((resolveRequest, reject) => {
     let body = "";
     let settled = false;
-    const parse = (value) => {
+    let timer;
+    const finish = (callback) => {
       if (settled) return;
       settled = true;
-      process.stdin.destroy();
-      try {
-        const parsed = JSON.parse(value);
-        if (
-          !parsed ||
-          typeof parsed !== "object" ||
-          Array.isArray(parsed) ||
-          typeof parsed.name !== "string" ||
-          !parsed.arguments ||
-          typeof parsed.arguments !== "object" ||
-          Array.isArray(parsed.arguments)
-        ) {
-          throw new Error("stdio bridge request must contain name and arguments");
-        }
-        resolveRequest(parsed);
-      } catch (error) {
-        reject(error);
-      }
+      clearTimeout(timer);
+      callback();
     };
+    const parse = (value) => {
+      finish(() => {
+        process.stdin.destroy();
+        try {
+          const parsed = JSON.parse(value);
+          if (
+            !parsed ||
+            typeof parsed !== "object" ||
+            Array.isArray(parsed) ||
+            typeof parsed.name !== "string" ||
+            !parsed.arguments ||
+            typeof parsed.arguments !== "object" ||
+            Array.isArray(parsed.arguments)
+          ) {
+            throw new Error("stdio bridge request must contain name and arguments");
+          }
+          resolveRequest(parsed);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    };
+    timer = setTimeout(() => {
+      finish(() => {
+        process.stdin.destroy();
+        reject(new Error("stdio bridge request timed out"));
+      });
+    }, INPUT_TIMEOUT_MS);
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (chunk) => {
       if (settled) return;
       body += chunk;
       if (Buffer.byteLength(body, "utf8") > MAX_INPUT_BYTES) {
-        settled = true;
-        reject(new Error("stdio bridge input is too large"));
-        process.stdin.destroy();
+        finish(() => {
+          reject(new Error("stdio bridge input is too large"));
+          process.stdin.destroy();
+        });
         return;
       }
       const newline = body.indexOf("\n");
@@ -54,10 +73,7 @@ function readRequest() {
       if (!settled) parse(body);
     });
     process.stdin.on("error", (error) => {
-      if (!settled) {
-        settled = true;
-        reject(error);
-      }
+      finish(() => reject(error));
     });
   });
 }

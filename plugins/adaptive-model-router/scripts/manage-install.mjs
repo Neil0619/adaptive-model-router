@@ -89,7 +89,7 @@ function parseArgs(values) {
     ref: DEFAULT_REF,
   };
   for (const value of values) {
-    if (["install", "upgrade", "uninstall"].includes(value)) parsed.action = value;
+    if (["install", "upgrade", "repair", "uninstall"].includes(value)) parsed.action = value;
     else if (value === "--patch-agents") parsed.patchAgents = true;
     else if (value === "--non-interactive") parsed.nonInteractive = true;
     else if (value === "--verify-task-tools") parsed.verifyTaskTools = true;
@@ -1903,6 +1903,33 @@ async function installOrUpgrade(args, state) {
   process.stdout.write('To opt into automatic routing for all local projects, send "router: global on" once; upgrades preserve this setting.\n');
 }
 
+function repairInstallation(args, state) {
+  const health = installedPluginHealth(state);
+  if (health.state !== "healthy") {
+    const detail = health.state === "missing"
+      ? "the Router is not installed"
+      : "the installed Router does not have one healthy registered MCP cache";
+    throw new InstallError(
+      `REPAIR_REQUIRES_HEALTHY_INSTALL: ${detail}; use the reviewed cold installation flow instead`,
+      5,
+      "REPAIR_REQUIRES_HEALTHY_INSTALL",
+    );
+  }
+  hotUpgradeWithIntegrityCheck(health);
+  if (args.patchAgents) patchAgents();
+  process.stdout.write(
+    `Adaptive Model Router runtime ${INSTALL_VERSION} was repaired without plugin re-registration or marketplace mutation.\n`,
+  );
+  if (args.verifyTaskTools) {
+    process.stdout.write(
+      "Pinned in-place MCP, Hook, and stdio bridge probes passed; repair did not create a disposable Codex CLI task.\n",
+    );
+  }
+  process.stdout.write(
+    "Existing tasks can use the repaired Desktop PATH shim immediately; installed absolute launch commands survive later Codex runtime replacement.\n",
+  );
+}
+
 function uninstall(args, state) {
   const currentMarketplace = state.marketplaces.find((entry) => entryName(entry) === MARKETPLACE);
   if (currentMarketplace && !desiredMarketplace(currentMarketplace, args.ref)) {
@@ -1923,6 +1950,7 @@ async function main() {
     if (args.patchAgents || args.action === "uninstall") markerState();
     const state = loadState();
     if (args.action === "uninstall") uninstall(args, state);
+    else if (args.action === "repair") repairInstallation(args, state);
     else await installOrUpgrade(args, state);
   } finally {
     releaseInstallerLifecycleLock(lifecycleLock);

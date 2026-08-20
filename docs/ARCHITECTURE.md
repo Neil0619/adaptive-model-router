@@ -228,6 +228,18 @@ smoke verifies only a newly created Codex CLI task; it is not evidence about an
 already-created Desktop task's fixed tool inventory and cannot satisfy the
 blocking same-Desktop-task release gate.
 
+The repository also exposes a non-registering `repair` action for a healthy
+installation whose portable source placeholders were reintroduced by a raw
+`codex plugin add`, or whose host-owned Desktop runtime directory was replaced.
+It enters the same lifecycle lock and integrity transaction as a compatible
+upgrade but skips marketplace refresh and plugin registration entirely. It
+materializes every compatible installed shell, restores the current Desktop
+shim, stages the reviewed compatible source runtime when necessary, and runs
+the same pinned MCP, Hook, and stdio-bridge probes. The shim is only continuity
+support for launch strings already parsed by the running host; durable startup
+after a later host-runtime replacement comes from absolute commands stored in
+the plugin cache, not from assuming the host-owned shim directory persists.
+
 The pointer stores only cache directory names, versions, and a bounded failed
 list under plugin data; it never stores an absolute cache path. Concurrent
 shells serialize the short pointer update through an exclusive local lock and

@@ -6,6 +6,15 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- A new non-registering `repair` action recovers healthy installations whose
+  absolute Node launch fields were overwritten by raw `plugin add`, recreates
+  the current Desktop shim after a host-runtime replacement, and proves that
+  the materialized MCP and Hook commands still start after that shim is deleted.
+  The supported install documentation no longer presents raw registration as a
+  complete Desktop-safe installation.
+- The one-call stdio bridge now exits with an explicit request timeout when a
+  caller opens stdin but never supplies its JSON request, instead of leaving a
+  task waiting indefinitely.
 - Already-created tasks whose Router function inventory was frozen while MCP
   startup was broken now use a one-call installed stdio bridge for approved
   lifecycle and inspection tools. The bridge invokes the same MCP

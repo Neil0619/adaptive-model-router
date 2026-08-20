@@ -111,6 +111,37 @@ test("stdio bridge processes one JSON line without waiting for stdin to close", 
   }
 });
 
+test("stdio bridge fails explicitly when an open stdin never supplies a request", async () => {
+  const result = await new Promise((resolveResult, reject) => {
+    const child = spawn(process.execPath, [bridge], {
+      cwd: pluginRoot,
+      env: {
+        ...process.env,
+        ADAPTIVE_ROUTER_STDIO_INPUT_TIMEOUT_MS: "50",
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("stdio bridge did not time out while waiting for its request"));
+    }, 2_000);
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      resolveResult({ code, stderr });
+    });
+  });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /request timed out/i);
+});
+
 test("source-checkout bridge shares the installed plugin data directory with Hooks and MCP", async () => {
   const codexHome = await mkdtemp(join(tmpdir(), "adaptive-router-stdio-home-"));
   const pluginData = join(

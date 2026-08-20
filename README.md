@@ -14,12 +14,29 @@ Codex Desktop can expose a smaller `PATH` than an interactive shell. The install
 
 If a task was created while MCP startup was broken, its native function inventory can remain frozen. Compatible upgrades keep that task usable through a verified one-call stdio bridge to the same installed MCP `tools/call`; reopening Desktop or creating a replacement task is not required.
 
-The native Codex commands are the primary installation path; no remote script execution is required:
+The reviewed repository wrapper is the supported installation path. It uses
+native Codex commands internally, then materializes and verifies the installed
+Desktop launch contract:
 
 ```bash
-codex plugin marketplace add Neil0619/adaptive-model-router --ref stable
-codex plugin add adaptive-model-router@adaptive-model-router
+git clone --branch stable --single-branch https://github.com/Neil0619/adaptive-model-router.git
+cd adaptive-model-router
+./install.sh
 ```
+
+```powershell
+git clone --branch stable --single-branch https://github.com/Neil0619/adaptive-model-router.git
+Set-Location adaptive-model-router
+.\install.ps1
+```
+
+Raw `codex plugin add` writes the portable source placeholder `node` into the
+host cache. It is a cold registration operation, not a complete Desktop-safe
+installation for this plugin. If it was used for development or recovery, run
+`./install.sh repair` or `.\install.ps1 -Action Repair` immediately. Repair
+does not change marketplace identity or re-register the plugin; it materializes
+the current installation, restores the running Desktop compatibility shim, and
+verifies MCP, Hooks, and the old-task bridge.
 
 After installation, start a new task. Open `/hooks`, review the plugin-bundled
 `SubagentStart`, `UserPromptSubmit`, and `Stop` command handlers, and trust
@@ -35,7 +52,7 @@ router: global on
 
 Installing or upgrading the plugin never enables this setting silently.
 
-Optional local wrappers provide preflight checks and legacy-install detection:
+The wrapper also provides explicit AGENTS patching when requested:
 
 ```bash
 ./install.sh
@@ -59,6 +76,17 @@ If a legacy `adaptive-local` installation is present, an interactive wrapper ask
 
 ```powershell
 .\install.ps1 -Action Upgrade
+```
+
+To repair a healthy registration that was created by raw `plugin add`, or
+whose Desktop runtime directory was replaced by a Codex update:
+
+```bash
+./install.sh repair
+```
+
+```powershell
+.\install.ps1 -Action Repair
 ```
 
 ```bash

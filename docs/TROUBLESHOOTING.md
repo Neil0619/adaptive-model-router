@@ -49,11 +49,35 @@ files, or Codex credentials into a public issue.
    once; later compatible upgrades inherit the same invariant and fail rather
    than reporting a false success.
 
+   If raw `codex plugin add` was run after the last managed install, or a Codex
+   update replaced the Desktop runtime directory that held the compatibility
+   shim, repair the healthy registration in place:
+
+   ```bash
+   ./install.sh repair
+   ```
+
+   ```powershell
+   .\install.ps1 -Action Repair
+   ```
+
+   Repair performs no marketplace mutation and no plugin re-registration. It
+   recreates the current-process shim, rewrites every compatible installed MCP
+   and active-platform Hook launch field to the qualifying absolute Node path,
+   and verifies those exact commands with an empty `PATH`. Those materialized
+   commands remain valid after a later host-runtime replacement even though the
+   temporary shim is host-directory scoped.
+
    For already-loaded bare Hook commands, the installer must also print the
    owned Desktop shim path and prove that exact shim under Desktop's reduced
    `PATH`. An unresolved platform location, an existing unowned shim, or a
    failed probe is a failed continuity repair. Do not interpret a skipped shim
    as successful in-place recovery.
+
+   `codex mcp list` proves only that a registration exists; it does not prove
+   that Desktop successfully spawned the stdio process or completed the MCP
+   handshake. Use the repair probes or an actual Router tool call as liveness
+   evidence.
 
    Hook trust is recorded against the exact definition hash. The one-time
    repair changes that definition, so review and trust the repaired Hooks once.
@@ -237,9 +261,10 @@ release.
 
 ## PowerShell cannot run `install.ps1`
 
-The primary installation path uses native `codex plugin` commands and does not
-require the wrapper. If a reviewed local copy of `install.ps1` downloaded as an
-archive is blocked, inspect it first and remove only that file's download mark:
+The supported installation path uses the reviewed repository wrapper so the
+portable launch placeholders are materialized after native Codex registration.
+If a reviewed local copy of `install.ps1` downloaded as an archive is blocked,
+inspect it first and remove only that file's download mark:
 
 ```powershell
 Unblock-File .\install.ps1

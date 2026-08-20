@@ -14,12 +14,26 @@ Codex Desktop 的 `PATH` 可能比交互式终端更精简。安装器会把合�
 
 如果任务是在 MCP 启动故障期间创建的，其原生函数清单可能已经冻结。兼容升级会让该任务通过已验证的一次性 stdio bridge 调用同一个已安装 MCP `tools/call`，无需重启 Desktop，也无需新建替代任务。
 
-原生 Codex 命令是主安装路径，无需执行远程脚本：
+受审阅的仓库包装脚本是受支持的安装路径。它在内部使用原生 Codex 命令，并继续物化、
+验证真实的 Desktop 启动契约：
 
 ```bash
-codex plugin marketplace add Neil0619/adaptive-model-router --ref stable
-codex plugin add adaptive-model-router@adaptive-model-router
+git clone --branch stable --single-branch https://github.com/Neil0619/adaptive-model-router.git
+cd adaptive-model-router
+./install.sh
 ```
+
+```powershell
+git clone --branch stable --single-branch https://github.com/Neil0619/adaptive-model-router.git
+Set-Location adaptive-model-router
+.\install.ps1
+```
+
+直接执行 `codex plugin add` 会把源码中的可移植占位命令 `node` 写入宿主缓存。它只是
+冷注册操作，不是本插件完整的 Desktop 安全安装。若开发或恢复时执行过该命令，必须
+立即运行 `./install.sh repair` 或 `.\install.ps1 -Action Repair`。repair 不改变
+marketplace 身份，也不重新注册插件；它会物化当前安装、恢复正在运行的 Desktop
+兼容 shim，并验证 MCP、Hooks 与旧任务 bridge。
 
 安装后请启动一个新任务，打开 `/hooks`，分别审阅并信任插件提供的
 `SubagentStart`、`UserPromptSubmit` 和 `Stop` 命令处理器。如果 ChatGPT
@@ -34,7 +48,7 @@ codex plugin add adaptive-model-router@adaptive-model-router
 
 安装或升级不会静默替你打开这个设置。
 
-仓库内也提供带环境检查、旧版检测和明确错误码的包装脚本：
+包装脚本还支持在明确请求时写入 AGENTS 规则：
 
 ```bash
 ./install.sh
@@ -58,6 +72,17 @@ codex plugin add adaptive-model-router@adaptive-model-router
 
 ```powershell
 .\install.ps1 -Action Upgrade
+```
+
+如果健康注册由裸 `plugin add` 创建，或 Codex 更新替换了 Desktop runtime 目录，可
+执行原地修复：
+
+```bash
+./install.sh repair
+```
+
+```powershell
+.\install.ps1 -Action Repair
 ```
 
 ```bash

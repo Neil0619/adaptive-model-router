@@ -947,6 +947,120 @@ test("a compatible upgrade materializes an absolute Node command that starts und
   }
 });
 
+test("repair recovers a direct-add bare launch contract and survives a later Desktop runtime replacement", async () => {
+  const project = await temporaryProject("adaptive installer direct add repair ");
+  try {
+    const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+    const directAddRoot = join(versionsRoot, "0.4.0+codex.20260812000000");
+    const stagedRoot = join(versionsRoot, runtimeVersion);
+    await writePluginFixture(directAddRoot, "0.4.0+codex.20260812000000");
+    const installedEntry = {
+      pluginId: "adaptive-model-router@adaptive-model-router",
+      name: "adaptive-model-router",
+      marketplaceName: "adaptive-model-router",
+      source: { source: "local", path: directAddRoot },
+    };
+    const fake = await fakeCodex(project, {
+      pluginInstallRoot: directAddRoot,
+      marketplaces: [{
+        name: "adaptive-model-router",
+        marketplaceSource: {
+          sourceType: "git",
+          source: "https://github.com/Neil0619/adaptive-model-router.git",
+          ref: "stable",
+        },
+      }],
+      installed: [installedEntry],
+      available: [installedEntry],
+    });
+    await writePluginFixture(directAddRoot, "0.4.0+codex.20260812000000");
+    const initialMcp = JSON.parse(await readFile(join(directAddRoot, ".mcp.json"), "utf8"))
+      .mcpServers["adaptive-model-router"];
+    assert.equal(initialMcp.command, "node", "fixture must model a raw codex plugin add");
+
+    const desktopOverrideDir = join(project.root, "replaced Desktop runtime", "dependencies", "bin", "override");
+    await mkdir(desktopOverrideDir, { recursive: true });
+    const repair = runManager(
+      project,
+      fake,
+      ["repair", "--non-interactive"],
+      { desktopOverrideDir },
+    );
+    assert.equal(repair.status, 0, repair.stderr);
+    assert.match(repair.stdout, /repaired without plugin re-registration/i);
+    assert.deepEqual((await state(fake)).mutations, []);
+
+    const bridgeName = process.platform === "win32" ? "node.cmd" : "node";
+    await access(join(desktopOverrideDir, bridgeName));
+    await rm(join(desktopOverrideDir, bridgeName), { force: true });
+
+    for (const root of [directAddRoot, stagedRoot]) {
+      const mcp = JSON.parse(await readFile(join(root, ".mcp.json"), "utf8"))
+        .mcpServers["adaptive-model-router"];
+      assert.equal(mcp.command, process.execPath);
+      const input = [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-06-18" },
+        }),
+        JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+      ].join("\n");
+      const launch = spawnSync(mcp.command, mcp.args, {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, PATH: "", ADAPTIVE_ROUTER_NODE: process.execPath },
+        input: `${input}\n`,
+        timeout: 15_000,
+        windowsHide: true,
+      });
+      assert.equal(launch.status, 0, launch.stderr);
+      const responses = launch.stdout.trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+      const names = responses.find((entry) => entry?.id === 2)?.result?.tools?.map((tool) => tool.name);
+      assert.ok(names.includes("route_stage"));
+      assert.ok(names.includes("record_outcome"));
+    }
+
+    const hooks = JSON.parse(await readFile(join(directAddRoot, "hooks", "hooks.json"), "utf8"));
+    const promptHook = hooks.hooks.UserPromptSubmit[0].hooks[0];
+    const hookCommand = process.platform === "win32" ? promptHook.commandWindows : promptHook.command;
+    assert.ok(hookCommand.includes(process.execPath));
+    const pluginData = join(project.root, "repair plugin data");
+    await mkdir(pluginData, { recursive: true });
+    const hookShell = process.platform === "win32"
+      ? {
+          executable: process.env.ComSpec || join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe"),
+          args: ["/d", "/s", "/c", `"${hookCommand}"`],
+          windowsVerbatimArguments: true,
+        }
+      : { executable: "/bin/sh", args: ["-c", hookCommand], windowsVerbatimArguments: false };
+    const hookLaunch = spawnSync(hookShell.executable, hookShell.args, {
+      cwd: project.root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: "",
+        PLUGIN_ROOT: directAddRoot,
+        PLUGIN_DATA: pluginData,
+        ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
+      },
+      input: JSON.stringify({
+        cwd: project.root,
+        session_id: "runtime-replacement-repair",
+        model: "gpt-5.6-sol",
+        prompt: "router: global on",
+      }),
+      timeout: 15_000,
+      windowsHide: true,
+      windowsVerbatimArguments: hookShell.windowsVerbatimArguments,
+    });
+    assert.equal(hookLaunch.status, 0, hookLaunch.stderr);
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("hot upgrade discovers the Desktop override directory from PATH without a macOS app executable", async () => {
   const project = await temporaryProject("adaptive installer PATH discovery ");
   try {
