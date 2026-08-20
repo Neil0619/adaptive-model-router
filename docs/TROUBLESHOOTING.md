@@ -98,10 +98,13 @@ files, or Codex credentials into a public issue.
    disguised as a `route_stage` `continue` result.
 
    Starting `stdio-tool.mjs` as a one-shot command without an stdin payload
-   never calls Router. With Codex command tools, start it using `tty: true`,
-   require the returned `session_id`, and immediately send the one-line JSON
-   plus newline with `write_stdin`. An error saying "timed out before receiving
-   JSON" is a caller input-delivery failure; retry that sequence exactly once.
+   never calls Router. With a one-shot POSIX command tool, include the one-line
+   JSON in the same command through a quoted literal here-document; with
+   PowerShell, pipe a literal here-string to the helper. This path does not need
+   a PTY, session ID, or a second `write_stdin` call. Use the writable-session
+   sequence only when the host actually returns such a session. An error saying
+   "timed out before receiving JSON" is a caller input-delivery failure; retry
+   once with the atomic literal-input form instead of repeating the bare launch.
    It is distinct from `stdio bridge timed out`, which means the request was
    received but the internal MCP call did not finish.
 

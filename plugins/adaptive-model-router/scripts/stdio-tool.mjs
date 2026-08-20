@@ -53,7 +53,7 @@ function readRequest() {
       finish(() => {
         process.stdin.destroy();
         reject(new Error(
-          "stdio bridge timed out before receiving JSON; caller must start a writable command session and send one JSON line",
+          "stdio bridge timed out before receiving JSON; caller must provide one JSON line in the same command or through a confirmed writable session",
         ));
       });
     }, INPUT_TIMEOUT_MS);

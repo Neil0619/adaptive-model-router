@@ -140,7 +140,8 @@ test("stdio bridge fails explicitly when an open stdin never supplies a request"
   });
   assert.equal(result.code, 1);
   assert.match(result.stderr, /timed out before receiving JSON/i);
-  assert.match(result.stderr, /writable command session/i);
+  assert.match(result.stderr, /same command/i);
+  assert.match(result.stderr, /confirmed writable session/i);
 });
 
 test("frozen-inventory instructions make bridge input delivery and one corrective retry explicit", async () => {
@@ -151,8 +152,53 @@ test("frozen-inventory instructions make bridge input delivery and one correctiv
   assert.match(skill, /`tty:\s*true`/i);
   assert.match(skill, /returned `session_id`/i);
   assert.match(skill, /call\s+`write_stdin`/i);
-  assert.match(skill, /retry exactly once/i);
+  assert.match(skill, /retry exactly\s+once/i);
   assert.match(skill, /caller input-delivery failure, not an MCP transport failure/i);
+  assert.match(skill, /do not repeat a bare helper\s+launch/i);
+});
+
+test("frozen-inventory instructions provide an atomic bridge call for one-shot command tools", async () => {
+  const skill = await readFile(
+    join(pluginRoot, "skills", "adaptive-model-router", "SKILL.md"),
+    "utf8",
+  );
+  assert.match(skill, /<<'ADAPTIVE_ROUTER_REQUEST'/u);
+  assert.match(skill, /single command execution/i);
+  assert.match(skill, /does not require[^.]*`session_id`[^.]*`write_stdin`/i);
+  assert.match(skill, /PowerShell\s+here-string/i);
+});
+
+test("POSIX one-shot command execution delivers a literal bridge request atomically", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("POSIX shell regression");
+    return;
+  }
+  const home = await mkdtemp(join(tmpdir(), "adaptive-router-stdio-atomic-test-"));
+  try {
+    const request = JSON.stringify({
+      name: "get_route_status",
+      arguments: { contextId: "one-shot-command-test" },
+    });
+    const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(bridge)} <<'ADAPTIVE_ROUTER_REQUEST'\n${request}\nADAPTIVE_ROUTER_REQUEST`;
+    const result = spawnSync("/bin/zsh", ["-lc", command], {
+      cwd: pluginRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ADAPTIVE_ROUTER_HOME: home,
+        ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
+      },
+      timeout: 20_000,
+      windowsHide: true,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.transport, "stdio-bridge");
+    assert.equal(output.tool, "get_route_status");
+    assert.equal(output.isError, false);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
 test("source-checkout bridge shares the installed plugin data directory with Hooks and MCP", async () => {

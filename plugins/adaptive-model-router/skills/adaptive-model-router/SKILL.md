@@ -33,17 +33,34 @@ one JSON document on stdin with this shape and exits after one call:
 {"name":"route_stage","arguments":{"goal":"...","phase":"...","evidence":{},"contextId":"hook-injected-id"}}
 ```
 
-Start the helper only as a writable command session. When the host exposes
-`exec_command` and `write_stdin`, call `exec_command` with `tty: true` and a
+Prefer one atomic invocation that supplies the request inside the same command
+execution. On POSIX shells, use a literal here-document; replace both paths and
+the JSON values, but keep the quoted delimiter exactly as shown:
+
+```sh
+<exact-command> <plugin-root>/scripts/stdio-tool.mjs <<'ADAPTIVE_ROUTER_REQUEST'
+{"name":"route_stage","arguments":{"goal":"...","phase":"...","evidence":{},"contextId":"hook-injected-id"}}
+ADAPTIVE_ROUTER_REQUEST
+```
+
+This is a single command execution and does not require a `session_id` or
+`write_stdin`. The quoted delimiter prevents the JSON from being interpreted by
+the shell. On PowerShell, use the equivalent single-command PowerShell
+here-string piped to the exact command and helper path. Never launch the helper
+as a one-shot command with no input payload and wait for it to exit; that does
+not call Router at all.
+
+Only when literal input cannot be embedded in the command and the host actually
+returns writable command sessions, call `exec_command` with `tty: true` and a
 short yield, require its returned `session_id`, then immediately call
 `write_stdin` for that session with the JSON as one line followed by a newline.
-Never launch the helper as a one-shot command with no stdin payload and wait for
-it to exit; that does not call Router at all. The helper processes the first
-line and exits without requiring the session input stream to be closed.
+The helper processes the first line and exits without requiring the session
+input stream to be closed.
 
 If the helper reports that it "timed out before receiving JSON", classify that
-as a caller input-delivery failure, not an MCP transport failure. Retry exactly once
-using the required `tty: true` → returned `session_id` → `write_stdin` sequence.
+as a caller input-delivery failure, not an MCP transport failure. Retry exactly
+once with the atomic literal-input command above. Do not repeat a bare helper
+launch or assume a command is writable merely because it stayed alive.
 Do not apply this corrective retry to an internal `stdio bridge timed out`
 failure after a request was received. The bridge invokes the installed MCP
 `tools/call`; treat a response with

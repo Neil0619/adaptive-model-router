@@ -54,11 +54,15 @@ cannot be the durable installation invariant.
 A follow-up old-task failure had a different cause: the task launched
 `stdio-tool.mjs` as a one-shot shell command and never sent its JSON request.
 The helper's input timeout fired correctly, but the caller mislabeled that as a
-Router transport timeout and failed open. The Skill now specifies the exact
-writable-session sequence (`tty: true`, returned `session_id`, then
-`write_stdin`), permits one corrective retry for an unsent request, and the
-helper emits an input-specific diagnostic distinct from an internal MCP
-timeout.
+Router transport timeout and failed open. The first correction documented an
+exact writable-session sequence (`tty: true`, returned `session_id`, then
+`write_stdin`), but the same Desktop task exposed only one-shot command
+executions and repeated the bare helper twice. That instruction assumed a
+two-tool interaction the frozen task did not actually have. The Skill now uses
+one atomic literal-input command as the primary path, keeps writable sessions
+only as a confirmed fallback, permits one corrective retry that changes the
+failed invocation, and the helper emits an input-specific diagnostic distinct
+from an internal MCP timeout.
 
 ## Corrective and preventive controls
 
