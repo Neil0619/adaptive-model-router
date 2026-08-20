@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -139,7 +139,20 @@ test("stdio bridge fails explicitly when an open stdin never supplies a request"
     });
   });
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /request timed out/i);
+  assert.match(result.stderr, /timed out before receiving JSON/i);
+  assert.match(result.stderr, /writable command session/i);
+});
+
+test("frozen-inventory instructions make bridge input delivery and one corrective retry explicit", async () => {
+  const skill = await readFile(
+    join(pluginRoot, "skills", "adaptive-model-router", "SKILL.md"),
+    "utf8",
+  );
+  assert.match(skill, /`tty:\s*true`/i);
+  assert.match(skill, /returned `session_id`/i);
+  assert.match(skill, /call\s+`write_stdin`/i);
+  assert.match(skill, /retry exactly once/i);
+  assert.match(skill, /caller input-delivery failure, not an MCP transport failure/i);
 });
 
 test("source-checkout bridge shares the installed plugin data directory with Hooks and MCP", async () => {

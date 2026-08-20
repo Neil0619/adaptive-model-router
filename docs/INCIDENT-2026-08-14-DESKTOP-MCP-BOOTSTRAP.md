@@ -51,6 +51,15 @@ liveness. The missed boundary was ownership: a compatibility file placed in a
 host-owned replaceable runtime tree can support the current process, but it
 cannot be the durable installation invariant.
 
+A follow-up old-task failure had a different cause: the task launched
+`stdio-tool.mjs` as a one-shot shell command and never sent its JSON request.
+The helper's input timeout fired correctly, but the caller mislabeled that as a
+Router transport timeout and failed open. The Skill now specifies the exact
+writable-session sequence (`tty: true`, returned `session_id`, then
+`write_stdin`), permits one corrective retry for an unsent request, and the
+helper emits an input-specific diagnostic distinct from an internal MCP
+timeout.
+
 ## Corrective and preventive controls
 
 - First install rewrites bare MCP and active-platform Hook `node` commands to

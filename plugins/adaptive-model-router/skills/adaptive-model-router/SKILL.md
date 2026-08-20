@@ -33,9 +33,19 @@ one JSON document on stdin with this shape and exits after one call:
 {"name":"route_stage","arguments":{"goal":"...","phase":"...","evidence":{},"contextId":"hook-injected-id"}}
 ```
 
-Use the host's command-session input tool to send the JSON as one line followed
-by a newline. The helper processes that first line and exits without requiring
-the session input stream to be closed. The bridge invokes the installed MCP
+Start the helper only as a writable command session. When the host exposes
+`exec_command` and `write_stdin`, call `exec_command` with `tty: true` and a
+short yield, require its returned `session_id`, then immediately call
+`write_stdin` for that session with the JSON as one line followed by a newline.
+Never launch the helper as a one-shot command with no stdin payload and wait for
+it to exit; that does not call Router at all. The helper processes the first
+line and exits without requiring the session input stream to be closed.
+
+If the helper reports that it "timed out before receiving JSON", classify that
+as a caller input-delivery failure, not an MCP transport failure. Retry exactly once
+using the required `tty: true` → returned `session_id` → `write_stdin` sequence.
+Do not apply this corrective retry to an internal `stdio bridge timed out`
+failure after a request was received. The bridge invokes the installed MCP
 `tools/call`; treat a response with
 `transport="stdio-bridge"` and `isError=false` exactly like the corresponding
 native tool result. Use the same bridge for `record_outcome` and approved

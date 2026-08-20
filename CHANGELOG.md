@@ -14,7 +14,9 @@ All notable changes to this project are documented here.
   complete Desktop-safe installation.
 - The one-call stdio bridge now exits with an explicit request timeout when a
   caller opens stdin but never supplies its JSON request, instead of leaving a
-  task waiting indefinitely.
+  task waiting indefinitely. Frozen-inventory instructions now require a
+  writable PTY session followed immediately by `write_stdin`, distinguish an
+  unsent request from an internal MCP timeout, and permit one corrective retry.
 - Already-created tasks whose Router function inventory was frozen while MCP
   startup was broken now use a one-call installed stdio bridge for approved
   lifecycle and inspection tools. The bridge invokes the same MCP

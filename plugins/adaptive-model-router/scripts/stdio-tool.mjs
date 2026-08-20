@@ -52,7 +52,9 @@ function readRequest() {
     timer = setTimeout(() => {
       finish(() => {
         process.stdin.destroy();
-        reject(new Error("stdio bridge request timed out"));
+        reject(new Error(
+          "stdio bridge timed out before receiving JSON; caller must start a writable command session and send one JSON line",
+        ));
       });
     }, INPUT_TIMEOUT_MS);
     process.stdin.setEncoding("utf8");

@@ -97,6 +97,14 @@ files, or Codex credentials into a public issue.
    data directory. A transport failure is reported as a bridge failure, never
    disguised as a `route_stage` `continue` result.
 
+   Starting `stdio-tool.mjs` as a one-shot command without an stdin payload
+   never calls Router. With Codex command tools, start it using `tty: true`,
+   require the returned `session_id`, and immediately send the one-line JSON
+   plus newline with `write_stdin`. An error saying "timed out before receiving
+   JSON" is a caller input-delivery failure; retry that sequence exactly once.
+   It is distinct from `stdio bridge timed out`, which means the request was
+   received but the internal MCP call did not finish.
+
 4. After trusting the current Hooks, a cold first install with
    `--verify-task-tools` or `-VerifyTaskTools` uses one disposable Codex CLI task
    and fails unless `diagnose_router` and `route_stage` both complete. A
