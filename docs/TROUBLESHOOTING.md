@@ -161,9 +161,15 @@ remain on the default protected `stable` branch.
 ## Hooks are installed but do not run
 
 Plugin installation does not automatically trust command hooks. In Codex, open
-`/hooks`, review the installed definitions, and trust the `SubagentStart`,
-`UserPromptSubmit`, and `Stop` handlers. Trust is tied to the definition hash,
-so changed hooks require review again.
+`/hooks`, review the installed definitions, and trust all four handlers:
+`SessionStart(source=compact)`, `SubagentStart`, `UserPromptSubmit`, and `Stop`.
+Trust is tied to the definition hash, so changed hooks require review again.
+
+If a task reports that no trusted `contextId` is available after compaction,
+run `node scripts/codex-route.mjs hook-doctor` from the installed plugin root.
+`HOOK_DISPATCH_NOT_OBSERVED` means no Router identity Hook has recorded a run;
+`HOOK_DISPATCHED_MISSING_SESSION_ID` means the Hook ran but Codex supplied no
+stable `session_id`. The report never contains the raw session or turn ID.
 
 Do not use `--dangerously-bypass-hook-trust` for normal installation or smoke
 testing. Also check that hooks have not been disabled by local or managed Codex
@@ -190,7 +196,7 @@ may still continue in the root task by design.
 
 This indicates that an old hook treated the child's model as a new root model
 and recursively injected automatic routing. Upgrade to the current v0.4
-candidate, review all three changed hook definitions, and start a fresh task.
+candidate, review all four changed hook definitions, and start a fresh task.
 In the fixed version, `SubagentStart` and subagent-marked prompt hooks tell the
 child to execute only its assigned scope. The child must not call
 `route_stage`, change model-intent state, or own `record_outcome`; the root

@@ -14,8 +14,9 @@ Include the affected version, operating system, Codex surface, minimal reproduct
 
 Plugin hooks are local commands and Codex requires the user to review and trust
 their exact definitions. Use `/hooks` to inspect the plugin-bundled
-`UserPromptSubmit` and `Stop` handlers. Changed definitions require review
-again because trust is tied to the current hook hash.
+`SessionStart(source=compact)`, `SubagentStart`, `UserPromptSubmit`, and `Stop`
+handlers. Changed definitions require review again because trust is tied to the
+current hook hash.
 
 Do not use `--dangerously-bypass-hook-trust` for normal use or release smoke
 testing. This project does not ask users to pipe a remote script into a shell;

@@ -6,6 +6,15 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Restore trusted task routing context inside the same turn after Codex
+  compaction through `SessionStart(source=compact)`. Stable identity now accepts
+  only non-empty host `session_id`; missing identity is diagnosed with a
+  bounded, redacted Hook doctor record, and installer repair migrates the
+  deprecated `features.codex_hooks` key to `features.hooks`.
+- Preserve old-task shells across later Hook or Skill host-surface changes.
+  Repair restores each indexed historical shell to its original immutable
+  cache path and validates its own supported Hook set, while the current
+  version still fails closed unless it matches the complete current surface.
 - A new non-registering `repair` action recovers healthy installations whose
   absolute Node launch fields were overwritten by raw `plugin add`, recreates
   the current Desktop shim after a host-runtime replacement, and proves that

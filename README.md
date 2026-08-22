@@ -39,9 +39,14 @@ the current installation, restores the running Desktop compatibility shim, and
 verifies MCP, Hooks, and the old-task bridge.
 
 After installation, start a new task. Open `/hooks`, review the plugin-bundled
-`SubagentStart`, `UserPromptSubmit`, and `Stop` command handlers, and trust
-their current definitions. If the ChatGPT desktop app still shows stale plugin
-state, restart the app and start another new task.
+`SessionStart(source=compact)`, `SubagentStart`, `UserPromptSubmit`, and `Stop`
+command handlers, and trust their current definitions. If the ChatGPT desktop
+app still shows stale plugin state, restart the app and start another new task.
+
+The Router accepts only Codex's non-empty `session_id` as the stable task
+identity; `turn_id` is never a fallback. The trusted compact-session handler
+restores the same routing context before the immediate continuation after
+automatic or manual compaction.
 
 Automatic routing is opt-in. In that new task, send this standalone control
 once to enable it for all local Codex projects sharing the same plugin data:
@@ -132,9 +137,11 @@ not a hot-upgrade primitive.
 
 The vault contains only validated copies of the plugin package plus an index of
 runtime directory names. It is outside Codex's host-managed cache, never stores
-prompts or project data, and is not an alternate executable source: restored
-trees must pass the current runtime, host-surface, symlink, and compatibility
-checks before an atomic directory rename. An invalid index or entry fails the
+prompts or project data, and is not an alternate executable source. A restored
+historical tree must match its own indexed host surface and the current shared
+runtime/storage compatibility contracts before an atomic directory rename; the
+current version must additionally match the complete current source surface.
+An invalid index, unsupported historical Hook set, or damaged entry fails the
 upgrade closed.
 
 The upgrade boundary is explicit:

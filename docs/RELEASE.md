@@ -91,7 +91,7 @@ npm run eval
 ```
 
 On native Windows, run the canonical orchestrator only after trusting the
-current candidate's three hooks in a dedicated, disposable Codex Home. The
+current candidate's four hooks in a dedicated, disposable Codex Home. The
 runner refuses the operator's default Codex Home:
 
 ```powershell
@@ -158,8 +158,8 @@ new Desktop task cannot substitute for it:
 
 1. Install from the frozen candidate ref with the two native Codex commands;
    published `stable` remains on v0.3.0 until all smoke evidence passes.
-2. Review and trust the plugin's `SubagentStart`, `UserPromptSubmit`, and
-   `Stop` handlers.
+2. Review and trust the plugin's `SessionStart(source=compact)`,
+   `SubagentStart`, `UserPromptSubmit`, and `Stop` handlers.
 3. Send `router: global on` once, restart into a new project/task, and confirm
    the setting persists without repeating the command.
 4. Submit an ordinary substantive task that does not name the skill or include

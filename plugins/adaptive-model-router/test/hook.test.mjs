@@ -296,6 +296,82 @@ test("global automatic activation is opt-in, crosses projects, and detects later
   }
 });
 
+test("SessionStart compact restores trusted routing context without replaying prompt controls", async () => {
+  const project = await temporaryProject("adaptive compact restore ");
+  try {
+    const base = {
+      cwd: project.root,
+      session_id: "compact-session",
+      model: "gpt-5.6-sol",
+    };
+    const enabled = runHook("prompt", {
+      ...base,
+      prompt: "router: global on",
+    }, project.home);
+    assert.equal(enabled.status, 0, enabled.stderr);
+
+    const compact = runHook("session-start", {
+      ...base,
+      hook_event_name: "SessionStart",
+      source: "compact",
+      prompt: "router: global off",
+      turn_id: "ephemeral-turn",
+    }, project.home);
+    assert.equal(compact.status, 0, compact.stderr);
+    const output = JSON.parse(compact.stdout).hookSpecificOutput;
+    assert.equal(output.hookEventName, "SessionStart");
+    assert.match(output.additionalContext, /global automatic activation is enabled/i);
+    assert.match(output.additionalContext, /Use "compact-session" as the contextId/);
+    assert.doesNotMatch(output.additionalContext, /already been applied atomically/i);
+
+    const after = runHook("prompt", {
+      ...base,
+      prompt: "Continue after compaction.",
+    }, project.home);
+    assert.match(after.stdout, /global automatic activation is enabled/i);
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("SessionStart compact never treats a bounded subagent marker as a root task", async () => {
+  const project = await temporaryProject("adaptive compact bounded ");
+  try {
+    const compact = runHook("session-start", {
+      cwd: project.root,
+      session_id: "parent-session",
+      model: "gpt-5.6-terra",
+      hook_event_name: "SessionStart",
+      source: "compact",
+      agent_id: "bounded-agent",
+    }, project.home);
+    assert.equal(compact.status, 0, compact.stderr);
+    const output = JSON.parse(compact.stdout).hookSpecificOutput;
+    assert.equal(output.hookEventName, "SessionStart");
+    assert.match(output.additionalContext, /already a bounded subagent/i);
+    assert.doesNotMatch(output.additionalContext, /Use "parent-session" as the contextId/);
+    assert.doesNotMatch(output.additionalContext, /global automatic activation/i);
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("turn_id never substitutes for a missing trusted session identity", async () => {
+  const project = await temporaryProject("adaptive missing identity ");
+  try {
+    const missing = runHook("prompt", {
+      cwd: project.root,
+      turn_id: "ephemeral-only",
+      prompt: "Implement the task.",
+    }, project.home);
+    assert.equal(missing.status, 0, missing.stderr);
+    assert.equal(missing.stdout, "");
+    assert.match(missing.stderr, /trusted session identity unavailable/i);
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("bounded subagent hooks never recurse into routing or mutate root-task state", async () => {
   const project = await temporaryProject("adaptive bounded subagent 隔离 ");
   try {

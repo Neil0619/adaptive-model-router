@@ -10,6 +10,7 @@ operations and diagnostics CLI, not a global command.
 flowchart LR
     Prompt["root UserPromptSubmit hook"] --> OptIn["global automatic opt-in"]
     Prompt --> Observe["observe root-model slug"]
+    Compact["SessionStart(source=compact)"] --> Root
     Observe --> Intent["automatic / pending / manual_root"]
     OptIn --> Root["Root Codex task"]
     Intent --> Root
@@ -72,8 +73,11 @@ flowchart LR
   snapshots, and manages approval-gated immutable policy revisions.
 - `scripts/hook.mjs` handles exact control prefixes, the global automatic
   opt-in, root-model observation, fixed model-visible context, visible
-  status/history reports, bounded-subagent isolation, and non-blocking Stop
-  fallback for missing outcomes.
+  status/history reports, post-compaction context recovery, bounded-subagent
+  isolation, and non-blocking Stop fallback for missing outcomes.
+- `scripts/lib/hook-identity.mjs` accepts only the host's non-empty stable
+  `session_id`; `scripts/lib/hook-diagnostics.mjs` records one privacy-safe
+  identity observation for Hook troubleshooting without persisting raw IDs.
 - `scripts/lib/presentation.mjs` formats user-visible reports while preserving
   the root-model versus bounded-target boundary.
 - `hooks/hooks.json` supplies separate POSIX and `commandWindows` launch commands.
@@ -86,7 +90,9 @@ flowchart LR
 2. When the global opt-in is enabled, the prompt hook observes the host-provided
    active model slug. The first valid value establishes a baseline. A later
    change creates one pending intent event for the task; no value or an invalid
-   value remains host-managed and does not imply manual intent.
+   value remains host-managed and does not imply manual intent. After root-task
+   compaction, `SessionStart(source=compact)` restores the same fixed context
+   before the next model request; it never substitutes the ephemeral `turn_id`.
 3. A `SubagentStart` hook and the subagent-marked `UserPromptSubmit` hook inject
    only a fixed bounded-execution instruction. They do not observe the child
    model as a root model, parse controls, alter root-task state, or recursively

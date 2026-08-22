@@ -41,7 +41,8 @@ const SOURCE_COMPATIBILITY = readCompatibilityDescriptor(PLUGIN_ROOT);
 const INSTALL_VERSION = SOURCE_MANIFEST.version;
 const REQUIRED_TASK_TOOLS = Object.freeze(["diagnose_router", "record_outcome", "route_stage"]);
 const LIVE_TASK_SMOKE_TOOLS = Object.freeze(["diagnose_router", "route_stage"]);
-const HOOK_EVENTS = Object.freeze(["SubagentStart", "UserPromptSubmit", "Stop"]);
+const LEGACY_HOOK_EVENTS = Object.freeze(["SubagentStart", "UserPromptSubmit", "Stop"]);
+const HOOK_EVENTS = Object.freeze(["SessionStart", "SubagentStart", "UserPromptSubmit", "Stop"]);
 const LIVE_BRIDGE_FILES = Object.freeze([
   "compatibility.json",
   "scripts/lib/plugin-data.mjs",
@@ -256,8 +257,24 @@ function quotedExecutable(executable) {
 function hookConfigAtRoot(root) {
   const path = join(root, "hooks", "hooks.json");
   const document = JSON.parse(readFileSync(path, "utf8"));
-  const handlers = HOOK_EVENTS.map((event) => {
-    const handler = document?.hooks?.[event]?.[0]?.hooks?.[0];
+  const configuredHooks = document?.hooks;
+  if (!configuredHooks || typeof configuredHooks !== "object" || Array.isArray(configuredHooks)) {
+    throw new Error("Router Hook configuration is invalid");
+  }
+  const configuredEvents = Object.keys(configuredHooks);
+  if (
+    configuredEvents.some((event) => !HOOK_EVENTS.includes(event)) ||
+    LEGACY_HOOK_EVENTS.some((event) => !configuredEvents.includes(event))
+  ) {
+    throw new Error("Router Hook event set is unsupported");
+  }
+  const manifest = JSON.parse(readFileSync(join(root, ".codex-plugin", "plugin.json"), "utf8"));
+  if (manifest?.version === INSTALL_VERSION && !configuredEvents.includes("SessionStart")) {
+    throw new Error("Current Router Hook configuration is missing SessionStart");
+  }
+  const events = HOOK_EVENTS.filter((event) => configuredEvents.includes(event));
+  const handlers = events.map((event) => {
+    const handler = configuredHooks[event]?.[0]?.hooks?.[0];
     if (
       !handler ||
       handler.type !== "command" ||
@@ -268,6 +285,9 @@ function hookConfigAtRoot(root) {
     }
     parsedCommandExecutable(handler.command);
     parsedCommandExecutable(handler.commandWindows);
+    if (event === "SessionStart" && configuredHooks.SessionStart[0].matcher !== "^compact$") {
+      throw new Error("Router SessionStart Hook must match only compact sessions");
+    }
     return { event, handler };
   });
   return { path, document, handlers };
@@ -728,7 +748,7 @@ function vaultRuntimeHealth(root, directory) {
       compareRuntimeVersions(health.version, INSTALL_VERSION) > 0 ||
       !sameRuntimeContract(health.descriptor, SOURCE_RUNTIME) ||
       !sameLiveCompatibility(health.compatibility, SOURCE_COMPATIBILITY) ||
-      !sameHostSurface(root)
+      (directory === INSTALL_VERSION && !sameHostSurface(root))
     ) {
       return null;
     }
@@ -822,6 +842,28 @@ function archiveRuntimeRoots(roots) {
     }
   }
   for (const root of [...new Set(roots.map((entry) => resolve(entry)))].sort()) {
+    const health = runtimeHealthAtRoot(root);
+    const archivedRoot = safeRuntimeDirectoryName(health?.version)
+      ? join(vaultRoot, health.version)
+      : null;
+    if (
+      health?.version !== INSTALL_VERSION &&
+      archivedRoot &&
+      indexed.has(health?.version) &&
+      vaultRuntimeHealth(archivedRoot, health.version)
+    ) {
+      try {
+        assertSafeRuntimeTree(root);
+        if (
+          basename(root) === health.version &&
+          sameRuntimeContract(health.descriptor, SOURCE_RUNTIME) &&
+          sameLiveCompatibility(health.compatibility, SOURCE_COMPATIBILITY) &&
+          sameHostSurface(root, archivedRoot)
+        ) {
+          continue;
+        }
+      } catch {}
+    }
     indexed.add(archiveRuntimeRoot(vaultRoot, root));
   }
   atomicWrite(join(vaultRoot, RUNTIME_VAULT_INDEX), `${JSON.stringify({
@@ -857,7 +899,7 @@ function restoreVaultedRuntimeRoot(vaultRoot, versionsRoot, versionsRootIdentity
         "RUNTIME_VAULT_RESTORE_FAILED",
       );
     }
-    if (vaultRuntimeHealth(target, directory)) return false;
+    if (vaultRuntimeHealth(target, directory) && sameHostSurface(target, source)) return false;
   }
   assertDirectoryIdentity(versionsRoot, versionsRootIdentity);
   const recoveryRoot = join(versionsRoot, ".adaptive-router-vault-restore");
@@ -896,7 +938,7 @@ function restoreVaultedRuntimeRoot(vaultRoot, versionsRoot, versionsRootIdentity
       stagedHealth?.version !== directory ||
       !sameRuntimeContract(stagedHealth.descriptor, SOURCE_RUNTIME) ||
       !sameLiveCompatibility(stagedHealth.compatibility, SOURCE_COMPATIBILITY) ||
-      !sameHostSurface(staged)
+      !sameHostSurface(staged, source)
     ) {
       throw new Error("restored runtime failed validation");
     }
@@ -1163,11 +1205,11 @@ function sameRuntimeContract(left, right) {
     left.storageContractVersion === right.storageContractVersion;
 }
 
-function sameHostSurface(installedRoot) {
+function sameHostSurface(installedRoot, referenceRoot = PLUGIN_ROOT) {
   try {
     return HOST_SURFACE_FILES.every((relative) =>
       normalizedHostSurface(installedRoot, relative)
-        .equals(normalizedHostSurface(PLUGIN_ROOT, relative)));
+        .equals(normalizedHostSurface(referenceRoot, relative)));
   } catch {
     return false;
   }
@@ -1720,6 +1762,44 @@ function codexHome() {
   return process.env.CODEX_HOME ? resolve(process.env.CODEX_HOME) : join(homedir(), ".codex");
 }
 
+function migrateHooksFeatureConfig(path = join(codexHome(), "config.toml")) {
+  if (!existsSync(path)) return false;
+  const original = readFileSync(path, "utf8");
+  const lines = original.split(/(?<=\n)/u);
+  let inFeatures = false;
+  let sectionHasHooks = false;
+  for (const line of lines) {
+    const section = /^\s*\[([^\]]+)\]\s*(?:#.*)?(?:\r?\n)?$/u.exec(line);
+    if (section) inFeatures = section[1].trim() === "features";
+    if (inFeatures && /^\s*hooks\s*=/u.test(line)) sectionHasHooks = true;
+  }
+  const hasDottedHooks = lines.some((line) => /^\s*features\.hooks\s*=/u.test(line));
+  inFeatures = false;
+  const migrated = [];
+  let changed = false;
+  for (const line of lines) {
+    const section = /^\s*\[([^\]]+)\]\s*(?:#.*)?(?:\r?\n)?$/u.exec(line);
+    if (section) inFeatures = section[1].trim() === "features";
+    if (inFeatures && /^\s*codex_hooks\s*=/u.test(line)) {
+      changed = true;
+      if (!sectionHasHooks) {
+        migrated.push(line.replace(/^(\s*)codex_hooks(?=\s*=)/u, "$1hooks"));
+        sectionHasHooks = true;
+      }
+      continue;
+    }
+    if (/^\s*features\.codex_hooks\s*=/u.test(line)) {
+      changed = true;
+      if (!hasDottedHooks) migrated.push(line.replace("features.codex_hooks", "features.hooks"));
+      continue;
+    }
+    migrated.push(line);
+  }
+  if (!changed) return false;
+  atomicWrite(path, migrated.join(""));
+  return true;
+}
+
 function agentsPath() {
   return join(codexHome(), "AGENTS.md");
 }
@@ -1947,6 +2027,9 @@ async function main() {
   preflight();
   const lifecycleLock = acquireInstallerLifecycleLock();
   try {
+    if (args.action !== "uninstall" && migrateHooksFeatureConfig()) {
+      process.stdout.write("Migrated deprecated features.codex_hooks to features.hooks; the configured value was preserved.\n");
+    }
     if (args.patchAgents || args.action === "uninstall") markerState();
     const state = loadState();
     if (args.action === "uninstall") uninstall(args, state);

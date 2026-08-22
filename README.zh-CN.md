@@ -36,8 +36,12 @@ marketplace 身份，也不重新注册插件；它会物化当前安装、恢�
 兼容 shim，并验证 MCP、Hooks 与旧任务 bridge。
 
 安装后请启动一个新任务，打开 `/hooks`，分别审阅并信任插件提供的
-`SubagentStart`、`UserPromptSubmit` 和 `Stop` 命令处理器。如果 ChatGPT
-桌面端仍显示旧的插件状态，请重启应用并再创建一个新任务。
+`SessionStart(source=compact)`、`SubagentStart`、`UserPromptSubmit` 和 `Stop`
+命令处理器。如果 ChatGPT 桌面端仍显示旧的插件状态，请重启应用并再创建一个新任务。
+
+Router 只接受 Codex 提供的非空 `session_id` 作为稳定任务身份，绝不使用
+`turn_id` 兜底。可信压缩会话处理器会在自动或手动压缩后、同一回合立即继续之前
+重新注入相同的路由上下文。
 
 自动路由需要明确开启。在这个新任务中单独发送一次以下命令，即可为共享同一插件
 数据的所有本地 Codex 项目开启默认自动路由：
@@ -110,9 +114,10 @@ codex plugin marketplace remove adaptive-model-router
 重新注册；直接执行 `plugin add` 属于冷安装/替换，不是热升级操作。
 
 vault 只保存经过验证的插件包副本和运行时目录名索引，位于宿主管理缓存之外；它不
-保存 prompt、项目数据或路由数据库，也不是可绕过校验的备用执行源。恢复前必须重新
-通过 runtime、host surface、符号链接和兼容契约检查，再以目录 rename 原子安装。
-索引或归档损坏时升级会 fail closed。
+保存 prompt、项目数据或路由数据库，也不是可绕过校验的备用执行源。历史壳恢复前
+必须匹配自身已索引的 host surface、受支持 Hook 集合和当前共享 runtime/storage
+兼容契约；当前版本还必须完整匹配当前源码表面，再以目录 rename 原子安装。索引、
+历史 Hook 集合或归档损坏时升级会 fail closed。
 
 v0.4.0 增加了稳定启动壳。安装后续兼容的 v0.4.x 或更高版本后，已经打开的任务会在
 下一次 Hook 或 MCP 调用时加载新实现，不需要更换根模型，也不必重新开任务。旧壳会先

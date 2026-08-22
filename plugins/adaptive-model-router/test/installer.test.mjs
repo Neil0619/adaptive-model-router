@@ -157,7 +157,7 @@ async function materializeFixtureCommands(root) {
 
   const hooksPath = join(root, "hooks", "hooks.json");
   const hooks = JSON.parse(await readFile(hooksPath, "utf8"));
-  for (const event of ["SubagentStart", "UserPromptSubmit", "Stop"]) {
+  for (const event of ["SessionStart", "SubagentStart", "UserPromptSubmit", "Stop"]) {
     const handler = hooks.hooks[event][0].hooks[0];
     for (const field of ["command", "commandWindows"]) {
       handler[field] = `"${process.execPath}"${handler[field].slice(handler[field].indexOf(" "))}`;
@@ -544,12 +544,19 @@ test("install, upgrade, optional AGENTS patch, and uninstall are idempotent in a
     await mkdir(codexHome, { recursive: true });
     const agents = join(codexHome, "AGENTS.md");
     await writeFile(agents, "User instructions.\n");
+    const config = join(codexHome, "config.toml");
+    await writeFile(config, "model = \"gpt-5.6-sol\"\n\n[features]\ncodex_hooks = true\nplugins = true\n");
 
     const installed = runManager(project, fake, ["install", "--non-interactive"]);
     assert.equal(installed.status, 0, installed.stderr);
     assert.match(installed.stdout, /frozen.*stdio bridge/i);
     assert.match(installed.stdout, /Compatible v0\.4\.x\+ runtime-only updates/);
     assert.match(installed.stdout, /upgrades preserve this setting/);
+    assert.match(installed.stdout, /Migrated deprecated features\.codex_hooks/);
+    assert.equal(
+      await readFile(config, "utf8"),
+      "model = \"gpt-5.6-sol\"\n\n[features]\nhooks = true\nplugins = true\n",
+    );
     assert.equal(await readFile(agents, "utf8"), "User instructions.\n");
     assert.equal((await state(fake)).installed.length, 1);
 
@@ -1627,6 +1634,90 @@ test("cold installation archives its verified runtime in stable plugin data", as
       JSON.parse(await readFile(join(vault, runtimeVersion, "runtime.json"), "utf8")).runtimeVersion,
       runtimeVersion,
     );
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("repair restores an indexed historical shell across a later host-surface change", async () => {
+  const project = await temporaryProject("adaptive installer historical host surface restore ");
+  try {
+    const fake = await fakeCodex(project);
+    const installed = runManager(project, fake, ["install", "--non-interactive"]);
+    assert.equal(installed.status, 0, installed.stderr);
+
+    const vault = runtimeVault(installed.codexHome);
+    const currentRoot = (await state(fake)).pluginInstallRoot;
+    const versionsRoot = dirname(currentRoot);
+    const oldVersion = "0.4.0+codex.20260812000000";
+    const oldRoot = join(versionsRoot, oldVersion);
+    const oldArchive = join(vault, oldVersion);
+    await cp(join(vault, runtimeVersion), oldArchive, { recursive: true });
+
+    const oldManifestPath = join(oldArchive, ".codex-plugin", "plugin.json");
+    const oldManifest = JSON.parse(await readFile(oldManifestPath, "utf8"));
+    oldManifest.version = oldVersion;
+    await writeFile(oldManifestPath, JSON.stringify(oldManifest));
+    const oldRuntimePath = join(oldArchive, "runtime.json");
+    const oldRuntime = JSON.parse(await readFile(oldRuntimePath, "utf8"));
+    oldRuntime.runtimeVersion = oldVersion;
+    await writeFile(oldRuntimePath, JSON.stringify(oldRuntime));
+    const oldHooksPath = join(oldArchive, "hooks", "hooks.json");
+    const oldHooks = JSON.parse(await readFile(oldHooksPath, "utf8"));
+    delete oldHooks.hooks.SessionStart;
+    const archivedHooks = `${JSON.stringify(oldHooks, null, 2)}\n`;
+    await writeFile(oldHooksPath, archivedHooks);
+    await writeFile(join(vault, "index.json"), `${JSON.stringify({
+      schemaVersion: 1,
+      directories: [oldVersion, runtimeVersion].sort(),
+    })}\n`);
+    await rm(oldRoot, { recursive: true, force: true });
+
+    const repaired = runManager(project, fake, ["repair", "--non-interactive"]);
+    assert.equal(repaired.status, 0, repaired.stderr);
+    assert.match(repaired.stdout, /Restored 1 compatible historical Router runtime shell/iu);
+    assert.equal(await readFile(join(oldRoot, "hooks", "hooks.json"), "utf8"), archivedHooks);
+    assert.equal(
+      JSON.parse(await readFile(join(oldRoot, "runtime.json"), "utf8")).runtimeVersion,
+      oldVersion,
+    );
+    assert.equal(
+      JSON.parse(await readFile(join(currentRoot, "runtime.json"), "utf8")).runtimeVersion,
+      runtimeVersion,
+    );
+    assert.deepEqual((await state(fake)).mutations.map((args) => args.join(" ")), [
+      "plugin marketplace add Neil0619/adaptive-model-router --ref stable",
+      "plugin add adaptive-model-router@adaptive-model-router",
+    ]);
+
+    const currentArchiveHooksPath = join(vault, runtimeVersion, "hooks", "hooks.json");
+    const currentArchiveHooks = JSON.parse(await readFile(currentArchiveHooksPath, "utf8"));
+    currentArchiveHooks.untrustedCurrentSurface = true;
+    await writeFile(currentArchiveHooksPath, JSON.stringify(currentArchiveHooks));
+    const rejected = runManager(project, fake, ["repair", "--non-interactive"]);
+    assert.equal(rejected.status, 5);
+    assert.match(rejected.stderr, /RUNTIME_VAULT_DAMAGED/iu);
+    assert.equal(
+      JSON.parse(await readFile(join(currentRoot, "runtime.json"), "utf8")).runtimeVersion,
+      runtimeVersion,
+    );
+
+    await writeFile(currentArchiveHooksPath, JSON.stringify(currentArchiveHooks));
+    await rm(oldRoot, { recursive: true, force: true });
+    const unknownEventHooks = structuredClone(oldHooks);
+    unknownEventHooks.hooks.FutureEvent = unknownEventHooks.hooks.Stop;
+    await writeFile(oldHooksPath, JSON.stringify(unknownEventHooks));
+    const unknownEvent = runManager(project, fake, ["repair", "--non-interactive"]);
+    assert.equal(unknownEvent.status, 5);
+    assert.match(unknownEvent.stderr, /RUNTIME_VAULT_RESTORE_FAILED/iu);
+
+    await rm(oldRoot, { recursive: true, force: true });
+    const missingBaseEventHooks = structuredClone(oldHooks);
+    delete missingBaseEventHooks.hooks.Stop;
+    await writeFile(oldHooksPath, JSON.stringify(missingBaseEventHooks));
+    const missingBaseEvent = runManager(project, fake, ["repair", "--non-interactive"]);
+    assert.equal(missingBaseEvent.status, 5);
+    assert.match(missingBaseEvent.stderr, /RUNTIME_VAULT_RESTORE_FAILED/iu);
   } finally {
     await project.cleanup();
   }

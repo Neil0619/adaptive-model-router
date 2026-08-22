@@ -248,6 +248,26 @@ test("an existing MCP process and hook shell activate a compatible installed run
     assert.equal(hook.status, 0, hook.stderr);
     assert.match(hook.stderr, /runtime-0\.4\.1/);
 
+    const compactHook = spawnSync(process.execPath, [launcher, oldHook, "session-start"], {
+      cwd: project.root,
+      env,
+      input: JSON.stringify({
+        cwd: project.root,
+        session_id: "hot-hook",
+        model: "gpt-5.6-sol",
+        hook_event_name: "SessionStart",
+        source: "compact",
+      }),
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 15_000,
+    });
+    assert.equal(compactHook.status, 0, compactHook.stderr);
+    assert.match(compactHook.stderr, /runtime-0\.4\.1/);
+    const compactOutput = JSON.parse(compactHook.stdout).hookSpecificOutput;
+    assert.equal(compactOutput.hookEventName, "SessionStart");
+    assert.match(compactOutput.additionalContext, /Use "hot-hook" as the contextId/);
+
     await createRuntime(version042, "0.4.2", { brokenProbe: true });
     const rolledBackHook = spawnSync(process.execPath, [launcher, oldHook, "prompt"], {
       cwd: project.root,

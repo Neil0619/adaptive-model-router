@@ -24,6 +24,12 @@ bridge has also been tried.
 
 The bridge is allowed only when a trusted Router Hook injected the exact fixed
 `contextId` for the current task. Never invent, derive, or replace that value.
+The stable identity is the host-provided non-empty `session_id`; `turn_id` is
+ephemeral audit metadata and must never be used as a fallback. After root-task
+compaction, the trusted `SessionStart(source=compact)` Hook re-injects the same
+task context before the immediate continuation. If it is absent, run
+`node scripts/codex-route.mjs hook-doctor` from the installed plugin root to
+distinguish an undispatched Hook from a dispatched Hook missing `session_id`.
 Resolve `<plugin-root>` as the directory containing this skill's `skills/`
 directory, read `<plugin-root>/.mcp.json`, and start its exact `command` with
 `<plugin-root>/scripts/stdio-tool.mjs` as the sole argument. The helper accepts

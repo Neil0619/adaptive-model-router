@@ -103,8 +103,8 @@ revision. It also requires the installed, enabled plugin to report version `0.4.
 Stop if it fails. Run it again after the final lifecycle reinstall in section 6.
 
 Open `$Project` in Codex, start a new task, review `/hooks`, and trust the
-current `SubagentStart`, `UserPromptSubmit`, and `Stop` definitions. Never
-bypass Hook trust.
+current `SessionStart(source=compact)`, `SubagentStart`, `UserPromptSubmit`,
+and `Stop` definitions. Never bypass Hook trust.
 
 After this trust step, the smoke agent owns every remaining prompt, control
 message, host-managed model transition, verification, and restoration. It must

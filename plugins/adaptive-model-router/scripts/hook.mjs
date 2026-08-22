@@ -4,6 +4,8 @@ import { writeJsonLine } from "./lib/io.mjs";
 import { formatRouteHistory, formatRouteStatus } from "./lib/presentation.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
 import { emitDiagnostic } from "./lib/diagnostics.mjs";
+import { isBoundedSubagent, resolveHookIdentity } from "./lib/hook-identity.mjs";
+import { recordHookIdentityDiagnostic } from "./lib/hook-diagnostics.mjs";
 
 let RouterStore;
 
@@ -57,12 +59,6 @@ function contextIdInstruction(contextId) {
   return `Use ${JSON.stringify(contextId)} as the contextId argument for every Adaptive Model Router MCP call in the current task and never substitute cwd/project paths.`;
 }
 
-function isBoundedSubagent(input) {
-  return [input.agent_id, input.agent_type].some(
-    (value) => typeof value === "string" && value.trim().length > 0,
-  );
-}
-
 function boundedSubagentContext() {
   return [
     "Adaptive Model Router: this agent is already a bounded subagent selected by its parent root task.",
@@ -71,6 +67,28 @@ function boundedSubagentContext() {
     "Do not interpret this subagent model as the root-task model and do not change router controls or root-model intent state.",
     "The parent root task owns route reporting, verification, record_outcome, and the routed-stage Stop lifecycle.",
   ].join("\n");
+}
+
+function recordIdentity(identity, contextInjection) {
+  try {
+    recordHookIdentityDiagnostic(identity.audit, contextInjection);
+  } catch (error) {
+    emitDiagnostic({ component: "hook", stage: "identity_diagnostic", error });
+  }
+}
+
+function requireIdentity(input, event) {
+  const identity = resolveHookIdentity(input, { event });
+  if (identity.contextId) return identity;
+  recordIdentity(identity, "blocked_missing_session_id");
+  process.stderr.write("Adaptive Model Router hook skipped: trusted session identity unavailable.\n");
+  emitDiagnostic({
+    component: "hook",
+    stage: "identity",
+    error: new Error("stable session identity unavailable"),
+    category: "missing_session_identity",
+  });
+  return identity;
 }
 
 function automaticRoutingContext(rootTask, contextId) {
@@ -149,11 +167,13 @@ async function promptHook(input) {
   const prompt = String(input.prompt || "");
   const control = parseControlPrompt(prompt);
   const locale = prompt.startsWith("路由器：") ? "zh" : "en";
-  const contextId = String(input.session_id || input.turn_id || "");
-  if (!contextId) return;
+  const identity = requireIdentity(input, "UserPromptSubmit");
+  if (!identity.contextId) return;
+  const contextId = identity.contextId;
   const store = new RouterStore();
   try {
     const context = store.context({ cwd: input.cwd || process.cwd(), contextId, authoritative: true });
+    recordIdentity(identity, "identity_accepted");
     const inspection = control ? null : parseReadOnlyInspectionPrompt(prompt);
     if (inspection) store.setInspectionGuard(context);
     else store.clearInspectionGuard(context);
@@ -274,12 +294,49 @@ async function promptHook(input) {
 
 async function stopHook(input) {
   if (isBoundedSubagent(input)) return;
-  const contextId = String(input.session_id || input.turn_id || "");
-  if (!contextId) return;
+  const identity = requireIdentity(input, "Stop");
+  if (!identity.contextId) return;
+  const contextId = identity.contextId;
   const store = new RouterStore();
   try {
     const context = store.context({ cwd: input.cwd || process.cwd(), contextId, authoritative: true });
+    recordIdentity(identity, "identity_accepted");
     store.handleStop(context);
+  } finally {
+    store.close();
+  }
+}
+
+async function compactSessionHook(input) {
+  if (input.source !== "compact") return;
+  if (isBoundedSubagent(input)) {
+    additionalContext(boundedSubagentContext(), "SessionStart");
+    return;
+  }
+  const identity = requireIdentity(input, "SessionStart");
+  if (!identity.contextId) return;
+  const contextId = identity.contextId;
+  const store = new RouterStore();
+  try {
+    const context = store.context({ cwd: input.cwd || process.cwd(), contextId, authoritative: true });
+    const settings = store.getSettings(context);
+    if (settings.autoActivate !== true || settings.enabled !== true) {
+      store.observeHostModel(context, input.model, { detectChanges: false });
+      recordIdentity(identity, "not_injected_router_inactive");
+      return;
+    }
+    const resolved = store.resolveOverride(context, null, settings);
+    const disabled = resolved.override?.mode === "disabled";
+    store.observeHostModel(context, input.model, { detectChanges: !disabled });
+    const state = store.hostModelState(context);
+    const rootTask = store.rootTask(context);
+    let message;
+    if (state.taskMode === "pending_confirmation") message = pendingIntentContext(state, contextId);
+    else if (state.taskMode === "manual_root") message = manualRootContext(rootTask, contextId);
+    else if (disabled) message = disabledRoutingContext(rootTask, contextId);
+    else message = automaticRoutingContext(rootTask, contextId);
+    additionalContext(message, "SessionStart");
+    recordIdentity(identity, "injected_after_compaction");
   } finally {
     store.close();
   }
@@ -307,6 +364,9 @@ try {
   } else if (process.argv[2] === "subagent-start") {
     stage = "subagent_start";
     subagentStartHook();
+  } else if (process.argv[2] === "session-start") {
+    stage = "session_start";
+    await compactSessionHook(input);
   }
 } catch (error) {
   process.stderr.write("Adaptive Model Router hook failed safely.\n");
