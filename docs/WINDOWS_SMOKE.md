@@ -37,7 +37,9 @@ for another candidate; the schema validator rejects mismatched identity pairs
 or a CLI-only lifecycle.
 Start from `docs/release-evidence/templates/continuity-receipt-v1.json`; never
 copy forward a receipt or fill it from a new/forked task.
-Review and trust the three hooks before running it. A failure produces only
+Review and trust all seven hooks (`SessionStart(source=compact)`,
+`SubagentStart`, `SubagentStop`, `PreToolUse(Agent)`, `PostToolUse(Agent)`,
+`UserPromptSubmit`, and `Stop`) before running it. A failure produces only
 stable warning codes in the artifact; raw prompts, events, session/context
 identifiers, errors, source, secrets, logs, and absolute paths are excluded.
 Hook trust is the only required interactive action. After trust, the canonical
@@ -46,7 +48,7 @@ and final restoration; it must not ask the operator to repeat sections 5 or 6.
 
 The runner refuses to use the default Codex Home. Prepare a disposable Windows
 test account or dedicated Codex Home, add the explicit smoke marker, log in
-there, install the exact candidate once, and trust its three Hook hashes. A real
+there, install the exact candidate once, and trust its seven Hook hashes. A real
 Desktop task in that Home is mandatory for the compatible-upgrade continuity
 gate; the runner's disposable CLI lifecycle is supplementary. Then expose only
 that directory to the runner:
@@ -71,10 +73,10 @@ It also rejects filesystem roots and broad system/user directories even when a
 marker is present. The marker explicitly declares that the directory may be
 mutated by install, upgrade, uninstall, AGENTS, session, and learning tests.
 
-Suggested handoff prompt after the three Hook definitions are trusted:
+Suggested handoff prompt after the seven Hook definitions are trusted:
 
 ```text
-请完整读取 docs/WINDOWS_SMOKE.md。在我完成三个 Hook 的审查和信任后，只运行
+请完整读取 docs/WINDOWS_SMOKE.md。在我完成七个 Hook 的审查和信任后，只运行
 使用 Codex App 原生任务协调为同一 Desktop 任务生成脱敏 continuity receipt，然后运行
 scripts/windows-smoke.ps1 的 canonical 自动流程；不要让我手工粘贴第 5/6 节提示、
 切换模型或发送 router 控制。遇到 Stop conditions 中任一情况立即停止并返回 FAIL。
@@ -91,7 +93,8 @@ The smoke passes only when all of the following succeed:
   `npm run eval`, and the installed marketplace metadata or Git checkout
   identity equals the reviewed repository, ref, and cloned 40-character commit
   SHA before and after lifecycle testing;
-- review and trust of all three plugin-bundled command hooks;
+- review and trust of all seven plugin-bundled command hooks, including
+  `SessionStart(source=compact)`;
 - one persisted global automatic-routing opt-in and an ordinary substantive
   task that does not name the skill or repeat a trigger phrase;
 - one substantive `delegate` route and exactly one bounded subagent using the
@@ -321,7 +324,7 @@ In the same temporary project, the runner asks Codex to call
 `get_learning_status`, then `shadow_route_stage` for a risk-sensitive review
 using the active scoring definition. It confirms:
 
-- database version 3 is healthy and the active scoring profile is versioned;
+- database version 5 is healthy and the active scoring profile is versioned;
 - learning status contains only redacted aggregates and enum/numeric fields;
 - shadow output reports `shadow: true` and `sideEffects: false`;
 - route, outcome, proposal, and learning-cursor counts do not change;
@@ -460,7 +463,7 @@ Router context, root-model baseline, old/new runtime, transport, route ID, and
 recorded outcome for the same-Desktop-task continuity gate. The validator
 requires these bindings and rejects CLI-only evidence.
 
-Record that the three current Hook definitions were reviewed and trusted before
+Record that the four current Hook definitions were reviewed and trusted before
 the run. An optional visual UX note may state whether the Desktop selector or
 CLI model status line was observed, but it is not part of the canonical
 artifact and cannot change the release gate.

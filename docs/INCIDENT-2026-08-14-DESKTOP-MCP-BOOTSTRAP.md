@@ -31,6 +31,39 @@ an environment-dependent bootstrap command pass release checks.
 The MCP server, runtime launcher, and Router tool implementation were healthy.
 Only the first executable lookup failed, before any of those components ran.
 
+## 2026-08-20 recurrence
+
+A later development update used raw `codex plugin add` instead of the managed
+installer. That cold registration copied the portable source templates back
+into the active cache, replacing the previously materialized absolute MCP and
+Hook commands with bare `node`. The failure stayed hidden because the owned
+Node shim from the earlier repair still existed in Codex Primary Runtime's
+override directory. When Codex updated Primary Runtime, it correctly replaced
+that host-owned directory and the plugin-owned shim disappeared with it. The
+next Desktop launch could no longer resolve either Router entrypoint.
+
+The first repair did not model this sequence. Its tests covered a managed
+upgrade creating and probing the shim, but did not then replace the entire
+host runtime directory or run a later raw plugin registration. Release smoke
+also exercised the managed candidate, while `codex mcp list` visibility was
+treated too optimistically even though registration visibility is not process
+liveness. The missed boundary was ownership: a compatibility file placed in a
+host-owned replaceable runtime tree can support the current process, but it
+cannot be the durable installation invariant.
+
+A follow-up old-task failure had a different cause: the task launched
+`stdio-tool.mjs` as a one-shot shell command and never sent its JSON request.
+The helper's input timeout fired correctly, but the caller mislabeled that as a
+Router transport timeout and failed open. The first correction documented an
+exact writable-session sequence (`tty: true`, returned `session_id`, then
+`write_stdin`), but the same Desktop task exposed only one-shot command
+executions and repeated the bare helper twice. That instruction assumed a
+two-tool interaction the frozen task did not actually have. The Skill now uses
+one atomic literal-input command as the primary path, keeps writable sessions
+only as a confirmed fallback, permits one corrective retry that changes the
+failed invocation, and the helper emits an input-specific diagnostic distinct
+from an internal MCP timeout.
+
 ## Corrective and preventive controls
 
 - First install rewrites bare MCP and active-platform Hook `node` commands to
@@ -67,6 +100,10 @@ Only the first executable lookup failed, before any of those components ran.
   result context.
 - A regression test performs a compatible upgrade, asserts the installed
   command is absolute, and completes MCP discovery with an empty `PATH`.
+- A second regression starts from the exact raw-add state, repairs without any
+  Codex mutation, deletes the Desktop shim to model a later host-runtime
+  replacement, and still launches both installed MCP and Hook contracts with
+  an empty `PATH`.
 - Verification fails closed if a staged or installed registration still uses
   bare `node`, contains unexpected arguments, or cannot start independently of
   shell configuration.
@@ -86,6 +123,9 @@ Only the first executable lookup failed, before any of those components ran.
 6. A release cannot infer old-task continuity from a new CLI task. One real
    Desktop task must remain open across the compatible upgrade and complete
    `route_stage → delegate → record_outcome` in the same context.
+7. A file inside a host-owned runtime directory is never durable plugin state.
+   Raw plugin registration must be followed by managed repair, and future-host
+   startup must succeed after deleting the current-process shim.
 
 ## Host recovery boundary
 

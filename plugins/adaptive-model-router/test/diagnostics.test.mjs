@@ -18,8 +18,8 @@ function diagnostic(stderr) {
   const value = JSON.parse(line.slice(prefix.length));
   assert.deepEqual(Object.keys(value).sort(), allowedKeys);
   assert.match(value.component, /^(hook|launcher)$/);
-  assert.match(value.stage, /^(runtime|database_import|input|prompt|stop|arguments|runtime_discovery|spawn|child)$/);
-  assert.match(value.category, /^(missing_target|runtime_unavailable|spawn_failed|child_exit|invalid_input|state_dir_unwritable|sqlite_busy|sqlite_readonly|runtime|unknown)$/);
+  assert.match(value.stage, /^(runtime|database_import|input|prompt|stop|session_start|identity|identity_diagnostic|arguments|runtime_discovery|spawn|child)$/);
+  assert.match(value.category, /^(missing_target|missing_session_identity|runtime_unavailable|spawn_failed|child_exit|invalid_input|state_dir_unwritable|sqlite_busy|sqlite_readonly|runtime|unknown)$/);
   assert.match(value.pluginData, /^(present|absent)$/);
   assert.match(value.stateRootSource, /^(adaptive_override|plugin_data|codex_home)$/);
   assert.equal(Number.isInteger(value.nodeMajor) && value.nodeMajor >= 0, true);
@@ -97,4 +97,37 @@ test("launcher emits sanitized diagnostics when no target is supplied", () => {
   assert.equal(value.stage, "arguments");
   assert.equal(value.category, "missing_target");
   assert.equal(result.stderr.includes(secret), false);
+});
+
+test("missing session identity is diagnosed without persisting raw turn data", async () => {
+  const project = await temporaryProject("diagnostic missing identity ");
+  const secret = "secret-turn-and-prompt";
+  try {
+    const result = spawnSync(process.execPath, [hook, "prompt"], {
+      input: JSON.stringify({ turn_id: secret, prompt: secret, cwd: project.root }),
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ADAPTIVE_ROUTER_DIAGNOSTICS: "1",
+        ADAPTIVE_ROUTER_HOME: project.home,
+      },
+    });
+    assert.equal(result.status, 0);
+    const value = diagnostic(result.stderr);
+    assert.equal(value.stage, "identity");
+    assert.equal(value.category, "missing_session_identity");
+    const doctor = spawnSync(process.execPath, [join(pluginRoot, "scripts", "codex-route.mjs"), "hook-doctor"], {
+      encoding: "utf8",
+      env: { ...process.env, ADAPTIVE_ROUTER_HOME: project.home },
+    });
+    assert.equal(doctor.status, 0, doctor.stderr);
+    const report = JSON.parse(doctor.stdout);
+    assert.equal(report.reasonCode, "HOOK_DISPATCHED_MISSING_SESSION_ID");
+    assert.equal(report.lastObservation.sessionId, "missing");
+    assert.equal(report.lastObservation.turnId, "present");
+    assert.equal(doctor.stdout.includes(secret), false);
+    assert.equal(doctor.stdout.includes(project.root), false);
+  } finally {
+    await project.cleanup();
+  }
 });

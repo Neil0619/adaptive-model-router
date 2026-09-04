@@ -14,16 +14,35 @@ Codex Desktop 的 `PATH` 可能比交互式终端更精简。安装器会把合�
 
 如果任务是在 MCP 启动故障期间创建的，其原生函数清单可能已经冻结。兼容升级会让该任务通过已验证的一次性 stdio bridge 调用同一个已安装 MCP `tools/call`，无需重启 Desktop，也无需新建替代任务。
 
-原生 Codex 命令是主安装路径，无需执行远程脚本：
+受审阅的仓库包装脚本是受支持的安装路径。它在内部使用原生 Codex 命令，并继续物化、
+验证真实的 Desktop 启动契约：
 
 ```bash
-codex plugin marketplace add Neil0619/adaptive-model-router --ref stable
-codex plugin add adaptive-model-router@adaptive-model-router
+git clone --branch stable --single-branch https://github.com/Neil0619/adaptive-model-router.git
+cd adaptive-model-router
+./install.sh
 ```
 
+```powershell
+git clone --branch stable --single-branch https://github.com/Neil0619/adaptive-model-router.git
+Set-Location adaptive-model-router
+.\install.ps1
+```
+
+直接执行 `codex plugin add` 会把源码中的可移植占位命令 `node` 写入宿主缓存。它只是
+冷注册操作，不是本插件完整的 Desktop 安全安装。若开发或恢复时执行过该命令，必须
+立即运行 `./install.sh repair` 或 `.\install.ps1 -Action Repair`。repair 不改变
+marketplace 身份，也不重新注册插件；它会物化当前安装、恢复正在运行的 Desktop
+兼容 shim，并验证 MCP、Hooks 与旧任务 bridge。
+
 安装后请启动一个新任务，打开 `/hooks`，分别审阅并信任插件提供的
-`SubagentStart`、`UserPromptSubmit` 和 `Stop` 命令处理器。如果 ChatGPT
-桌面端仍显示旧的插件状态，请重启应用并再创建一个新任务。
+`SessionStart(source=compact)`、`SubagentStart`、`SubagentStop`、
+`PreToolUse(Agent)`、`PostToolUse(Agent)`、`UserPromptSubmit` 和 `Stop`
+命令处理器。如果 ChatGPT 桌面端仍显示旧的插件状态，请重启应用并再创建一个新任务。
+
+Router 只接受 Codex 提供的非空 `session_id` 作为稳定任务身份，绝不使用
+`turn_id` 兜底。可信压缩会话处理器会在自动或手动压缩后、同一回合立即继续之前
+重新注入相同的路由上下文。
 
 自动路由需要明确开启。在这个新任务中单独发送一次以下命令，即可为共享同一插件
 数据的所有本地 Codex 项目开启默认自动路由：
@@ -34,7 +53,7 @@ codex plugin add adaptive-model-router@adaptive-model-router
 
 安装或升级不会静默替你打开这个设置。
 
-仓库内也提供带环境检查、旧版检测和明确错误码的包装脚本：
+包装脚本还支持在明确请求时写入 AGENTS 规则：
 
 ```bash
 ./install.sh
@@ -58,6 +77,17 @@ codex plugin add adaptive-model-router@adaptive-model-router
 
 ```powershell
 .\install.ps1 -Action Upgrade
+```
+
+如果健康注册由裸 `plugin add` 创建，或 Codex 更新替换了 Desktop runtime 目录，可
+执行原地修复：
+
+```bash
+./install.sh repair
+```
+
+```powershell
+.\install.ps1 -Action Repair
 ```
 
 ```bash
@@ -85,9 +115,10 @@ codex plugin marketplace remove adaptive-model-router
 重新注册；直接执行 `plugin add` 属于冷安装/替换，不是热升级操作。
 
 vault 只保存经过验证的插件包副本和运行时目录名索引，位于宿主管理缓存之外；它不
-保存 prompt、项目数据或路由数据库，也不是可绕过校验的备用执行源。恢复前必须重新
-通过 runtime、host surface、符号链接和兼容契约检查，再以目录 rename 原子安装。
-索引或归档损坏时升级会 fail closed。
+保存 prompt、项目数据或路由数据库，也不是可绕过校验的备用执行源。历史壳恢复前
+必须匹配自身已索引的 host surface、受支持 Hook 集合和当前共享 runtime/storage
+兼容契约；当前版本还必须完整匹配当前源码表面，再以目录 rename 原子安装。索引、
+历史 Hook 集合或归档损坏时升级会 fail closed。
 
 v0.4.0 增加了稳定启动壳。安装后续兼容的 v0.4.x 或更高版本后，已经打开的任务会在
 下一次 Hook 或 MCP 调用时加载新实现，不需要更换根模型，也不必重新开任务。旧壳会先
@@ -126,26 +157,57 @@ Windows 环境问题参见[故障排查](docs/TROUBLESHOOTING.md)。发布维护
 模型意图、不修改路由控制、不再次调用 `route_stage`，也不负责 route outcome。
 验证和 `record_outcome` 始终由根任务完成。
 
-`route_stage` 只返回三种动作：
+`route_stage` 只返回四种动作：
 
 - `continue`：问候、简单问答和不产生工作产物的短任务；
 - `delegate`：返回 `target.model` 和 `target.effort`，用于一个 bounded subagent；
+- `busy`：当前任务已有一个尚未闭合的 Router 子代理，不再创建第二个；
 - `ask_user`：显式目标不可用，或 reasoning failure 达到自动升级上限。
+
+在返回普通工作的 `delegate` 前，插件通过 Codex 的只读 `hooks/list` 接口确认当前安装中的七个
+Router Hook 与插件定义一致、已启用且受信任；同时还要求 source-owned 原生证明确认
+当前精确宿主的 Agent 路径真实派发完整 `PreToolUse`/`PostToolUse` 生命周期。未信任时
+返回 `HOOK_TRUST_REQUIRED`，定义不一致时返回 `HOST_HOOK_SET_MISMATCH`，无法读取时返回
+`HOST_HOOK_STATUS_UNAVAILABLE`，缺少原生往返证明时返回
+`HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN`；四种情况都只允许根任务继续，不签发委派
+ticket。这个检查不会写 `config.toml`，也不会替用户确认 Hook 信任。
+
+对于已明确支持的 macOS 原生构建（`0.153.0`、`0.153.0-alpha.5`），尚无证明的任务
+可先收到 `delegate / HOST_LIFECYCLE_QUALIFICATION`：仅创建一个 Sol/low 子任务，
+不携带原任务内容、不调用工具，只返回固定标记。服务端核验四个生命周期事件和完整
+原始子任务记录后才接受通过结果。证明绑定当前任务、可执行文件、完整有序 Hook
+清单、实际 Hook 入口和运行时源码；失败或绑定变化后仍禁止普通委派，不会自动重试
+自检。自检不消耗 once override，也不进入学习；成功后再对原阶段正常路由。
 
 优先级固定为：本次请求、once、session、project、可选 global、已批准项目策略、默认均衡策略。隐藏模型和未知模型不会自动入选；显式目标不可用时不会静默替换。
 
 根模型可见目录、bounded subagent 能力和辅助分类器使用三套独立目录。Codex
 选择器里能看到某个模型，不代表它可以作为 subagent。调用方通过
-`hostCapabilities` 提交当前宿主真实支持的 bounded 模型和 effort；旧调用方只会
+`hostCapabilities` 提交当前宿主可直接原生调用的 bounded 模型、effort 和调用模式；
+只在 `functions.exec` 内可见的 spawn 工具一律视为不可委派。`list_agents` 只列出
+已经存在的 Agent，空列表不代表 direct `spawn_agent` 不可用。同一任务一旦完成过
+可信 direct child 派发，后续 unavailable 声明若没有绑定“直接工具实际拒绝且明确
+未创建 child”的证据，就会被拒绝。旧调用方只会
 保守允许已知的 Sol、Terra。当策略偏好 Luna、但宿主没有公开 Luna 委派能力时，
 自动路由回退到 Terra 并返回 `MODEL_FAMILY_FALLBACK`；显式指定 Luna 则返回
 `ask_user`，不会静默换模型。
 
-每个委派都有 verification gate，并且最多记录一个严格最终 outcome。若根任务仍遗漏
-outcome，Stop hook 会静默记为不参与学习的 `unknown` 并正常交付用户回复，不再创建
-打断最终回复的 continuation prompt。
+每个委派都有 verification gate，并且最多记录一个严格最终 outcome。只有匹配的
+`PreToolUse` 派发握手消费 ticket 后，首次 outcome 写入才会被接受；只有 route 决定、
+没有真实派发尝试时不存在验证结果。活动 gate 会优先返回 `busy`，不会被后续
+unavailable 声明遮蔽。如果根任务试图带着尚未派发的 delegate 结束，Stop hook 会
+阻止第一次结束并指出必须执行的 direct `spawn_agent`。若受保护的 Stop 重入时 ticket
+仍未消费，Router 会把生命周期标记为 ambiguous 并继续保留 gate；在没有权威
+no-child 证据时，它不会归档 attempt、释放预留、创建 outcome 或允许替代 child。
 
-`continue` 和 `ask_user` 路由不接受 outcome。严格输入输出、管理工具以及源码内
+只有匹配的 `PostToolUse`、子代理终态（`SubagentStop` 或宿主明确证明未创建子代理）
+和 outcome 全部到达后才释放已派发 gate；派发后的未知、缺失或关联不唯一都会保持 gate。Stop hook
+不会伪造 `unknown` outcome。
+
+辅助分类器复用宿主现有的已登录 App Server 状态，并且只创建 `ephemeral` thread；
+它不会再把 `CODEX_SQLITE_HOME` 指向空临时库。脱敏输入、统一 deadline 和熔断规则不变。
+
+`continue`、`busy` 和 `ask_user` 路由不接受 outcome。严格输入输出、管理工具以及源码内
 开发 CLI 参见[工具接口](docs/TOOLS.md)。
 
 ## 当前模型与委派历史

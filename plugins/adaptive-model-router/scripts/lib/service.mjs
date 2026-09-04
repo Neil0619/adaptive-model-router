@@ -10,6 +10,8 @@ import {
   rollbackPolicy,
 } from "./learning.mjs";
 import { routeStage } from "./router.mjs";
+import { inspectLifecycleHookReadiness } from "./hook-readiness.mjs";
+import { prepareQualificationOutcome } from "./lifecycle-qualification.mjs";
 import { assertSchema } from "./schema.mjs";
 import { desiredRoute, scoreTask } from "./scorer.mjs";
 
@@ -48,7 +50,7 @@ const SCORING_PROFILE_DEFINITION = {
 export const TOOL_DEFINITIONS = [
   {
     name: "route_stage",
-    description: "Choose whether to continue locally, ask the user, or delegate one bounded stage to an available model and effort.",
+    description: "Choose whether to continue locally, ask the user, report a busy Router gate, or delegate one bounded stage to an available model and effort.",
     inputSchema: ROUTE_INPUT_SCHEMA,
   },
   {
@@ -341,12 +343,31 @@ function shadowRoute(store, args, cwd) {
   };
 }
 
-export async function callRouterTool(name, args, { store, cwd = process.cwd(), routeOptions = {} } = {}) {
+export async function callRouterTool(name, args, { store, cwd = process.cwd(), routeOptions = null, qualificationOptions = {} } = {}) {
   const definition = TOOLS.get(name);
   if (!definition) throw new Error(`unknown tool: ${name}`);
   assertSchema(definition.inputSchema, args, `${name} input`);
-  if (name === "route_stage") return routeStage(args, { ...routeOptions, store, cwd });
-  if (name === "record_outcome") return recordOutcome(args, { store, cwd });
+  if (name === "route_stage") {
+    const requestedRouteOptions = routeOptions || {};
+    const enforcedRouteOptions = requestedRouteOptions.enforceLifecycleHooks !== false
+      ? {
+          ...requestedRouteOptions,
+          lifecycleHookProbe: requestedRouteOptions.lifecycleHookProbe || inspectLifecycleHookReadiness,
+        }
+      : requestedRouteOptions;
+    return routeStage(args, { ...enforcedRouteOptions, store, cwd });
+  }
+  if (name === "record_outcome") {
+    const qualificationProof = await prepareQualificationOutcome(args, {
+      store, cwd, ...qualificationOptions,
+      inspectBinding: qualificationOptions.inspectBinding || (() => inspectLifecycleHookReadiness({
+        cwd, pluginRoot: routeOptions?.pluginRoot, store,
+        contextId: args.contextId,
+        context: store.context({ cwd, contextId: args.contextId }),
+      })),
+    });
+    return recordOutcome(args, { store, cwd, qualificationProof });
+  }
   if (name === "get_route_status") return store.status(contextFor(store, args, cwd));
   if (name === "get_route_history") {
     return store.routeHistory(contextFor(store, args, cwd), {

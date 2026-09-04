@@ -5,7 +5,12 @@ import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { compareRuntimeVersions, parseRuntimeDescriptor } from "../scripts/lib/runtime-loader.mjs";
+import {
+  compareRuntimeVersions,
+  parseRuntimeDescriptor,
+  resolveRuntime,
+  runtimePublicState,
+} from "../scripts/lib/runtime-loader.mjs";
 import { temporaryProject } from "./fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -145,6 +150,30 @@ test("runtime descriptors and cachebuster versions are strict and monotonic", ()
   );
 });
 
+test("runtime diagnostics ignore an active pointer whose immutable directory is absent", async () => {
+  const project = await temporaryProject("adaptive stale active pointer ");
+  const currentRoot = join(project.root, "versions", "0.4.1");
+  const pluginData = join(project.root, "plugin-data");
+  try {
+    await createRuntime(currentRoot, "0.4.1");
+    await mkdir(join(pluginData, "runtime"), { recursive: true });
+    await writeFile(join(pluginData, "runtime", "active.json"), `${JSON.stringify({
+      schemaVersion: 1,
+      activeDirectory: "0.4.0",
+      activeVersion: "0.4.0",
+      previousDirectory: null,
+      previousVersion: null,
+      failedDirectories: [],
+    })}\n`);
+    const env = { ...process.env, ADAPTIVE_ROUTER_HOME: pluginData };
+    const resolution = resolveRuntime(currentRoot, { env, allowTrial: false });
+    assert.equal(resolution.active.descriptor.runtimeVersion, "0.4.1");
+    assert.equal(runtimePublicState(resolution, env).activeVersion, "0.4.1");
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("quarantine wins over a later success for the same immutable cache directory", async () => {
   const project = await temporaryProject("adaptive quarantine precedence ");
   const versionsRoot = join(project.root, "versions");
@@ -247,6 +276,26 @@ test("an existing MCP process and hook shell activate a compatible installed run
     });
     assert.equal(hook.status, 0, hook.stderr);
     assert.match(hook.stderr, /runtime-0\.4\.1/);
+
+    const compactHook = spawnSync(process.execPath, [launcher, oldHook, "session-start"], {
+      cwd: project.root,
+      env,
+      input: JSON.stringify({
+        cwd: project.root,
+        session_id: "hot-hook",
+        model: "gpt-5.6-sol",
+        hook_event_name: "SessionStart",
+        source: "compact",
+      }),
+      encoding: "utf8",
+      windowsHide: true,
+      timeout: 15_000,
+    });
+    assert.equal(compactHook.status, 0, compactHook.stderr);
+    assert.match(compactHook.stderr, /runtime-0\.4\.1/);
+    const compactOutput = JSON.parse(compactHook.stdout).hookSpecificOutput;
+    assert.equal(compactOutput.hookEventName, "SessionStart");
+    assert.match(compactOutput.additionalContext, /Use "hot-hook" as the contextId/);
 
     await createRuntime(version042, "0.4.2", { brokenProbe: true });
     const rolledBackHook = spawnSync(process.execPath, [launcher, oldHook, "prompt"], {

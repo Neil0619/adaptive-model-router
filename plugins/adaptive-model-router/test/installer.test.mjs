@@ -29,7 +29,11 @@ if (args.join(" ") === "plugin marketplace list --json") {
   if (state.failStateReadAfterMarketplaceUpgrade && state.marketplaceUpgradeFinished) { process.stderr.write("state unavailable\\n"); process.exit(1); }
   process.stdout.write(JSON.stringify({marketplaces:state.marketplaces})); process.exit(0);
 }
-if (args.join(" ") === "plugin list --available --json") { process.stdout.write(JSON.stringify({installed:state.installed,available:state.available})); process.exit(0); }
+if (args.join(" ") === "plugin list --available --json") {
+  const payload={installed:state.installed,available:state.available};
+  if (state.pluginListPaddingBytes) payload.padding="x".repeat(state.pluginListPaddingBytes);
+  writeFileSync(1, JSON.stringify(payload)); process.exit(0);
+}
 if (args.join(" ") === "mcp list --json") {
   const installed = state.installed.find((entry)=>entry.pluginId==="adaptive-model-router@adaptive-model-router");
   const requestedRoot = state.mcpResolvedRoot || installed?.source?.path || state.pluginInstallRoot;
@@ -157,7 +161,7 @@ async function materializeFixtureCommands(root) {
 
   const hooksPath = join(root, "hooks", "hooks.json");
   const hooks = JSON.parse(await readFile(hooksPath, "utf8"));
-  for (const event of ["SubagentStart", "UserPromptSubmit", "Stop"]) {
+  for (const event of ["SessionStart", "SubagentStart", "UserPromptSubmit", "Stop"]) {
     const handler = hooks.hooks[event][0].hooks[0];
     for (const field of ["command", "commandWindows"]) {
       handler[field] = `"${process.execPath}"${handler[field].slice(handler[field].indexOf(" "))}`;
@@ -544,12 +548,19 @@ test("install, upgrade, optional AGENTS patch, and uninstall are idempotent in a
     await mkdir(codexHome, { recursive: true });
     const agents = join(codexHome, "AGENTS.md");
     await writeFile(agents, "User instructions.\n");
+    const config = join(codexHome, "config.toml");
+    await writeFile(config, "model = \"gpt-5.6-sol\"\n\n[features]\ncodex_hooks = true\nplugins = true\n");
 
     const installed = runManager(project, fake, ["install", "--non-interactive"]);
     assert.equal(installed.status, 0, installed.stderr);
     assert.match(installed.stdout, /frozen.*stdio bridge/i);
     assert.match(installed.stdout, /Compatible v0\.4\.x\+ runtime-only updates/);
     assert.match(installed.stdout, /upgrades preserve this setting/);
+    assert.match(installed.stdout, /Migrated deprecated features\.codex_hooks/);
+    assert.equal(
+      await readFile(config, "utf8"),
+      "model = \"gpt-5.6-sol\"\n\n[features]\nhooks = true\nplugins = true\n",
+    );
     assert.equal(await readFile(agents, "utf8"), "User instructions.\n");
     assert.equal((await state(fake)).installed.length, 1);
 
@@ -673,7 +684,7 @@ test("a compatible upgrade verifies the staged candidate through the old pinned 
 
     const result = runManager(project, fake, ["upgrade", "--non-interactive"]);
     assert.equal(result.status, 5);
-    assert.match(result.stderr, /MCP_TOOL_CONTRACT_INCOMPLETE/);
+    assert.match(result.stderr, /(?:MCP_TOOL|HOOK)_CONTRACT_INCOMPLETE/);
     await assert.rejects(access(newRoot), { code: "ENOENT" });
     assert.match(await readFile(launcher, "utf8"), /pinned-shell-candidate-probe/);
   } finally {
@@ -740,7 +751,7 @@ test("rollback preserves a valid candidate staged concurrently by another owner"
 
     const result = runManager(project, fake, ["upgrade", "--non-interactive"]);
     assert.equal(result.status, 5);
-    assert.match(result.stderr, /MCP_TOOL_CONTRACT_INCOMPLETE/);
+    assert.match(result.stderr, /(?:MCP_TOOL|HOOK)_CONTRACT_INCOMPLETE/);
     assert.equal(
       JSON.parse(await readFile(join(newRoot, "runtime.json"), "utf8")).runtimeVersion,
       runtimeVersion,
@@ -947,6 +958,147 @@ test("a compatible upgrade materializes an absolute Node command that starts und
   }
 });
 
+test("repair recovers a direct-add bare launch contract and survives a later Desktop runtime replacement", async () => {
+  const project = await temporaryProject("adaptive installer direct add repair ");
+  try {
+    const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+    const directAddRoot = join(versionsRoot, "0.4.0+codex.20260812000000");
+    const stagedRoot = join(versionsRoot, runtimeVersion);
+    await writePluginFixture(directAddRoot, "0.4.0+codex.20260812000000");
+    const installedEntry = {
+      pluginId: "adaptive-model-router@adaptive-model-router",
+      name: "adaptive-model-router",
+      marketplaceName: "adaptive-model-router",
+      source: { source: "local", path: directAddRoot },
+    };
+    const fake = await fakeCodex(project, {
+      pluginInstallRoot: directAddRoot,
+      marketplaces: [{
+        name: "adaptive-model-router",
+        marketplaceSource: {
+          sourceType: "git",
+          source: "https://github.com/Neil0619/adaptive-model-router.git",
+          ref: "stable",
+        },
+      }],
+      installed: [installedEntry],
+      available: [installedEntry],
+    });
+    await writePluginFixture(directAddRoot, "0.4.0+codex.20260812000000");
+    const initialMcp = JSON.parse(await readFile(join(directAddRoot, ".mcp.json"), "utf8"))
+      .mcpServers["adaptive-model-router"];
+    assert.equal(initialMcp.command, "node", "fixture must model a raw codex plugin add");
+
+    const desktopOverrideDir = join(project.root, "replaced Desktop runtime", "dependencies", "bin", "override");
+    await mkdir(desktopOverrideDir, { recursive: true });
+    const repair = runManager(
+      project,
+      fake,
+      ["repair", "--non-interactive"],
+      { desktopOverrideDir },
+    );
+    assert.equal(repair.status, 0, repair.stderr);
+    assert.match(repair.stdout, /repaired without plugin re-registration/i);
+    assert.deepEqual((await state(fake)).mutations, []);
+
+    const bridgeName = process.platform === "win32" ? "node.cmd" : "node";
+    await access(join(desktopOverrideDir, bridgeName));
+    await rm(join(desktopOverrideDir, bridgeName), { force: true });
+
+    for (const root of [directAddRoot, stagedRoot]) {
+      const mcp = JSON.parse(await readFile(join(root, ".mcp.json"), "utf8"))
+        .mcpServers["adaptive-model-router"];
+      assert.equal(mcp.command, process.execPath);
+      const input = [
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-06-18" },
+        }),
+        JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+      ].join("\n");
+      const launch = spawnSync(mcp.command, mcp.args, {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...process.env, PATH: "", ADAPTIVE_ROUTER_NODE: process.execPath },
+        input: `${input}\n`,
+        timeout: 15_000,
+        windowsHide: true,
+      });
+      assert.equal(launch.status, 0, launch.stderr);
+      const responses = launch.stdout.trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+      const names = responses.find((entry) => entry?.id === 2)?.result?.tools?.map((tool) => tool.name);
+      assert.ok(names.includes("route_stage"));
+      assert.ok(names.includes("record_outcome"));
+    }
+
+    const hooks = JSON.parse(await readFile(join(directAddRoot, "hooks", "hooks.json"), "utf8"));
+    const promptHook = hooks.hooks.UserPromptSubmit[0].hooks[0];
+    const hookCommand = process.platform === "win32" ? promptHook.commandWindows : promptHook.command;
+    assert.ok(hookCommand.includes(process.execPath));
+    const pluginData = join(project.root, "repair plugin data");
+    await mkdir(pluginData, { recursive: true });
+    const hookShell = process.platform === "win32"
+      ? {
+          executable: process.env.ComSpec || join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe"),
+          args: ["/d", "/s", "/c", `"${hookCommand}"`],
+          windowsVerbatimArguments: true,
+        }
+      : { executable: "/bin/sh", args: ["-c", hookCommand], windowsVerbatimArguments: false };
+    const hookLaunch = spawnSync(hookShell.executable, hookShell.args, {
+      cwd: project.root,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: "",
+        PLUGIN_ROOT: directAddRoot,
+        PLUGIN_DATA: pluginData,
+        ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
+      },
+      input: JSON.stringify({
+        cwd: project.root,
+        session_id: "runtime-replacement-repair",
+        model: "gpt-5.6-sol",
+        prompt: "router: global on",
+      }),
+      timeout: 15_000,
+      windowsHide: true,
+      windowsVerbatimArguments: hookShell.windowsVerbatimArguments,
+    });
+    assert.equal(hookLaunch.status, 0, hookLaunch.stderr);
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("installer accepts a plugin inventory larger than the spawnSync default buffer", async () => {
+  const project = await temporaryProject("adaptive installer large inventory ");
+  try {
+    const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+    const installedRoot = join(versionsRoot, "0.4.0+codex.20260812000000");
+    await writePluginFixture(installedRoot, "0.4.0+codex.20260812000000");
+    const installedEntry = {
+      pluginId: "adaptive-model-router@adaptive-model-router",
+      name: "adaptive-model-router",
+      marketplaceName: "adaptive-model-router",
+      source: { source: "local", path: installedRoot },
+    };
+    const fake = await fakeCodex(project, {
+      pluginInstallRoot: installedRoot,
+      pluginListPaddingBytes: 2 * 1024 * 1024,
+      installed: [installedEntry],
+      available: [installedEntry],
+    });
+    await writePluginFixture(installedRoot, "0.4.0+codex.20260812000000");
+    const result = runManager(project, fake, ["repair", "--non-interactive"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /repaired without plugin re-registration/i);
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("hot upgrade discovers the Desktop override directory from PATH without a macOS app executable", async () => {
   const project = await temporaryProject("adaptive installer PATH discovery ");
   try {
@@ -1137,7 +1289,7 @@ test("a live workflow contract change refuses hot upgrade", async () => {
     await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
     await writeFile(join(oldRoot, "compatibility.json"), JSON.stringify({
       schemaVersion: 1,
-      liveWorkflowContractVersion: 2,
+      liveWorkflowContractVersion: 1,
       stdioBridgeContractVersion: 1,
     }));
     const installedEntry = {
@@ -1162,7 +1314,7 @@ test("a live workflow contract change refuses hot upgrade", async () => {
     await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
     await writeFile(join(oldRoot, "compatibility.json"), JSON.stringify({
       schemaVersion: 1,
-      liveWorkflowContractVersion: 2,
+      liveWorkflowContractVersion: 1,
       stdioBridgeContractVersion: 1,
     }));
 
@@ -1312,7 +1464,11 @@ test("a failed hot-upgrade verification restores complete historical runtime tre
       join(oldRoot, "skills", "adaptive-model-router", "SKILL.md"),
       legacySkill,
     );
-    await rm(join(oldRoot, "compatibility.json"), { force: true });
+    await writeFile(join(oldRoot, "compatibility.json"), JSON.stringify({
+      schemaVersion: 1,
+      liveWorkflowContractVersion: 3,
+      stdioBridgeContractVersion: 1,
+    }));
     await rm(join(oldRoot, "scripts", "stdio-tool.mjs"), { force: true });
     await rm(join(oldRoot, "scripts", "lib", "plugin-data.mjs"), { force: true });
 
@@ -1328,7 +1484,10 @@ test("a failed hot-upgrade verification restores complete historical runtime tre
       await readFile(join(oldRoot, "skills", "adaptive-model-router", "SKILL.md"), "utf8"),
       legacySkill,
     );
-    await assert.rejects(access(join(oldRoot, "compatibility.json")), { code: "ENOENT" });
+    assert.equal(
+      JSON.parse(await readFile(join(oldRoot, "compatibility.json"), "utf8")).liveWorkflowContractVersion,
+      3,
+    );
     await assert.rejects(access(join(oldRoot, "scripts", "stdio-tool.mjs")), { code: "ENOENT" });
     await assert.rejects(access(join(oldRoot, "scripts", "lib", "plugin-data.mjs")), { code: "ENOENT" });
     assert.equal(
@@ -1513,6 +1672,146 @@ test("cold installation archives its verified runtime in stable plugin data", as
       JSON.parse(await readFile(join(vault, runtimeVersion, "runtime.json"), "utf8")).runtimeVersion,
       runtimeVersion,
     );
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("obsolete but intact runtime archives are preserved and removed from the active index", async () => {
+  const project = await temporaryProject("adaptive installer obsolete runtime vault ");
+  try {
+    const fake = await fakeCodex(project);
+    const installed = runManager(project, fake, ["install", "--non-interactive"]);
+    assert.equal(installed.status, 0, installed.stderr);
+
+    const vault = runtimeVault(installed.codexHome);
+    const oldVersion = "0.4.0+codex.20260812000000";
+    const oldArchive = join(vault, oldVersion);
+    await cp(join(vault, runtimeVersion), oldArchive, { recursive: true });
+
+    const manifestPath = join(oldArchive, ".codex-plugin", "plugin.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.version = oldVersion;
+    await writeFile(manifestPath, JSON.stringify(manifest));
+
+    const runtimePath = join(oldArchive, "runtime.json");
+    const runtime = JSON.parse(await readFile(runtimePath, "utf8"));
+    runtime.runtimeVersion = oldVersion;
+    runtime.toolContractVersion = 3;
+    runtime.storageContractVersion = 1;
+    runtime.databaseVersion = 3;
+    await writeFile(runtimePath, JSON.stringify(runtime));
+    await writeFile(join(oldArchive, "compatibility.json"), JSON.stringify({
+      schemaVersion: 1,
+      liveWorkflowContractVersion: 1,
+      stdioBridgeContractVersion: 1,
+    }));
+    await writeFile(join(oldArchive, "obsolete-archive-marker.txt"), "preserved\n");
+    await writeFile(join(vault, "index.json"), `${JSON.stringify({
+      schemaVersion: 1,
+      directories: [oldVersion, runtimeVersion].sort(),
+    })}\n`);
+    const mutationsBeforeRepair = [...(await state(fake)).mutations];
+
+    const repaired = runManager(project, fake, ["repair", "--non-interactive"]);
+    assert.equal(repaired.status, 0, repaired.stderr);
+    assert.match(repaired.stdout, /Preserved 1 obsolete Router runtime archive outside the active compatibility index/iu);
+    assert.deepEqual(
+      JSON.parse(await readFile(join(vault, "index.json"), "utf8")),
+      { schemaVersion: 1, directories: [runtimeVersion] },
+    );
+    assert.equal(await readFile(join(oldArchive, "obsolete-archive-marker.txt"), "utf8"), "preserved\n");
+    assert.equal(
+      JSON.parse(await readFile(runtimePath, "utf8")).toolContractVersion,
+      3,
+    );
+    assert.deepEqual((await state(fake)).mutations, mutationsBeforeRepair);
+    await assert.rejects(access(join(dirname((await state(fake)).pluginInstallRoot), oldVersion)));
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("repair restores an indexed historical shell across a later host-surface change", async () => {
+  const project = await temporaryProject("adaptive installer historical host surface restore ");
+  try {
+    const fake = await fakeCodex(project);
+    const installed = runManager(project, fake, ["install", "--non-interactive"]);
+    assert.equal(installed.status, 0, installed.stderr);
+
+    const vault = runtimeVault(installed.codexHome);
+    const currentRoot = (await state(fake)).pluginInstallRoot;
+    const versionsRoot = dirname(currentRoot);
+    const oldVersion = "0.4.0+codex.20260812000000";
+    const oldRoot = join(versionsRoot, oldVersion);
+    const oldArchive = join(vault, oldVersion);
+    await cp(join(vault, runtimeVersion), oldArchive, { recursive: true });
+
+    const oldManifestPath = join(oldArchive, ".codex-plugin", "plugin.json");
+    const oldManifest = JSON.parse(await readFile(oldManifestPath, "utf8"));
+    oldManifest.version = oldVersion;
+    await writeFile(oldManifestPath, JSON.stringify(oldManifest));
+    const oldRuntimePath = join(oldArchive, "runtime.json");
+    const oldRuntime = JSON.parse(await readFile(oldRuntimePath, "utf8"));
+    oldRuntime.runtimeVersion = oldVersion;
+    await writeFile(oldRuntimePath, JSON.stringify(oldRuntime));
+    const oldHooksPath = join(oldArchive, "hooks", "hooks.json");
+    const oldHooks = JSON.parse(await readFile(oldHooksPath, "utf8"));
+    delete oldHooks.hooks.SessionStart;
+    const archivedHooks = `${JSON.stringify(oldHooks, null, 2)}\n`;
+    await writeFile(oldHooksPath, archivedHooks);
+    await writeFile(join(vault, "index.json"), `${JSON.stringify({
+      schemaVersion: 1,
+      directories: [oldVersion, runtimeVersion].sort(),
+    })}\n`);
+    await rm(oldRoot, { recursive: true, force: true });
+
+    const repaired = runManager(project, fake, ["repair", "--non-interactive"]);
+    assert.equal(repaired.status, 0, repaired.stderr);
+    assert.match(repaired.stdout, /Restored 1 compatible historical Router runtime shell/iu);
+    assert.equal(await readFile(join(oldRoot, "hooks", "hooks.json"), "utf8"), archivedHooks);
+    assert.equal(
+      JSON.parse(await readFile(join(oldRoot, "runtime.json"), "utf8")).runtimeVersion,
+      oldVersion,
+    );
+    assert.equal(
+      JSON.parse(await readFile(join(currentRoot, "runtime.json"), "utf8")).runtimeVersion,
+      runtimeVersion,
+    );
+    assert.deepEqual((await state(fake)).mutations.map((args) => args.join(" ")), [
+      "plugin marketplace add Neil0619/adaptive-model-router --ref stable",
+      "plugin add adaptive-model-router@adaptive-model-router",
+    ]);
+
+    const currentArchiveHooksPath = join(vault, runtimeVersion, "hooks", "hooks.json");
+    const currentArchiveHooks = JSON.parse(await readFile(currentArchiveHooksPath, "utf8"));
+    const verifiedCurrentArchiveHooks = structuredClone(currentArchiveHooks);
+    currentArchiveHooks.untrustedCurrentSurface = true;
+    await writeFile(currentArchiveHooksPath, JSON.stringify(currentArchiveHooks));
+    const rejected = runManager(project, fake, ["repair", "--non-interactive"]);
+    assert.equal(rejected.status, 5);
+    assert.match(rejected.stderr, /RUNTIME_VAULT_DAMAGED/iu);
+    assert.equal(
+      JSON.parse(await readFile(join(currentRoot, "runtime.json"), "utf8")).runtimeVersion,
+      runtimeVersion,
+    );
+
+    await writeFile(currentArchiveHooksPath, JSON.stringify(verifiedCurrentArchiveHooks));
+    await rm(oldRoot, { recursive: true, force: true });
+    const unknownEventHooks = structuredClone(oldHooks);
+    unknownEventHooks.hooks.FutureEvent = unknownEventHooks.hooks.Stop;
+    await writeFile(oldHooksPath, JSON.stringify(unknownEventHooks));
+    const unknownEvent = runManager(project, fake, ["repair", "--non-interactive"]);
+    assert.equal(unknownEvent.status, 5);
+    assert.match(unknownEvent.stderr, /RUNTIME_VAULT_RESTORE_FAILED/iu);
+
+    await rm(oldRoot, { recursive: true, force: true });
+    const missingBaseEventHooks = structuredClone(oldHooks);
+    delete missingBaseEventHooks.hooks.Stop;
+    await writeFile(oldHooksPath, JSON.stringify(missingBaseEventHooks));
+    const missingBaseEvent = runManager(project, fake, ["repair", "--non-interactive"]);
+    assert.equal(missingBaseEvent.status, 5);
+    assert.match(missingBaseEvent.stderr, /RUNTIME_VAULT_RESTORE_FAILED/iu);
   } finally {
     await project.cleanup();
   }

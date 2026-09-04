@@ -28,6 +28,7 @@ function help() {
 
 Usage:
   node scripts/codex-route.mjs doctor [--context ID]
+  node scripts/codex-route.mjs hook-doctor
   node scripts/codex-route.mjs status [--context ID]
   node scripts/codex-route.mjs history [--context ID] [--limit 20] [--action all|delegate|continue|ask_user]
   node scripts/codex-route.mjs catalog
@@ -43,14 +44,18 @@ Usage:
 
 async function main() {
   assertRuntime();
+  const args = parseArgs(process.argv.slice(2));
+  const command = args._[0] || "doctor";
+  if (command === "hook-doctor") {
+    const { readHookIdentityDiagnostic } = await import("./lib/hook-diagnostics.mjs");
+    return print(readHookIdentityDiagnostic());
+  }
   const [{ getModelCatalog }, { RouterStore }, { importLegacySettingsAndPolicy }, { callRouterTool }] = await Promise.all([
     import("./lib/catalog.mjs"),
     import("./lib/database.mjs"),
     import("./lib/legacy.mjs"),
     import("./lib/service.mjs"),
   ]);
-  const args = parseArgs(process.argv.slice(2));
-  const command = args._[0] || "doctor";
   const contextId = String(args.context || process.env.CODEX_THREAD_ID || "developer-cli");
   const store = new RouterStore();
   try {

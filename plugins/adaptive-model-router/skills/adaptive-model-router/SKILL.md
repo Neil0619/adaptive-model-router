@@ -24,6 +24,12 @@ bridge has also been tried.
 
 The bridge is allowed only when a trusted Router Hook injected the exact fixed
 `contextId` for the current task. Never invent, derive, or replace that value.
+The stable identity is the host-provided non-empty `session_id`; `turn_id` is
+ephemeral audit metadata and must never be used as a fallback. After root-task
+compaction, the trusted `SessionStart(source=compact)` Hook re-injects the same
+task context before the immediate continuation. If it is absent, run
+`node scripts/codex-route.mjs hook-doctor` from the installed plugin root to
+distinguish an undispatched Hook from a dispatched Hook missing `session_id`.
 Resolve `<plugin-root>` as the directory containing this skill's `skills/`
 directory, read `<plugin-root>/.mcp.json`, and start its exact `command` with
 `<plugin-root>/scripts/stdio-tool.mjs` as the sole argument. The helper accepts
@@ -33,9 +39,36 @@ one JSON document on stdin with this shape and exits after one call:
 {"name":"route_stage","arguments":{"goal":"...","phase":"...","evidence":{},"contextId":"hook-injected-id"}}
 ```
 
-Use the host's command-session input tool to send the JSON as one line followed
-by a newline. The helper processes that first line and exits without requiring
-the session input stream to be closed. The bridge invokes the installed MCP
+Prefer one atomic invocation that supplies the request inside the same command
+execution. On POSIX shells, use a literal here-document; replace both paths and
+the JSON values, but keep the quoted delimiter exactly as shown:
+
+```sh
+<exact-command> <plugin-root>/scripts/stdio-tool.mjs <<'ADAPTIVE_ROUTER_REQUEST'
+{"name":"route_stage","arguments":{"goal":"...","phase":"...","evidence":{},"contextId":"hook-injected-id"}}
+ADAPTIVE_ROUTER_REQUEST
+```
+
+This is a single command execution and does not require a `session_id` or
+`write_stdin`. The quoted delimiter prevents the JSON from being interpreted by
+the shell. On PowerShell, use the equivalent single-command PowerShell
+here-string piped to the exact command and helper path. Never launch the helper
+as a one-shot command with no input payload and wait for it to exit; that does
+not call Router at all.
+
+Only when literal input cannot be embedded in the command and the host actually
+returns writable command sessions, call `exec_command` with `tty: true` and a
+short yield, require its returned `session_id`, then immediately call
+`write_stdin` for that session with the JSON as one line followed by a newline.
+The helper processes the first line and exits without requiring the session
+input stream to be closed.
+
+If the helper reports that it "timed out before receiving JSON", classify that
+as a caller input-delivery failure, not an MCP transport failure. Retry exactly
+once with the atomic literal-input command above. Do not repeat a bare helper
+launch or assume a command is writable merely because it stayed alive.
+Do not apply this corrective retry to an internal `stdio bridge timed out`
+failure after a request was received. The bridge invokes the installed MCP
 `tools/call`; treat a response with
 `transport="stdio-bridge"` and `isError=false` exactly like the corresponding
 native tool result. Use the same bridge for `record_outcome` and approved
@@ -70,16 +103,30 @@ stage-local suppression does not change the global or session Router setting.
    - `previousRouteId` only when continuing or retrying a route returned earlier;
    - an `override` only when the user explicitly requested a model or effort for this call.
    - `hostCapabilities.delegation` whenever the host exposes the bounded
-     subagent tool contract. Set `available` factually and copy only the
-     supported model slugs and reasoning-effort enums into `targets`. Do not
-     infer bounded-subagent support from the root model picker, the observed
-     root slug, or `models_cache.json`. `evidence.hostCanDelegate` remains a
-     deprecated compatibility signal; omit it when the richer capability is
-     supplied.
+     subagent tool contract. Set `invocation: "direct"` only when
+     `spawn_agent` is callable as a direct native tool outside
+     `functions.exec`, then set `available` factually and copy only the
+     supported model slugs and reasoning-effort enums into `targets`. A tool
+     found only in `ALL_TOOLS` inside code mode is not a direct capability:
+     report `available: false`, `invocation: "code_mode_nested"`, and an empty
+     target list. Do not infer bounded-subagent support from the root model
+     picker, the observed root slug, or `models_cache.json`.
+     `evidence.hostCanDelegate` remains a deprecated compatibility signal;
+     omit it when the richer capability is supplied.
 2. Follow the returned `action`:
    - `continue`: keep working in the current root task. Do not create a subagent.
    - `ask_user`: explain the reason code and obtain the missing decision.
-   - `delegate`: create exactly one bounded subagent by passing `target.model` to the host's `model` parameter and `target.effort` to the host's `reasoning_effort` parameter, if the host supports them.
+   - `busy`: another Router-managed delegation still owns this task context.
+     Do not create an Agent, do not call `record_outcome` for the busy
+     decision, and do not retry `route_stage`. Report `blockingRouteId` and
+     continue root-only until that exact delegation has a safely correlated
+     child terminal event and recorded outcome.
+   - `delegate`: create exactly one bounded subagent by calling the direct native `spawn_agent` tool outside `functions.exec`, passing `target.model` to the host's `model` parameter and `target.effort` to the host's `reasoning_effort` parameter. Make the `route_stage` `goal` and `phase` the complete bounded task capsule. The route also returns a one-shot `carrier`: pass `carrier.taskName` as the exact `task_name`, pass `carrier.message` as the exact `message`, and pass `fork_turns: "none"`. Codex encrypts the direct tool's message parameter; the trusted `PreToolUse` hook consumes and validates the ticket in the non-encrypted task name, verifies the target model, effort, and existing no-history mode, and deliberately emits no `updatedInput`, preserving the host-owned ciphertext. The trusted `SubagentStart` hook then correlates the child through host-written thread-spawn metadata and injects the bounded Router context package only into that exact child. Never route the carrier through a code-mode nested tool, omit, modify, reuse, or log the task-name ticket, or add caller text to the activation message.
+     `list_agents` reports already-created agents; an empty list is never proof
+     that direct `spawn_agent` is unavailable. Once this context has completed a
+     direct child dispatch, do not downgrade the declared direct capability
+     unless the current direct `spawn_agent` call actually rejects before a
+     child is created.
      `delegate` is a required action, not a suggestion. This applicable skill
      instruction is the explicit request that satisfies conditional multi-agent policies
      which allow subagents when a skill requests delegation. When the declared host
@@ -92,6 +139,8 @@ stage-local suppression does not change the global or session Router setting.
    - when `rootTask.modelVisibility` is `hook_observed`, show `rootTask.model`; its reasoning effort remains visible only in the Codex composer;
    - for `delegate`, show `target.model`, `target.effort`, and `routeId`;
    - for `continue` or `ask_user`, show the action, reason codes, and `routeId`;
+   - for `busy`, show the reason codes, non-recordable decision `routeId`, and
+     `blockingRouteId`;
    - never label a bounded subagent target as the current root-task model.
    - never call a `delegate` result a recommendation or claim that a conditional
      no-proactive-subagent policy prevented the required launch.
@@ -100,7 +149,26 @@ stage-local suppression does not change the global or session Router setting.
    and localize labels to the user's language.
 4. When delegation is unavailable in the current host, fail open by continuing with the current model. Do not claim that the root task model changed.
 5. Keep the delegated scope concrete and bounded. The root owns orchestration, integration, user communication, and verification. Never create overlapping writers.
-6. Run the returned `verificationGate` at the root. Then call `record_outcome` once with the route ID and the exact final outcome schema, including all four `retryBreakdown` counters whose sum equals `retries`.
+6. Run the returned `verificationGate` at the root. Call `record_outcome` once
+   only after the matching `spawn_agent` dispatch handshake has consumed the
+   route ticket; a route decision by itself is not an executable attempt and
+   must not receive an outcome. Use the delegated route ID and the exact final
+   outcome schema, including all four `retryBreakdown` counters whose sum equals
+   `retries`. A recorded outcome does not release the context gate by itself:
+   release also requires a safely correlated `PostToolUse` plus `SubagentStop`
+   (or an explicit host proof that no child was created). On direct v2 hosts, a
+   task-name-only `PostToolUse` may arrive before `SubagentStart`; it keeps the
+   gate occupied while the trusted child claim supplies the agent identity and
+   is not by itself an ambiguity or release signal. If the root tries to stop
+   before dispatching a delegated route, the Stop hook blocks that stop once
+   and names the required `spawn_agent` action; the re-entered stop is allowed
+   only to prevent a hook loop. If the ticket is still unconsumed on that
+   guarded re-entry, the Router marks the lifecycle ambiguous and retains its
+   gate, one-shot carrier material, and child-space reservation. Without
+   authoritative no-child evidence it never archives the attempt or permits a
+   replacement child. This creates neither an outcome nor a `no_child` claim
+   and is not a successful verification. Consumed or ambiguous attempts remain
+   fail-closed. The root `Stop` hook never fabricates an `unknown` outcome.
 
 Map the router's `target.effort` value to the current Codex subagent `reasoning_effort` parameter. Do not submit an `effort` parameter to a host that does not define one, and do not invent `agentType`, `agent_type`, or other unsupported parameters.
 
@@ -108,13 +176,15 @@ Map the router's `target.effort` value to the current Codex subagent `reasoning_
 
 On a verification failure, route the next attempt with the prior `routeId`, `verificationFailed: true`, and an enumerated `failureType`. Reasoning failures escalate monotonically at most twice in the exact effort order `high < xhigh < max < ultra`. Static routing never starts at Ultra, and Max requires the hard-signal gate. Environment, missing-information, and tooling failures do not justify a stronger effort. After the automatic limit, ask the user instead of silently changing targets. If an Ultra stage would create parallel writers, pass `parallelWriteRisk: true` and respect the returned `ask_user`.
 
-If the host rejects a returned bounded target before the subagent starts,
-record that route immediately as `failed` with `failureType: tooling`. For an
-automatic route, call `route_stage` once more with that `previousRouteId` and
-the tooling-failure evidence; the router excludes the rejected model. For an
-explicit route, it returns `ask_user` instead of substituting. If the one
-automatic retry is also rejected, record it as `failed/tooling` and continue in
-the root; never loop. A route decision is not proof that the subagent started.
+If the host explicitly proves that no Agent was created, record the delegated
+route as `failed` with `failureType: tooling`; a safely correlated
+`PostToolUse` proof and that outcome release the gate. If ticket validation is
+denied, the launch result is ambiguous, the transcript cannot be measured, or
+the lifecycle hooks fail, fail closed: do not retry Agent, do not invent an
+outcome merely to release the gate, and do not call `route_stage` again into a
+known `busy` gate. Continue root-only and report the concrete Router/host
+failure. A route decision or generic tool error is not proof that no subagent
+started.
 
 Root, delegate, and classifier model availability are separate. Luna may be
 visible as a root model or usable by the classifier's independent ephemeral

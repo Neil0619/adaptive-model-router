@@ -1,6 +1,20 @@
 {
   "description": "Apply router controls, isolate bounded subagents, and enforce delegated-stage outcomes.",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "^compact$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/node-launcher.mjs\" \"$PLUGIN_ROOT/scripts/hook.mjs\" session-start",
+            "commandWindows": "node -e \"const path=require('node:path');const {pathToFileURL}=require('node:url');const root=process.env.PLUGIN_ROOT;const launcher=path.join(root,'scripts','node-launcher.mjs');process.argv=[process.execPath,launcher,path.join(root,'scripts','hook.mjs'),'session-start'];import(pathToFileURL(launcher).href)\"",
+            "timeout": 15,
+            "statusMessage": "Restoring Adaptive Model Router context after compaction"
+          }
+        ]
+      }
+    ],
     "SubagentStart": [
       {
         "hooks": [
@@ -10,6 +24,47 @@
             "commandWindows": "node -e \"const path=require('node:path');const {pathToFileURL}=require('node:url');const root=process.env.PLUGIN_ROOT;const launcher=path.join(root,'scripts','node-launcher.mjs');process.argv=[process.execPath,launcher,path.join(root,'scripts','hook.mjs'),'subagent-start'];import(pathToFileURL(launcher).href)\"",
             "timeout": 15,
             "statusMessage": "Isolating bounded router subagent"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^(?:Agent|spawn_agent|collaborationspawn_agent)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/node-launcher.mjs\" \"$PLUGIN_ROOT/scripts/hook.mjs\" pre-tool-use",
+            "commandWindows": "node -e \"const path=require('node:path');const {pathToFileURL}=require('node:url');const root=process.env.PLUGIN_ROOT;const launcher=path.join(root,'scripts','node-launcher.mjs');process.argv=[process.execPath,launcher,path.join(root,'scripts','hook.mjs'),'pre-tool-use'];import(pathToFileURL(launcher).href)\"",
+            "timeout": 15,
+            "statusMessage": "Validating Adaptive Router delegation ticket"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(?:Agent|spawn_agent|collaborationspawn_agent)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/node-launcher.mjs\" \"$PLUGIN_ROOT/scripts/hook.mjs\" post-tool-use",
+            "commandWindows": "node -e \"const path=require('node:path');const {pathToFileURL}=require('node:url');const root=process.env.PLUGIN_ROOT;const launcher=path.join(root,'scripts','node-launcher.mjs');process.argv=[process.execPath,launcher,path.join(root,'scripts','hook.mjs'),'post-tool-use'];import(pathToFileURL(launcher).href)\"",
+            "timeout": 15,
+            "statusMessage": "Correlating Adaptive Router child"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$PLUGIN_ROOT/scripts/node-launcher.mjs\" \"$PLUGIN_ROOT/scripts/hook.mjs\" subagent-stop",
+            "commandWindows": "node -e \"const path=require('node:path');const {pathToFileURL}=require('node:url');const root=process.env.PLUGIN_ROOT;const launcher=path.join(root,'scripts','node-launcher.mjs');process.argv=[process.execPath,launcher,path.join(root,'scripts','hook.mjs'),'subagent-stop'];import(pathToFileURL(launcher).href)\"",
+            "timeout": 15,
+            "statusMessage": "Recording Adaptive Router child completion"
           }
         ]
       }

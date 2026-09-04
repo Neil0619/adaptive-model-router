@@ -49,11 +49,35 @@ files, or Codex credentials into a public issue.
    once; later compatible upgrades inherit the same invariant and fail rather
    than reporting a false success.
 
+   If raw `codex plugin add` was run after the last managed install, or a Codex
+   update replaced the Desktop runtime directory that held the compatibility
+   shim, repair the healthy registration in place:
+
+   ```bash
+   ./install.sh repair
+   ```
+
+   ```powershell
+   .\install.ps1 -Action Repair
+   ```
+
+   Repair performs no marketplace mutation and no plugin re-registration. It
+   recreates the current-process shim, rewrites every compatible installed MCP
+   and active-platform Hook launch field to the qualifying absolute Node path,
+   and verifies those exact commands with an empty `PATH`. Those materialized
+   commands remain valid after a later host-runtime replacement even though the
+   temporary shim is host-directory scoped.
+
    For already-loaded bare Hook commands, the installer must also print the
    owned Desktop shim path and prove that exact shim under Desktop's reduced
    `PATH`. An unresolved platform location, an existing unowned shim, or a
    failed probe is a failed continuity repair. Do not interpret a skipped shim
    as successful in-place recovery.
+
+   `codex mcp list` proves only that a registration exists; it does not prove
+   that Desktop successfully spawned the stdio process or completed the MCP
+   handshake. Use the repair probes or an actual Router tool call as liveness
+   evidence.
 
    Hook trust is recorded against the exact definition hash. The one-time
    repair changes that definition, so review and trust the repaired Hooks once.
@@ -72,6 +96,17 @@ files, or Codex credentials into a public issue.
    cache bridge, and source-checkout bridge all resolve the same stable plugin
    data directory. A transport failure is reported as a bridge failure, never
    disguised as a `route_stage` `continue` result.
+
+   Starting `stdio-tool.mjs` as a one-shot command without an stdin payload
+   never calls Router. With a one-shot POSIX command tool, include the one-line
+   JSON in the same command through a quoted literal here-document; with
+   PowerShell, pipe a literal here-string to the helper. This path does not need
+   a PTY, session ID, or a second `write_stdin` call. Use the writable-session
+   sequence only when the host actually returns such a session. An error saying
+   "timed out before receiving JSON" is a caller input-delivery failure; retry
+   once with the atomic literal-input form instead of repeating the bare launch.
+   It is distinct from `stdio bridge timed out`, which means the request was
+   received but the internal MCP call did not finish.
 
 4. After trusting the current Hooks, a cold first install with
    `--verify-task-tools` or `-VerifyTaskTools` uses one disposable Codex CLI task
@@ -126,13 +161,145 @@ remain on the default protected `stable` branch.
 ## Hooks are installed but do not run
 
 Plugin installation does not automatically trust command hooks. In Codex, open
-`/hooks`, review the installed definitions, and trust the `SubagentStart`,
-`UserPromptSubmit`, and `Stop` handlers. Trust is tied to the definition hash,
-so changed hooks require review again.
+`/hooks`, review the installed definitions, and trust all seven handlers:
+`SessionStart(source=compact)`, `SubagentStart`, `SubagentStop`,
+`PreToolUse(Agent)`, `PostToolUse(Agent)`, `UserPromptSubmit`, and `Stop`.
+Trust is tied to the definition hash, so changed hooks require review again.
+
+If a task reports that no trusted `contextId` is available after compaction,
+run `node scripts/codex-route.mjs hook-doctor` from the installed plugin root.
+`HOOK_DISPATCH_NOT_OBSERVED` means no Router identity Hook has recorded a run;
+`HOOK_DISPATCHED_MISSING_SESSION_ID` means the Hook ran but Codex supplied no
+stable `session_id`. The report never contains the raw session or turn ID.
 
 Do not use `--dangerously-bypass-hook-trust` for normal installation or smoke
 testing. Also check that hooks have not been disabled by local or managed Codex
 configuration.
+
+## Routing stays root-only because lifecycle Hooks are not ready
+
+Before it can return `delegate`, the Router reads the current Hook inventory
+through Codex's read-only `hooks/list` API. It never edits Codex configuration
+or accepts Hook trust automatically.
+
+- `HOOK_TRUST_REQUIRED`: at least one exact current Router Hook is disabled or
+  not trusted. Review `/hooks` and explicitly trust the definitions if they are
+  expected.
+- `HOST_HOOK_SET_MISMATCH`: the host-loaded Router Hook definitions do not
+  exactly match the active plugin installation. Reinstall or repair the plugin,
+  then start the required fresh task.
+- `HOST_HOOK_STATUS_UNAVAILABLE`: the read-only inventory could not be obtained.
+  Keep working in the root task and diagnose the Codex/app-server availability;
+  do not retry delegation in a loop.
+- `HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN`: the trusted inventory does not have a
+  source-owned native proof that the exact host Agent path dispatches the
+  complete lifecycle. Continue in the root task; trust alone is not a fix.
+
+All four results create no Agent, no delegation ticket, and no occupied gate.
+
+`HOST_LIFECYCLE_QUALIFICATION` is a distinct `delegate` result on supported
+native macOS builds, not ordinary work: launch its exact fixed no-tool carrier
+once, verify the child, and record the outcome through MCP. The server audits
+the native lifecycle and complete raw transcript itself; a caller's passed
+flag is insufficient. After success, route the original stage again.
+`HOST_LIFECYCLE_QUALIFICATION_FAILED` keeps the task root-only after a failed
+self-test. A changed proof binding returns `HOST_HOOK_SET_MISMATCH`; neither
+condition silently creates a replacement qualification. If its gate remains
+occupied, preserve the evidence and follow the existing reconciliation rules.
+
+### Inspect a failed qualification without resetting it
+
+The operator-only `scripts/reconcile-delegation.mjs` defaults to inspection.
+Run it with the affected project's working directory, not the plugin-cache
+directory, and use an absolute path to the script when necessary:
+
+```sh
+node /absolute/plugin/scripts/reconcile-delegation.mjs --context <task-id> --route <route-id>
+```
+
+The legacy recovery adapter remains limited to its original unconsumed-child
+incident. A separate `native-thread-delegation-recovery/3` branch accepts only
+the supported `0.153.0` failed no-tool qualification: exact consumed Pre/Post,
+no child claim or Stop, one retained tooling-failure outcome, matching stored
+qualification binding, one native completed child, and two stable complete raw
+no-tool audits. Hidden actions, changed identities, duplicate/resumed children,
+incomplete source records, and state changes remain unresolved. Historical
+parent metadata does not replace the qualification's actual child-build binding.
+
+`recoverable` is not an applied recovery or permission to retry. After separate
+operator approval and a database backup, `--apply --expect-digest <digest>`
+revalidates the sources and exact durable state in the final transaction. It
+preserves the failed outcome and qualification, leaves missing lifecycle fields
+missing, records a distinct recovery receipt and accounts physical bytes once.
+It does not reset qualification, enable ordinary delegation, or create a child.
+Investigating missing Start/Stop still requires actual Hook-event evidence;
+successful recovery alone does not repair that dispatch path.
+
+### Explicitly authorize one diagnostic requalification
+
+Only after the operator approves another fixed no-tool self-test, use
+`scripts/authorize-requalification.mjs` from the affected project directory.
+It requires the exact `/3` recovery receipt and unchanged original failure:
+
+```sh
+node /absolute/plugin/scripts/authorize-requalification.mjs --context <task-id> --route <failed-route-id>
+node /absolute/plugin/scripts/authorize-requalification.mjs --context <task-id> --route <failed-route-id> --approve-one-no-tool-requalification --expect-digest <fresh-inspection-digest>
+```
+
+The authorization expires after one hour and binds the task, recovered state,
+current runtime, executable/Hook configuration, and task directory. Inspection
+does not authorize anything. Admission atomically archives the complete old
+failed qualification and consumes the authorization while creating one new
+fixed qualification; the original route, outcome and recovery receipt remain
+unchanged. Replay, expiry, changed sources or state, and another occupied gate
+cannot create a replacement. There is no public MCP permission flag or model
+override for this operation, and it never directly enables ordinary delegation.
+
+The same authorization temporarily enables task-scoped lifecycle diagnostics.
+Records contain only enumerated stages/reasons, field types, hashes and boolean
+identity comparisons, never prompts, carriers, tool input/output or raw paths.
+The current writer requires private POSIX file modes and refuses output when
+group/other permission bits are present. Windows does not expose that private-mode
+attestation through Node's file modes, so its CI checks refusal rather than claiming
+successful capture. Native Windows capture qualification remains deferred.
+The private diagnostic file is bounded to 64 KiB per run (concurrent writers can
+add at most their already-bounded pending records). These observations help
+locate a failure; they are not admission or lifecycle proof. Disable capture
+after the one test, including when it fails:
+
+```sh
+node /absolute/plugin/scripts/authorize-requalification.mjs --context <task-id> --close-diagnostics
+```
+
+Closing capture rejects newly started records; it is not an I/O drain barrier.
+A bounded record that passed its authorization check before closure or expiry
+may finish afterward, just as concurrent writers may finish within the stated
+in-flight allowance above. Close capture after the self-test's complete terminal
+verification, not as a substitute for waiting for that verification.
+Closing capture never re-arms authorization or changes a qualification result.
+The diagnostic facility remains inactive by default and automatically expires;
+retained redacted evidence lives under the plugin data `diagnostics/` directory.
+
+## A child fails with an encrypted-content decode error
+
+Do not retry the same route. First inspect how `spawn_agent` was invoked. The
+supported Router path is the direct native collaboration tool call outside
+`functions.exec`. A spawn function discovered only through code mode or
+`ALL_TOOLS` inside an exec cell is not equivalent: that path can pass literal
+plaintext where the v2 collaboration runtime expects host-encrypted message
+content.
+
+Report that host as `hostCapabilities.delegation.available: false` with
+`invocation: "code_mode_nested"` and an empty target list. The Router then
+returns `continue / HOST_DELEGATION_UNAVAILABLE` and performs the stage in the
+root. Preserve the failed attempt for lifecycle audit until its child terminal
+state is proven; never fabricate a no-child result or launch a replacement into
+the occupied gate.
+
+On a host with the direct native tool, pass the carrier unchanged with
+`fork_turns: "none"`. The Router `PreToolUse` hook validates and consumes the
+ticket but intentionally emits no `updatedInput`, so Codex retains ownership of
+the encrypted message envelope.
 
 ## Ordinary tasks do not trigger automatic routing
 
@@ -155,7 +322,7 @@ may still continue in the root task by design.
 
 This indicates that an old hook treated the child's model as a new root model
 and recursively injected automatic routing. Upgrade to the current v0.4
-candidate, review all three changed hook definitions, and start a fresh task.
+candidate, review all seven changed hook definitions, and start a fresh task.
 In the fixed version, `SubagentStart` and subagent-marked prompt hooks tell the
 child to execute only its assigned scope. The child must not call
 `route_stage`, change model-intent state, or own `record_outcome`; the root
@@ -237,9 +404,10 @@ release.
 
 ## PowerShell cannot run `install.ps1`
 
-The primary installation path uses native `codex plugin` commands and does not
-require the wrapper. If a reviewed local copy of `install.ps1` downloaded as an
-archive is blocked, inspect it first and remove only that file's download mark:
+The supported installation path uses the reviewed repository wrapper so the
+portable launch placeholders are materialized after native Codex registration.
+If a reviewed local copy of `install.ps1` downloaded as an archive is blocked,
+inspect it first and remove only that file's download mark:
 
 ```powershell
 Unblock-File .\install.ps1
@@ -271,8 +439,12 @@ Inspect `reasonCodes`:
 
 - `TRIVIAL_CONTINUE` or `NO_WORK_PRODUCT`: the stage was intentionally kept in
   the root task.
-- `HOST_DELEGATION_UNAVAILABLE`: the current host cannot create the requested
-  bounded subagent.
+- `HOST_DELEGATION_UNAVAILABLE`: the current direct `spawn_agent` surface is
+  unavailable. Do not infer this from an empty `list_agents` result. If this
+  task already completed a direct Router child, the claim must be tied to an
+  actual no-child tooling rejection.
+- `ROOT_LOCAL_RETRY`: a failed root-local `continue` stage was routed again;
+  this does not represent or increment subagent effort escalation.
 - `CATALOG_UNAVAILABLE`: no usable visible known-model catalog was available;
   the router failed open to the root task.
 - `ROUTER_DISABLED`: routing is disabled at an active scope.
@@ -316,10 +488,32 @@ ephemeral app-server. Those facts do not make it a bounded target. With a
 Sol/Terra-only delegate catalog, automatic Luna preferences fall back to Terra;
 an explicit Luna override returns `ask_user`.
 
-If a model declared by the host is nevertheless rejected at startup, record
-the route as `failed/tooling` and reroute once with its `previousRouteId`.
-After a second rejection, continue in the root and inspect the current host
-tool contract instead of retrying indefinitely.
+If a model declared by the host is nevertheless rejected at startup, retry only
+when the Agent result explicitly proves that no child was created. A generic
+error is ambiguous: continue in the root, do not launch another Agent, and
+inspect the current host tool contract instead of retrying indefinitely.
+
+## Routing returns `busy`
+
+`busy` means this task already has one unresolved Router-managed delegation.
+Do not create another Agent, do not record an outcome for the non-persisted
+`busy.routeId`, and do not loop on `route_stage`. Use `router: status` to inspect
+the reported `blockingRouteId`. The gate becomes available only after the
+matching `PostToolUse`, a child terminal observation (`SubagentStop` or explicit
+no-child proof), and the delegated route's outcome are all recorded.
+
+On direct multi-agent v2 hosts, `PostToolUse` can arrive first with only the
+exact returned task name. This is a valid pending handshake, not proof of an
+unknown child: the gate remains occupied until the trusted `SubagentStart`
+claims that ticket and supplies the agent identity, then `SubagentStop` records
+the measured transcript. A conflicting task name or agent identity still marks
+the attempt ambiguous and never releases it automatically.
+
+If status reports `ambiguous: true`, keep working root-only. Do not clear the
+gate automatically because the child lifecycle is not proven. A genuinely new
+task has a new context and can route independently; `clear_project_data` is a
+separate destructive last resort that also removes that project's learning
+history.
 
 ## No model target or history is visible
 
@@ -372,6 +566,12 @@ The classifier has one eight-second total deadline. Three consecutive failures
 open a ten-minute circuit breaker. Routing continues with the deterministic
 local policy.
 
+The classifier must reuse the host's authenticated App Server store while
+setting `thread/start.ephemeral=true`. If initialization repeatedly times out,
+verify that the runtime is not redirecting `CODEX_SQLITE_HOME` to a new empty
+directory. An ephemeral thread prevents task persistence; an empty SQLite home
+removes the login/session state required to initialize the current host.
+
 For zero classifier app-server calls, configure `classifierMode` as
 `local-only` or `disabled`, or set:
 
@@ -379,22 +579,32 @@ For zero classifier app-server calls, configure `classifierMode` as
 ADAPTIVE_ROUTER_LOCAL_ONLY=1
 ```
 
-## Hook feedback asks for `record_outcome`
+## Hook feedback says a delegated route was not launched
 
-Updated v0.4 runtimes do not block task completion solely because a delegated
-route lacks an outcome. The Stop hook records `unknown`, excludes that result
-from learning, and lets the user-facing reply finish. If Codex instead inserts a
-`Hook feedback` continuation asking for `record_outcome`, the task is running an
-older plugin runtime. Upgrade the configured marketplace, reinstall the plugin,
-and start a fresh task when the Hook definition changed.
+The current Stop hook blocks the first stop when `route_stage` returned
+`delegate` but its ticket was never consumed. Use that same route's exact
+carrier to call direct `spawn_agent`; do not call `route_stage` again and do not
+write an outcome first. The guarded Stop re-entry is allowed only to avoid an
+infinite hook loop. If its ticket is still unconsumed, that re-entry marks the
+lifecycle ambiguous and retains the gate and reservation. It never invents an
+outcome or `no_child` proof, archives the attempt, or launches a replacement.
+If a current runtime instead asks for outcome bookkeeping
+without requiring dispatch, verify the installed runtime and Hook definitions.
+
+When opening existing v5 storage, the current runtime also quarantines the one
+legacy state that is provably invalid under this contract: an unconsumed ticket
+that an older runtime already paired with an outcome. It retains the route and
+outcome audit rows, marks the attempt ambiguous and terminal, clears the
+one-shot carrier material, and does not reinterpret it as child execution.
 
 ## Outcome is rejected
 
-`record_outcome` accepts delegated route IDs only. Use the same `contextId` as
-the route, the exact verification-gate enum, an allowed status, and consistent
-failure fields. `retryBreakdown` must contain all four failure-type counters and
-sum exactly to `retries`. Repeating an identical outcome is safe; changing an
-already recorded final outcome is rejected.
+`record_outcome` accepts delegated route IDs only, and the first write requires
+the matching dispatch handshake to have consumed the route ticket. Use the same
+`contextId` as the route, the exact verification-gate enum, an allowed status,
+and consistent failure fields. `retryBreakdown` must contain all four
+failure-type counters and sum exactly to `retries`. Repeating an identical
+outcome is safe; changing an already recorded final outcome is rejected.
 
 ## Data cleanup
 

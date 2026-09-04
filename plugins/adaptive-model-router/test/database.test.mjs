@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { recordOutcome } from "../scripts/lib/learning.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
-import { CATALOG, routeInput, temporaryProject } from "./fixtures.mjs";
+import { CATALOG, observeNoChildRoute, routeInput, temporaryProject } from "./fixtures.mjs";
 
 test("writer timeout makes route fail open, outcome fail explicitly, and storage recover after lock release", async () => {
   const project = await temporaryProject();
@@ -15,6 +15,7 @@ test("writer timeout makes route fail open, outcome fail explicitly, and storage
     const contender = new RouterStore({ path: database, timeout: 25 });
     const initial = await routeStage(routeInput({ contextId: "lock" }), { catalog: CATALOG, cwd: project.root, store: contender });
     assert.equal(initial.action, "delegate");
+    observeNoChildRoute(initial, { cwd: project.root, contextId: "lock", store: contender });
     owner.db.exec("BEGIN IMMEDIATE");
     try {
       const degraded = await routeStage(routeInput({ contextId: "lock-2" }), { catalog: CATALOG, cwd: project.root, store: contender });
@@ -63,21 +64,21 @@ test("storage contract accepts additive future schemas and rejects incompatible 
     initial.close();
     const future = new DatabaseSync(compatiblePath);
     future.exec("CREATE TABLE future_additive_feature(id TEXT PRIMARY KEY)");
-    future.exec("PRAGMA user_version = 4");
+    future.exec("PRAGMA user_version = 6");
     future.close();
 
     const compatible = new RouterStore({ path: compatiblePath });
     const context = compatible.context({ cwd: project.root, contextId: "forward" });
     const diagnosis = compatible.diagnose(context);
-    assert.equal(diagnosis.databaseVersion, 4);
-    assert.equal(diagnosis.supportedDatabaseVersion, 3);
-    assert.equal(diagnosis.storageContractVersion, 1);
+    assert.equal(diagnosis.databaseVersion, 6);
+    assert.equal(diagnosis.supportedDatabaseVersion, 5);
+    assert.equal(diagnosis.storageContractVersion, 2);
     assert.equal(diagnosis.databaseCompatibility, "forward_compatible");
     compatible.close();
 
     const incompatible = new DatabaseSync(incompatiblePath);
     incompatible.exec("CREATE TABLE unrelated(id TEXT PRIMARY KEY)");
-    incompatible.exec("PRAGMA user_version = 4");
+    incompatible.exec("PRAGMA user_version = 6");
     incompatible.close();
     assert.throws(
       () => new RouterStore({ path: incompatiblePath }),

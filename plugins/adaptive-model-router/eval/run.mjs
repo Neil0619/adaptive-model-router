@@ -24,6 +24,7 @@ const catalog = [
 const hostCapabilities = {
   delegation: {
     available: true,
+    invocation: "direct",
     targets: catalog
       .filter((entry) => !entry.slug.endsWith("-luna"))
       .map((entry) => ({
@@ -52,7 +53,10 @@ try {
   let riskTotal = 0;
   let riskRecalled = 0;
   const mismatches = [];
+  let routeIndex = 0;
   for (const item of dataset.routes) {
+    process.env.ADAPTIVE_ROUTER_HOME = join(temporary, `state-${routeIndex}`);
+    routeIndex += 1;
     const result = await routeStage({
       goal: item.goal,
       phase: item.phase,

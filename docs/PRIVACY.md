@@ -58,6 +58,11 @@ Set `classifierMode` to `local-only` or `disabled`, or set `ADAPTIVE_ROUTER_LOCA
 
 Status and diagnostic tools are scoped to the current project/context and return truncated opaque identifiers. They cannot enumerate other projects or sessions. Hook errors are generic and do not include the prompt, last assistant message, transcript path, working directory, or secrets.
 
+Hook identity diagnostics retain only one bounded latest-observation record.
+It contains event/source allowlist values, presence booleans for `session_id`
+and `turn_id`, bounded-subagent presence, injection state, and a timestamp. It
+never stores the raw identifiers, prompt, transcript path, model, or cwd.
+
 When global automatic routing is enabled, `UserPromptSubmit` emits only a fixed
 model-visible routing instruction plus minimized root-model state. It does not
 copy the user's task text. A pending model-intent reminder contains validated

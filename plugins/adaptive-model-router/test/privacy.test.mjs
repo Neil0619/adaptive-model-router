@@ -3,10 +3,15 @@ import assert from "node:assert/strict";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { RouterStore } from "../scripts/lib/database.mjs";
-import { recordOutcome } from "../scripts/lib/learning.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
-import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
+import {
+  CATALOG,
+  completeNoChildRoute,
+  routeInput,
+  temporaryProject,
+  withRouterEnvironment,
+} from "./fixtures.mjs";
 
 test("SQLite files and redacted status contain no prompt, source, absolute path, context id, or secret", async () => {
   const project = await temporaryProject("adaptive privacy Unicode 私密 ");
@@ -26,17 +31,7 @@ test("SQLite files and redacted status contain no prompt, source, absolute path,
       );
       store.observeHostModel(observedContext, "gpt-5.6-sol", { detectChanges: false });
       const route = await routeStage(routeInput({ goal, contextId }), { catalog: CATALOG, cwd: project.root, store });
-      recordOutcome({
-        routeId: route.routeId,
-        contextId,
-        status: "passed",
-        gate: route.verificationGate,
-        failureType: null,
-        retries: 0,
-        retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
-        escalations: route.escalation.count,
-        userCorrection: false,
-      }, { store, cwd: project.root });
+      completeNoChildRoute(route, { store, cwd: project.root, contextId });
       const context = store.context({ cwd: project.root, contextId });
       const publicState = JSON.stringify({
         status: store.status(context),

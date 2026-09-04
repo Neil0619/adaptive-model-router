@@ -9,7 +9,7 @@ import { parseControlPrompt, parseReadOnlyInspectionPrompt } from "../scripts/li
 import { recordOutcome } from "../scripts/lib/learning.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
-import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
+import { CATALOG, completeNoChildRoute, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const hookPath = join(pluginRoot, "scripts", "hook.mjs");
@@ -20,6 +20,37 @@ function runHook(mode, input, home) {
     encoding: "utf8",
     env: { ...process.env, ADAPTIVE_ROUTER_HOME: home, ADAPTIVE_ROUTER_LOCAL_ONLY: "1" },
   });
+}
+
+async function writeChildTranscript(path, {
+  parentId,
+  childId,
+  taskName,
+  cwd,
+  body = "",
+}) {
+  const agentPath = `/root/${taskName}`;
+  const entry = {
+    timestamp: "2026-09-02T00:00:00.000Z",
+    type: "session_meta",
+    payload: {
+      session_id: parentId,
+      id: childId,
+      parent_thread_id: parentId,
+      cwd,
+      agent_path: agentPath,
+      source: {
+        subagent: {
+          thread_spawn: {
+            parent_thread_id: parentId,
+            depth: 1,
+            agent_path: agentPath,
+          },
+        },
+      },
+    },
+  };
+  await writeFile(path, `${JSON.stringify(entry)}\n${body}`, "utf8");
 }
 
 function runHookAsync(mode, input, home) {
@@ -296,6 +327,78 @@ test("global automatic activation is opt-in, crosses projects, and detects later
   }
 });
 
+test("SessionStart compact restores trusted routing context without replaying prompt controls", async () => {
+  const project = await temporaryProject("adaptive compact restore ");
+  try {
+    const base = {
+      cwd: project.root,
+      session_id: "compact-session",
+      model: "gpt-5.6-sol",
+    };
+    const enabled = runHook("prompt", {
+      ...base,
+      prompt: "router: global on",
+    }, project.home);
+    assert.equal(enabled.status, 0, enabled.stderr);
+
+    const compact = runHook("session-start", {
+      ...base,
+      hook_event_name: "SessionStart",
+      source: "compact",
+      prompt: "router: global off",
+      turn_id: "ephemeral-turn",
+    }, project.home);
+    assert.equal(compact.status, 0, compact.stderr);
+    const output = JSON.parse(compact.stdout).hookSpecificOutput;
+    assert.equal(output.hookEventName, "SessionStart");
+    assert.match(output.additionalContext, /global automatic activation is enabled/i);
+    assert.match(output.additionalContext, /Use "compact-session" as the contextId/);
+    assert.doesNotMatch(output.additionalContext, /already been applied atomically/i);
+
+    const after = runHook("prompt", {
+      ...base,
+      prompt: "Continue after compaction.",
+    }, project.home);
+    assert.match(after.stdout, /global automatic activation is enabled/i);
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("SessionStart compact never treats an unproven child marker as a root task", async () => {
+  const project = await temporaryProject("adaptive compact bounded ");
+  try {
+    const compact = runHook("session-start", {
+      cwd: project.root,
+      session_id: "parent-session",
+      model: "gpt-5.6-terra",
+      hook_event_name: "SessionStart",
+      source: "compact",
+      agent_id: "bounded-agent",
+    }, project.home);
+    assert.equal(compact.status, 0, compact.stderr);
+    assert.equal(compact.stdout, "");
+  } finally {
+    await project.cleanup();
+  }
+});
+
+test("turn_id never substitutes for a missing trusted session identity", async () => {
+  const project = await temporaryProject("adaptive missing identity ");
+  try {
+    const missing = runHook("prompt", {
+      cwd: project.root,
+      turn_id: "ephemeral-only",
+      prompt: "Implement the task.",
+    }, project.home);
+    assert.equal(missing.status, 0, missing.stderr);
+    assert.equal(missing.stdout, "");
+    assert.match(missing.stderr, /trusted session identity unavailable/i);
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("bounded subagent hooks never recurse into routing or mutate root-task state", async () => {
   const project = await temporaryProject("adaptive bounded subagent 隔离 ");
   try {
@@ -313,13 +416,64 @@ test("bounded subagent hooks never recurse into routing or mutate root-task stat
       0,
     );
 
-    const child = {
+    const delegated = await withRouterEnvironment(project, () => routeStage(routeInput({
+      contextId: root.session_id,
+      override: { model: "gpt-5.6-terra", effort: "low" },
+    }), { catalog: CATALOG, cwd: project.root }));
+    assert.equal(delegated.action, "delegate");
+    const dispatched = runHook("pre-tool-use", {
       ...root,
+      turn_id: "root-turn",
+      tool_use_id: "root-tool",
+      tool_name: "spawn_agent",
+      tool_input: {
+        message: "gAAAA-encrypted-bounded-activation",
+        task_name: delegated.carrier.taskName,
+        model: delegated.target.model,
+        reasoning_effort: delegated.target.effort,
+        fork_turns: "none",
+      },
+    }, project.home);
+    assert.equal(dispatched.status, 0, dispatched.stderr);
+    assert.deepEqual(JSON.parse(dispatched.stdout), {});
+
+    const transcript = join(project.root, "bounded-child.jsonl");
+    await writeChildTranscript(transcript, {
+      parentId: root.session_id,
+      childId: "agent-secret-identifier",
+      taskName: delegated.carrier.taskName,
+      cwd: project.root,
+      body: "bounded child\n",
+    });
+
+    const child = {
+      cwd: project.root,
+      session_id: root.session_id,
+      agent_id: "agent-secret-identifier",
       model: "gpt-5.6-terra",
+      transcript_path: transcript,
     };
+    const started = runHook("subagent-start", {
+      ...child,
+      agent_type: "worker-secret-type",
+      hook_event_name: "SubagentStart",
+      turn_id: "child-turn",
+    }, project.home);
+    assert.equal(started.status, 0, started.stderr);
+    const startedOutput = JSON.parse(started.stdout);
+    assert.equal(
+      startedOutput.hookSpecificOutput.hookEventName,
+      "SubagentStart",
+    );
+    assert.match(startedOutput.hookSpecificOutput.additionalContext, /already a bounded subagent/i);
+    assert.match(startedOutput.hookSpecificOutput.additionalContext, /bounded context package/i);
+    assert.doesNotMatch(
+      startedOutput.hookSpecificOutput.additionalContext,
+      /agent-secret-identifier|worker-secret-type|gpt-5\.6-terra/,
+    );
+
     const submitted = runHook("prompt", {
       ...child,
-      agent_id: "agent-secret-identifier",
       prompt: "Implement only the delegated bounded stage.",
     }, project.home);
     assert.equal(submitted.status, 0, submitted.stderr);
@@ -338,24 +492,14 @@ test("bounded subagent hooks never recurse into routing or mutate root-task stat
       /agent-secret-identifier|worker-secret-type|gpt-5\.6-terra|Implement only/,
     );
 
-    const started = runHook("subagent-start", {
+    const compact = runHook("session-start", {
       ...child,
-      agent_id: "agent-secret-identifier",
-      agent_type: "worker-secret-type",
-      hook_event_name: "SubagentStart",
-      turn_id: "child-turn",
+      hook_event_name: "SessionStart",
+      source: "compact",
     }, project.home);
-    assert.equal(started.status, 0, started.stderr);
-    const startedOutput = JSON.parse(started.stdout);
-    assert.equal(
-      startedOutput.hookSpecificOutput.hookEventName,
-      "SubagentStart",
-    );
-    assert.match(startedOutput.hookSpecificOutput.additionalContext, /already a bounded subagent/i);
-    assert.doesNotMatch(
-      startedOutput.hookSpecificOutput.additionalContext,
-      /agent-secret-identifier|worker-secret-type|gpt-5\.6-terra/,
-    );
+    assert.equal(compact.status, 0, compact.stderr);
+    assert.match(compact.stdout, /already a bounded subagent/i);
+    assert.doesNotMatch(compact.stdout, /global automatic activation is enabled/i);
 
     const ignoredControl = runHook("prompt", {
       ...child,
@@ -383,11 +527,10 @@ test("bounded subagent hooks never recurse into routing or mutate root-task stat
           0,
         );
         assert.equal(store.inspectionGuardActive(context), false);
-        const route = await routeStage(routeInput({
-          contextId: root.session_id,
-          override: { model: "gpt-5.6-terra", effort: "low" },
-        }), { catalog: CATALOG, cwd: project.root, store });
-        assert.equal(route.action, "delegate");
+        const attempt = store.db.prepare("SELECT early_agent_id, ambiguous FROM delegation_attempts WHERE route_id = ?")
+          .get(delegated.routeId);
+        assert.equal(typeof attempt.early_agent_id, "string");
+        assert.equal(attempt.ambiguous, 0);
       } finally {
         store.close();
       }
@@ -476,7 +619,7 @@ test("automatic routing treats shadow scoring as read-only and leaves Stop lifec
           goal: "Score a risk-sensitive public contract review.",
           phase: "review",
           evidence: { workProduct: true, review: true, highRisk: true },
-        }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } }),
+        }), { store, cwd: project.root, routeOptions: { enforceLifecycleHooks: false, catalog: CATALOG } }),
         (error) => {
           firstError = error;
           return /read-only router inspection/i.test(error.message);
@@ -490,7 +633,7 @@ test("automatic routing treats shadow scoring as read-only and leaves Stop lifec
           goal: "Try the live route a second time.",
           phase: "review",
           evidence: { workProduct: true, review: true, highRisk: true },
-        }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } }),
+        }), { store, cwd: project.root, routeOptions: { enforceLifecycleHooks: false, catalog: CATALOG } }),
         /read-only router inspection/i,
       );
       assert.deepEqual(counts(), before);
@@ -538,7 +681,7 @@ test("automatic routing treats shadow scoring as read-only and leaves Stop lifec
         goal: "Answer a simple question.",
         phase: "answer",
         evidence: { workProduct: false },
-      }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } });
+      }), { store, cwd: project.root, routeOptions: { enforceLifecycleHooks: false, catalog: CATALOG } });
       assert.equal(route.action, "continue");
       assert.equal(store.inspectionGuardActive(
         store.context({ cwd: project.root, contextId: base.session_id }),
@@ -579,7 +722,7 @@ test("proposal listing is guarded as read-only inspection", async () => {
         callRouterTool("route_stage", routeInput({
           contextId: base.session_id,
           goal: "Do not create a live route before listing proposals.",
-        }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } }),
+        }), { store, cwd: project.root, routeOptions: { enforceLifecycleHooks: false, catalog: CATALOG } }),
         /read-only router inspection/i,
       );
       const proposals = await callRouterTool("list_policy_proposals", {
@@ -627,7 +770,7 @@ test("concurrent inspection hooks create one guard and never permit a live route
         callRouterTool("route_stage", routeInput({
           contextId: base.session_id,
           goal: "Attempt a live route after concurrent inspection hooks.",
-        }), { store, cwd: project.root, routeOptions: { catalog: CATALOG } }),
+        }), { store, cwd: project.root, routeOptions: { enforceLifecycleHooks: false, catalog: CATALOG } }),
         /read-only router inspection/i,
       );
       assert.equal(
@@ -822,7 +965,7 @@ test("status and history controls visibly separate the root model from bounded s
   }
 });
 
-test("Stop hook finalizes every pending outcome as unknown without blocking the user reply", async () => {
+test("Stop hook keeps an unconsumed delegate in reconciliation without an authoritative no-child result", async () => {
   const project = await temporaryProject();
   try {
     await withRouterEnvironment(project, async () => {
@@ -839,7 +982,8 @@ test("Stop hook finalizes every pending outcome as unknown without blocking the 
         },
       }), { catalog: CATALOG, cwd: project.root });
       assert.equal(firstRoute.action, "delegate");
-      assert.equal(secondRoute.action, "delegate");
+      assert.equal(secondRoute.action, "busy");
+      assert.equal(secondRoute.blockingRouteId, firstRoute.routeId);
       const input = {
         cwd: project.root,
         session_id: "stop-session",
@@ -850,27 +994,21 @@ test("Stop hook finalizes every pending outcome as unknown without blocking the 
       const first = runHook("stop", input, project.home);
       const replay = runHook("stop", input, project.home);
       assert.equal(first.status, 0, first.stderr);
-      assert.equal(first.stdout, "");
+      const firstDecision = JSON.parse(first.stdout);
+      assert.equal(firstDecision.decision, "block");
+      assert.match(firstDecision.reason, new RegExp(firstRoute.routeId));
+      assert.match(firstDecision.reason, /spawn_agent/u);
+      assert.match(firstDecision.reason, /record_outcome/u);
       assert.equal(first.stderr, "");
       assert.equal(replay.status, 0, replay.stderr);
-      assert.equal(replay.stdout, "");
+      assert.deepEqual(JSON.parse(replay.stdout), firstDecision);
 
       const storeBefore = new RouterStore();
-      assert.deepEqual(
-        storeBefore.db.prepare("SELECT route_id, status FROM outcomes ORDER BY route_id").all()
-          .map((row) => ({ ...row })),
-        [
-          { route_id: firstRoute.routeId, status: "unknown" },
-          { route_id: secondRoute.routeId, status: "unknown" },
-        ].sort((left, right) => left.route_id.localeCompare(right.route_id)),
-      );
-      assert.equal(Number(storeBefore.db.prepare("SELECT count(*) AS count FROM stop_observations").get().count), 2);
+      assert.equal(Number(storeBefore.db.prepare("SELECT count(*) AS count FROM outcomes").get().count), 0);
+      assert.equal(Number(storeBefore.db.prepare("SELECT count(*) AS count FROM stop_observations").get().count), 0);
       const stopContext = storeBefore.context({ cwd: project.root, contextId: "stop-session" });
-      assert.equal(storeBefore.status(stopContext).outcomeObservability.stopHookUnknown, 2);
-      assert.deepEqual(
-        storeBefore.routeHistory(stopContext).routes.map((route) => route.outcome.source),
-        ["stop_hook", "stop_hook"],
-      );
+      assert.equal(storeBefore.status(stopContext).outcomeObservability.stopHookUnknown, 0);
+      assert.equal(storeBefore.status(stopContext).delegationGate.routeId, firstRoute.routeId);
       assert.doesNotMatch(
         JSON.stringify({
           routes: storeBefore.db.prepare("SELECT * FROM routes").all(),
@@ -893,7 +1031,21 @@ test("Stop hook finalizes every pending outcome as unknown without blocking the 
       assert.equal(second.status, 0, second.stderr);
       assert.equal(second.stdout, "");
       const storeAfter = new RouterStore();
-      assert.equal(Number(storeAfter.db.prepare("SELECT count(*) AS count FROM outcomes").get().count), 2);
+      assert.equal(Number(storeAfter.db.prepare("SELECT count(*) AS count FROM outcomes").get().count), 0);
+      const retained = storeAfter.db.prepare(`
+        SELECT ticket_consumed, ticket_hash, context_package, outcome_recorded,
+               ambiguous, finalized_at
+        FROM delegation_attempts WHERE route_id = ?
+      `).get(firstRoute.routeId);
+      assert.equal(retained.ticket_consumed, 0);
+      assert.equal(typeof retained.ticket_hash, "string");
+      assert.equal(typeof retained.context_package, "string");
+      assert.equal(retained.outcome_recorded, 0);
+      assert.equal(retained.ambiguous, 1);
+      assert.equal(retained.finalized_at, null);
+      assert.equal(storeAfter.status(stopContext).delegationGate.routeId, firstRoute.routeId);
+      assert.equal(storeAfter.status(stopContext).delegationGate.ambiguous, true);
+      assert.equal(storeAfter.status(stopContext).pendingOutcomes, 1);
       storeAfter.close();
     });
   } finally {
@@ -901,7 +1053,7 @@ test("Stop hook finalizes every pending outcome as unknown without blocking the 
   }
 });
 
-test("Stop hook resolves a legacy reminder while finalizing its pending outcome", async () => {
+test("Stop hook blocks an unlaunched route even when a legacy reminder exists", async () => {
   const project = await temporaryProject();
   try {
     await withRouterEnvironment(project, async () => {
@@ -924,19 +1076,18 @@ test("Stop hook resolves a legacy reminder while finalizing its pending outcome"
         stop_hook_active: false,
       }, project.home);
       assert.equal(stopped.status, 0, stopped.stderr);
-      assert.equal(stopped.stdout, "");
+      const decision = JSON.parse(stopped.stdout);
+      assert.equal(decision.decision, "block");
+      assert.match(decision.reason, new RegExp(route.routeId));
 
       const verified = new RouterStore();
+      assert.equal(verified.db.prepare("SELECT status FROM outcomes WHERE route_id = ?").get(route.routeId), undefined);
       assert.equal(
-        verified.db.prepare("SELECT status FROM outcomes WHERE route_id = ?").get(route.routeId).status,
-        "unknown",
-      );
-      assert.notEqual(
         verified.db.prepare("SELECT resolved_at FROM stop_observations WHERE route_id = ?").get(route.routeId).resolved_at,
         null,
       );
       const legacyContext = verified.context({ cwd: project.root, contextId: "legacy-stop-session" });
-      assert.equal(verified.routeHistory(legacyContext).routes[0].outcome.source, "stop_hook");
+      assert.equal(verified.status(legacyContext).delegationGate.routeId, route.routeId);
       verified.close();
     });
   } finally {
@@ -950,17 +1101,7 @@ test("Stop hook allows a route that already has a final outcome", async () => {
     await withRouterEnvironment(project, async () => {
       const store = new RouterStore();
       const route = await routeStage(routeInput({ contextId: "complete" }), { catalog: CATALOG, cwd: project.root, store });
-      recordOutcome({
-        routeId: route.routeId,
-        contextId: "complete",
-        status: "passed",
-        gate: route.verificationGate,
-        failureType: null,
-        retries: 0,
-        retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
-        escalations: route.escalation.count,
-        userCorrection: false,
-      }, { store, cwd: project.root });
+      completeNoChildRoute(route, { store, cwd: project.root, contextId: "complete" });
       const context = store.context({ cwd: project.root, contextId: "complete" });
       store.db.prepare(`
         INSERT INTO stop_observations(project_id, context_key, route_id, reminded_at)
@@ -971,7 +1112,7 @@ test("Stop hook allows a route that already has a final outcome", async () => {
       assert.equal(stopped.status, 0);
       assert.equal(stopped.stdout, "");
       const verified = new RouterStore();
-      assert.notEqual(
+      assert.equal(
         verified.db.prepare("SELECT resolved_at FROM stop_observations WHERE route_id = ?").get(route.routeId).resolved_at,
         null,
       );

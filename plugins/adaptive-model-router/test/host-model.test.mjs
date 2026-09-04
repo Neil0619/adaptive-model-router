@@ -3,10 +3,9 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { RouterStore, normalizeRootModel } from "../scripts/lib/database.mjs";
-import { recordOutcome } from "../scripts/lib/learning.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
-import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
+import { CATALOG, completeNoChildRoute, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 test("root-model intent is first-observation safe, exactly resolved, and task scoped", async () => {
   const project = await temporaryProject("adaptive host model ");
@@ -20,7 +19,7 @@ test("root-model intent is first-observation safe, exactly resolved, and task sc
       assert.equal(baseline.taskMode, "automatic");
 
       const first = await routeStage(routeInput({ contextId }), { catalog: CATALOG, cwd: project.root, store });
-      assert.equal(first.schemaVersion, "3.0");
+      assert.equal(first.schemaVersion, "5.0");
       assert.equal(first.taskMode, "automatic");
       assert.deepEqual(first.rootTask, {
         modelVisibility: "hook_observed",
@@ -40,6 +39,7 @@ test("root-model intent is first-observation safe, exactly resolved, and task sc
       assert.equal(pendingRoute.taskMode, "pending_confirmation");
       assert.ok(pendingRoute.reasonCodes.includes("HOST_MODEL_INTENT_PENDING"));
       assert.equal(pendingRoute.rootTask.model, "gpt-5.6-terra");
+      completeNoChildRoute(first, { store, cwd: project.root, contextId });
 
       const kept = await callRouterTool("resolve_host_model_intent", {
         contextId,
@@ -168,23 +168,13 @@ test("missing or invalid current hook models display host-managed without losing
   }
 });
 
-test("database v1 migrates transactionally through v2 to v3 without losing routes, outcomes, or policy", async () => {
+test("database v1 migrates transactionally through v5 without losing routes, outcomes, or policy", async () => {
   const project = await temporaryProject("adaptive migration v1 ");
   try {
     await withRouterEnvironment(project, async () => {
       let store = new RouterStore();
       const route = await routeStage(routeInput({ contextId: "migration" }), { catalog: CATALOG, cwd: project.root, store });
-      recordOutcome({
-        routeId: route.routeId,
-        contextId: "migration",
-        status: "passed",
-        gate: route.verificationGate,
-        failureType: null,
-        retries: 0,
-        retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
-        escalations: 0,
-        userCorrection: false,
-      }, { store, cwd: project.root });
+      completeNoChildRoute(route, { store, cwd: project.root, contextId: "migration" });
       const revisionId = store.ensurePolicy(store.context({ cwd: project.root, contextId: "migration" })).revisionId;
       const database = store.path;
       store.close();
@@ -213,7 +203,7 @@ test("database v1 migrates transactionally through v2 to v3 without losing route
       old.close();
 
       store = new RouterStore({ path: database });
-      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 3);
+      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 5);
       assert.equal(store.db.prepare("SELECT count(*) AS count FROM routes").get().count, 1);
       assert.equal(store.db.prepare("SELECT count(*) AS count FROM outcomes").get().count, 1);
       assert.equal(store.db.prepare("SELECT active_revision_id FROM project_policy").get().active_revision_id, revisionId);
@@ -226,7 +216,7 @@ test("database v1 migrates transactionally through v2 to v3 without losing route
       store.close();
 
       const damaged = new DatabaseSync(database);
-      damaged.exec("ALTER TABLE host_model_state DROP COLUMN model_visible; PRAGMA user_version = 3;");
+      damaged.exec("ALTER TABLE host_model_state DROP COLUMN model_visible; PRAGMA user_version = 5;");
       damaged.close();
       store = new RouterStore({ path: database });
       assert.equal(store.db.prepare("PRAGMA table_info(host_model_state)").all().some((column) => column.name === "model_visible"), true);

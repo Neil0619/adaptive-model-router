@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Install", "Upgrade", "Uninstall")]
+    [ValidateSet("Install", "Upgrade", "Repair", "Uninstall")]
     [string]$Action = "Install",
     [string]$Ref = "stable",
     [switch]$PatchAgents,

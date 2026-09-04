@@ -54,6 +54,8 @@ const releaseWorkflow = await readFile(join(repoRoot, ".github", "workflows", "r
 const releaseChecklist = await readFile(join(repoRoot, "docs", "RELEASE.md"), "utf8");
 const windowsSmoke = await readFile(join(repoRoot, "docs", "WINDOWS_SMOKE.md"), "utf8");
 const macosSmoke = await readFile(join(repoRoot, "docs", "MACOS_SMOKE.md"), "utf8");
+const troubleshooting = await readFile(join(repoRoot, "docs", "TROUBLESHOOTING.md"), "utf8");
+const securityPolicy = await readFile(join(repoRoot, "SECURITY.md"), "utf8");
 const smokeEvidenceReadme = await readFile(join(repoRoot, "docs", "release-evidence", "README.md"), "utf8");
 const smokeEvidenceSchema = await json(join(repoRoot, "docs", "release-evidence", "schema-v1.json"));
 const macosEvidenceTemplate = await json(join(repoRoot, "docs", "release-evidence", "templates", "macos-v1.json"));
@@ -103,6 +105,17 @@ for (const [name, document] of [
     !document.includes("codex/v040-stop-hook-fix"),
     `${name} still uses the invalidated Stop-hook candidate`,
   );
+}
+for (const [name, document] of [
+  ["release checklist", releaseChecklist],
+  ["Windows smoke", windowsSmoke],
+  ["macOS smoke", macosSmoke],
+  ["troubleshooting guide", troubleshooting],
+  ["security policy", securityPolicy],
+]) {
+  for (const hookName of ["SessionStart", "SubagentStart", "UserPromptSubmit", "Stop"]) {
+    assert(document.includes(hookName), `${name} must name the current ${hookName} Hook`);
+  }
 }
 assert(
   /published\s+`stable`\s+remains\s+on\s+v0\.3\.0/u.test(windowsSmoke),
@@ -279,12 +292,21 @@ assert(
 );
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "get_route_history"), "MCP must expose get_route_history");
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "resolve_host_model_intent"), "MCP must expose host-model intent resolution");
-for (const event of ["SubagentStart", "UserPromptSubmit", "Stop"]) {
+for (const event of ["SessionStart", "SubagentStart", "SubagentStop", "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"]) {
   const command = hooks.hooks?.[event]?.[0]?.hooks?.[0];
   assert(typeof command?.commandWindows === "string", `${event} must define commandWindows`);
   assert(command.commandWindows.includes("process.env.PLUGIN_ROOT"), `${event} Windows command must read PLUGIN_ROOT inside Node`);
   assert(!["%PLUGIN_ROOT%", "$env:PLUGIN_ROOT", "$PLUGIN_ROOT"].some((value) => command.commandWindows.includes(value)), `${event} Windows command must not use shell-specific plugin root expansion`);
   assert(command.command.includes("node-launcher.mjs") && command.commandWindows.includes("node-launcher.mjs"), `${event} must use the runtime launcher`);
+}
+assert(hooks.hooks.SessionStart[0].matcher === "^compact$", "SessionStart must match only source=compact");
+for (const event of ["PreToolUse", "PostToolUse"]) {
+  const matcher = new RegExp(hooks.hooks[event][0].matcher);
+  assert(matcher.test("Agent"), `${event} must retain the documented Agent alias`);
+  assert(matcher.test("spawn_agent"), `${event} must match the canonical live tool name`);
+  assert(matcher.test("collaborationspawn_agent"), `${event} must match the Codex 0.152 flattened collaboration namespace`);
+  assert(!matcher.test("collaboration.spawn_agent"), `${event} must not assume a separator in the flattened host name`);
+  assert(!matcher.test("send_message"), `${event} must not match unrelated collaboration tools`);
 }
 const entry = marketplace.plugins?.find((plugin) => plugin.name === manifest.name);
 assert(entry?.source?.path === "./plugins/adaptive-model-router", "marketplace source path is invalid");

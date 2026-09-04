@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { EFFORT_ORDER } from "../scripts/lib/constants.mjs";
+import { recordOutcome } from "../scripts/lib/learning.mjs";
+import { consumeDelegationTicket, observeAgentResult } from "../scripts/lib/delegation-gate.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
 import { desiredRoute, scoreTask } from "../scripts/lib/scorer.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
@@ -9,6 +11,7 @@ import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./
 const SOL_TERRA_CAPABILITIES = {
   delegation: {
     available: true,
+    invocation: "direct",
     targets: [
       { model: "gpt-5.6-sol", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
       { model: "gpt-5.6-terra", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
@@ -19,12 +22,53 @@ const SOL_TERRA_CAPABILITIES = {
 const ALL_CAPABILITIES = {
   delegation: {
     available: true,
+    invocation: "direct",
     targets: [
       ...SOL_TERRA_CAPABILITIES.delegation.targets,
       { model: "gpt-5.6-luna", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] },
     ],
   },
 };
+
+let lifecycleSequence = 0;
+function finishRoute(route, contextId, cwd, store, status = "passed", failureType = null) {
+  const ownedStore = store ? null : new RouterStore();
+  const activeStore = store || ownedStore;
+  const context = activeStore.context({ cwd, contextId });
+  const sequence = ++lifecycleSequence;
+  const toolInput = {
+    message: route.carrier.message,
+    task_name: route.carrier.taskName,
+    model: route.target.model,
+    reasoning_effort: route.target.effort,
+    fork_turns: "none",
+  };
+  const consumed = activeStore.transaction(() => consumeDelegationTicket(activeStore.db, context, {
+    taskName: route.carrier.taskName,
+    turnId: `test-turn-${sequence}`,
+    toolUseId: `test-tool-${sequence}`,
+    toolInput,
+  }));
+  activeStore.transaction(() => observeAgentResult(activeStore.db, context, {
+    turnId: `test-turn-${sequence}`,
+    toolUseId: `test-tool-${sequence}`,
+    toolInput,
+    toolResponse: { no_agent_created: true },
+  }));
+  const result = recordOutcome({
+    routeId: route.routeId,
+    contextId,
+    status,
+    gate: route.verificationGate,
+    failureType,
+    retries: 0,
+    retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
+    escalations: route.escalation.count,
+    userCorrection: false,
+  }, { store: activeStore, cwd });
+  ownedStore?.close();
+  return result;
+}
 
 test("deterministic score bands map to the documented family and effort", () => {
   const base = {
@@ -206,13 +250,17 @@ test("override precedence is request then once, session, project, and optional g
       const options = { catalog: CATALOG, cwd: project.root, store };
       const request = await routeStage(routeInput({ contextId: "priority", override: { model: "gpt-5.6-terra" }, hostCapabilities: ALL_CAPABILITIES }), options);
       assert.equal(request.target.model, "gpt-5.6-terra");
+      finishRoute(request, "priority", project.root, store);
       const once = await routeStage(routeInput({ contextId: "priority", hostCapabilities: ALL_CAPABILITIES }), options);
       assert.equal(once.target.model, "gpt-5.6-luna");
+      finishRoute(once, "priority", project.root, store);
       const session = await routeStage(routeInput({ contextId: "priority", hostCapabilities: ALL_CAPABILITIES }), options);
       assert.equal(session.target.model, "gpt-5.6-sol");
+      finishRoute(session, "priority", project.root, store);
       store.clearOverrides(context, "session");
       const projectRoute = await routeStage(routeInput({ contextId: "priority", hostCapabilities: ALL_CAPABILITIES }), options);
       assert.equal(projectRoute.target.model, "gpt-5.6-terra");
+      finishRoute(projectRoute, "priority", project.root, store);
       store.clearOverrides(context, "project");
       const globalRoute = await routeStage(routeInput({ contextId: "priority", hostCapabilities: ALL_CAPABILITIES }), options);
       assert.equal(globalRoute.target.model, "gpt-5.6-luna");
@@ -254,7 +302,7 @@ test("delegation capabilities are independent from root catalog and validate str
       await assert.rejects(
         routeStage(routeInput({
           contextId: "capability-duplicate",
-          hostCapabilities: { delegation: { available: true, targets: [
+          hostCapabilities: { delegation: { available: true, invocation: "direct", targets: [
             { model: "gpt-5.6-sol", efforts: ["high", "high"] },
           ] } },
         }), { catalog: CATALOG, cwd: project.root }),
@@ -266,6 +314,7 @@ test("delegation capabilities are independent from root catalog and validate str
           hostCapabilities: {
             delegation: {
               available: false,
+              invocation: "unavailable",
               targets: [{ model: "gpt-5.6-sol", efforts: ["high"] }],
             },
           },
@@ -278,6 +327,7 @@ test("delegation capabilities are independent from root catalog and validate str
           hostCapabilities: {
             delegation: {
               available: true,
+              invocation: "direct",
               targets: [{ model: "gpt-5.6-sol", efforts: ["impossible"] }],
             },
           },
@@ -286,10 +336,23 @@ test("delegation capabilities are independent from root catalog and validate str
       );
       const unavailable = await routeStage(routeInput({
         contextId: "capability-unavailable",
-        hostCapabilities: { delegation: { available: false, targets: [] } },
+        hostCapabilities: { delegation: { available: false, invocation: "unavailable", targets: [] } },
       }), { catalog: CATALOG, cwd: project.root });
       assert.equal(unavailable.action, "continue");
       assert.ok(unavailable.reasonCodes.includes("HOST_DELEGATION_UNAVAILABLE"));
+
+      const nestedOnly = await routeStage(routeInput({
+        contextId: "capability-code-mode-nested",
+        hostCapabilities: {
+          delegation: {
+            available: true,
+            invocation: "code_mode_nested",
+            targets: [{ model: "gpt-5.6-sol", efforts: ["high"] }],
+          },
+        },
+      }), { catalog: CATALOG, cwd: project.root });
+      assert.equal(nestedOnly.action, "continue");
+      assert.deepEqual(nestedOnly.reasonCodes, ["HOST_DELEGATION_UNAVAILABLE"]);
     });
   } finally {
     await project.cleanup();
@@ -334,6 +397,7 @@ test("tooling failures retry one automatic target but never replace an explicit 
         hostCapabilities: SOL_TERRA_CAPABILITIES,
       }), { catalog: CATALOG, cwd: project.root });
       assert.equal(first.target.model, "gpt-5.6-terra");
+      finishRoute(first, "tooling", project.root, null, "failed", "tooling");
       const retry = await routeStage(routeInput({
         contextId: "tooling",
         previousRouteId: first.routeId,
@@ -343,6 +407,7 @@ test("tooling failures retry one automatic target but never replace an explicit 
       assert.equal(retry.action, "delegate");
       assert.equal(retry.target.model, "gpt-5.6-sol");
       assert.ok(retry.reasonCodes.includes("TOOLING_TARGET_EXCLUDED"));
+      finishRoute(retry, "tooling", project.root, null, "failed", "tooling");
       const exhausted = await routeStage(routeInput({
         contextId: "tooling",
         previousRouteId: retry.routeId,
@@ -357,6 +422,7 @@ test("tooling failures retry one automatic target but never replace an explicit 
         override: { model: "gpt-5.6-terra" },
         hostCapabilities: SOL_TERRA_CAPABILITIES,
       }), { catalog: CATALOG, cwd: project.root });
+      finishRoute(explicit, "tooling-explicit", project.root, null, "failed", "tooling");
       const explicitRetry = await routeStage(routeInput({
         contextId: "tooling-explicit",
         previousRouteId: explicit.routeId,
@@ -444,6 +510,7 @@ test("reasoning escalation is monotonic and asks after two automatic escalations
   try {
     await withRouterEnvironment(project, async () => {
       const first = await routeStage(routeInput({ contextId: "escalate", override: { model: "gpt-5.6-terra", effort: "high" } }), { catalog: CATALOG, cwd: project.root });
+      finishRoute(first, "escalate", project.root, null, "failed", "reasoning");
       const second = await routeStage(routeInput({
         contextId: "escalate",
         previousRouteId: first.routeId,
@@ -451,6 +518,7 @@ test("reasoning escalation is monotonic and asks after two automatic escalations
       }), { catalog: CATALOG, cwd: project.root });
       assert.equal(second.target.effort, "xhigh");
       assert.equal(second.escalation.count, 1);
+      finishRoute(second, "escalate", project.root, null, "failed", "reasoning");
       const third = await routeStage(routeInput({
         contextId: "escalate",
         previousRouteId: second.routeId,
@@ -459,6 +527,7 @@ test("reasoning escalation is monotonic and asks after two automatic escalations
       assert.equal(third.target.model, "gpt-5.6-sol");
       assert.equal(third.target.effort, "max");
       assert.equal(third.escalation.count, 2);
+      finishRoute(third, "escalate", project.root, null, "failed", "reasoning");
       const exhausted = await routeStage(routeInput({
         contextId: "escalate",
         previousRouteId: third.routeId,
@@ -482,6 +551,7 @@ test("effort order and Sol escalation reach max then ultra without skipping tier
         override: { model: "gpt-5.6-sol", effort: "xhigh" },
         hostCapabilities: SOL_TERRA_CAPABILITIES,
       }), { catalog: CATALOG, cwd: project.root });
+      finishRoute(first, "sol-escalation", project.root, null, "failed", "reasoning");
       const second = await routeStage(routeInput({
         contextId: "sol-escalation",
         previousRouteId: first.routeId,
@@ -489,6 +559,7 @@ test("effort order and Sol escalation reach max then ultra without skipping tier
         hostCapabilities: SOL_TERRA_CAPABILITIES,
       }), { catalog: CATALOG, cwd: project.root });
       assert.deepEqual(second.target, { model: "gpt-5.6-sol", effort: "max" });
+      finishRoute(second, "sol-escalation", project.root, null, "failed", "reasoning");
       const third = await routeStage(routeInput({
         contextId: "sol-escalation",
         previousRouteId: second.routeId,
@@ -496,6 +567,7 @@ test("effort order and Sol escalation reach max then ultra without skipping tier
         hostCapabilities: SOL_TERRA_CAPABILITIES,
       }), { catalog: CATALOG, cwd: project.root });
       assert.deepEqual(third.target, { model: "gpt-5.6-sol", effort: "ultra" });
+      finishRoute(third, "sol-escalation", project.root, null, "failed", "reasoning");
       const exhausted = await routeStage(routeInput({
         contextId: "sol-escalation",
         previousRouteId: third.routeId,
@@ -616,6 +688,7 @@ test("Sol max escalates to ultra and then asks instead of repeating or downgradi
         override: { model: "gpt-5.6-sol", effort: "max" },
         hostCapabilities: SOL_TERRA_CAPABILITIES,
       }), { catalog: CATALOG, cwd: project.root });
+      finishRoute(first, "max-escalation", project.root, null, "failed", "reasoning");
       const second = await routeStage(routeInput({
         contextId: "max-escalation",
         previousRouteId: first.routeId,
@@ -623,6 +696,7 @@ test("Sol max escalates to ultra and then asks instead of repeating or downgradi
         hostCapabilities: SOL_TERRA_CAPABILITIES,
       }), { catalog: CATALOG, cwd: project.root });
       assert.deepEqual(second.target, { model: "gpt-5.6-sol", effort: "ultra" });
+      finishRoute(second, "max-escalation", project.root, null, "failed", "reasoning");
       const exhausted = await routeStage(routeInput({
         contextId: "max-escalation",
         previousRouteId: second.routeId,
@@ -642,6 +716,7 @@ test("environment failure holds effort and previousRouteId is project/context bo
   try {
     await withRouterEnvironment(project, async () => {
       const first = await routeStage(routeInput({ contextId: "bound", override: { model: "gpt-5.6-sol", effort: "xhigh" } }), { catalog: CATALOG, cwd: project.root });
+      finishRoute(first, "bound", project.root, null, "failed", "environment");
       const held = await routeStage(routeInput({
         contextId: "bound", previousRouteId: first.routeId,
         evidence: { workProduct: true, verificationFailed: true, failureType: "environment" },
@@ -658,19 +733,59 @@ test("environment failure holds effort and previousRouteId is project/context bo
   }
 });
 
+test("a failed root-local continue can be retried without forging a delegated predecessor", async () => {
+  const project = await temporaryProject();
+  try {
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      const contextId = "root-local-retry";
+      const continued = await routeStage(routeInput({
+        contextId,
+        hostCapabilities: {
+          delegation: { available: false, invocation: "unavailable", targets: [] },
+        },
+      }), { catalog: CATALOG, cwd: project.root, store });
+      assert.equal(continued.action, "continue");
+
+      const retry = await routeStage(routeInput({
+        contextId,
+        previousRouteId: continued.routeId,
+        evidence: {
+          workProduct: true,
+          verificationFailed: true,
+          failureType: "reasoning",
+          requirementsSettled: true,
+          strongVerification: true,
+        },
+        hostCapabilities: SOL_TERRA_CAPABILITIES,
+      }), { catalog: CATALOG, cwd: project.root, store });
+      assert.equal(retry.action, "delegate");
+      assert.equal(retry.previousRouteId, undefined);
+      assert.ok(retry.reasonCodes.includes("ROOT_LOCAL_RETRY"));
+      assert.equal(retry.escalation.state, "none");
+      store.close();
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("an ultra route never downgrades to max/high when no stronger automatic escalation exists", async () => {
   const project = await temporaryProject();
   try {
     await withRouterEnvironment(project, async () => {
-      const first = await routeStage(routeInput({ contextId: "ultra", override: { model: "gpt-5.6-sol", effort: "ultra" } }), { catalog: CATALOG, cwd: project.root });
+      const store = new RouterStore();
+      const first = await routeStage(routeInput({ contextId: "ultra", override: { model: "gpt-5.6-sol", effort: "ultra" } }), { catalog: CATALOG, cwd: project.root, store });
+      finishRoute(first, "ultra", project.root, store, "failed", "reasoning");
       const retry = await routeStage(routeInput({
         contextId: "ultra",
         previousRouteId: first.routeId,
         evidence: { workProduct: true, verificationFailed: true, failureType: "reasoning" },
-      }), { catalog: CATALOG, cwd: project.root });
+      }), { catalog: CATALOG, cwd: project.root, store });
       assert.equal(retry.action, "ask_user");
       assert.equal("target" in retry, false);
       assert.ok(retry.reasonCodes.includes("MONOTONIC_ESCALATION_UNAVAILABLE"));
+      store.close();
     });
   } finally {
     await project.cleanup();

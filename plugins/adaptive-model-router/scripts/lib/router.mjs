@@ -4,6 +4,9 @@ import { classifyBorderline } from "./classifier.mjs";
 import { MAX_ESCALATIONS, SCHEMA_VERSION, EFFORT_ORDER, FAMILY_ORDER } from "./constants.mjs";
 import { ROUTE_INPUT_SCHEMA, ROUTE_OUTPUT_SCHEMA } from "./contracts.mjs";
 import { RouterStore } from "./database.mjs";
+import { buildContextPackage, createDelegationTicket } from "./delegation-gate.mjs";
+import { normalizeHookReadinessFailure } from "./hook-readiness.mjs";
+import { newTaskQualification } from "./lifecycle-qualification.mjs";
 import { clamp } from "./io.mjs";
 import { normalizeModelSlug } from "./model-slug.mjs";
 import { assertSchema } from "./schema.mjs";
@@ -43,10 +46,22 @@ function publicRoute(internal) {
     rootTask: internal.rootTask,
     taskMode: internal.taskMode,
   };
+  if (internal.blockingRouteId) result.blockingRouteId = internal.blockingRouteId;
   if (internal.target) result.target = internal.target;
+  if (internal.carrier) result.carrier = internal.carrier;
   assertSchema(ROUTE_OUTPUT_SCHEMA, result, "route output");
-  if (result.action === "delegate" && !result.target) throw new Error("delegate route requires a target");
-  if (result.action !== "delegate" && result.target) throw new Error("non-delegate route cannot include a target");
+  if (result.action === "delegate" && (!result.target || !result.carrier)) {
+    throw new Error("delegate route requires a target and carrier");
+  }
+  if (result.action === "busy" && !result.blockingRouteId) {
+    throw new Error("busy route requires a blockingRouteId");
+  }
+  if (result.action !== "busy" && result.blockingRouteId) {
+    throw new Error("only busy routes can include a blockingRouteId");
+  }
+  if (result.action !== "delegate" && (result.target || result.carrier)) {
+    throw new Error("non-delegate route cannot include a target or carrier");
+  }
   return result;
 }
 
@@ -71,6 +86,7 @@ function baseRoute({
     escalation: escalation || { state: "none", count: 0, limit: MAX_ESCALATIONS },
     family: null,
     target: null,
+    carrier: null,
     previousRouteId: null,
     rootTask,
     taskMode,
@@ -97,6 +113,22 @@ function sourceCode(source) {
 
 function failOpen(reasonCode = "STORAGE_UNAVAILABLE") {
   return publicRoute(baseRoute({ action: "continue", codes: [reasonCode] }));
+}
+
+function busyRoute(store, context, activeRouteId, {
+  category = "general",
+  classifier = "not_needed",
+  escalation = { state: "none", count: 0, limit: MAX_ESCALATIONS },
+} = {}) {
+  const busy = contextualRoute(store, context, {
+    action: "busy",
+    category,
+    codes: ["DELEGATION_BUSY"],
+    classifier,
+    escalation,
+  });
+  busy.blockingRouteId = activeRouteId;
+  return publicRoute(busy);
 }
 
 function validateRouteInput(input) {
@@ -168,6 +200,15 @@ function routeWasToolingRetry(route) {
 function escalationPlan(previous, evidence, desired) {
   if (!previous || evidence.verificationFailed !== true) {
     return { desired, status: { state: "none", count: 0, limit: MAX_ESCALATIONS }, minimumEffort: null, previousModel: null };
+  }
+  if (previous.action === "continue") {
+    return {
+      desired,
+      status: { state: "none", count: 0, limit: MAX_ESCALATIONS },
+      minimumEffort: null,
+      previousModel: null,
+      reasonCode: "ROOT_LOCAL_RETRY",
+    };
   }
   const priorCount = Number(previous.escalation_count || 0);
   if (["environment", "information"].includes(evidence.failureType)) {
@@ -244,7 +285,10 @@ async function routeWithStore(input, options, store) {
   if (input.previousRouteId) {
     previous = store.findRoute(context, input.previousRouteId);
     if (!previous) throw new Error("previousRouteId does not belong to the current project and context");
-    if (previous.action !== "delegate") throw new Error("previousRouteId must reference a delegated route");
+    const rootLocalRetry = previous.action === "continue" && input.evidence.verificationFailed === true;
+    if (previous.action !== "delegate" && !rootLocalRetry) {
+      throw new Error("previousRouteId must reference a delegated route or a failed root-local continue route");
+    }
   }
 
   if (hostState.taskMode === "pending_confirmation" || hostState.taskMode === "manual_root") {
@@ -265,13 +309,39 @@ async function routeWithStore(input, options, store) {
     store.commitRoute(context, route, null);
     return publicRoute(route);
   }
+  const activeRouteId = store.activeDelegationRouteId(context);
+  if (activeRouteId) {
+    const activeRoute = store.findRoute(context, activeRouteId);
+    return busyRoute(store, context, activeRouteId, {
+      category: activeRoute?.category || "general",
+    });
+  }
   const delegationCapabilities = input.hostCapabilities?.delegation || null;
-  if (input.evidence.hostCanDelegate === false || delegationCapabilities?.available === false) {
-    const route = contextualRoute(store, context, { action: "continue", codes: ["HOST_DELEGATION_UNAVAILABLE"] });
+  const claimsDelegationUnavailable = (
+    input.evidence.hostCanDelegate === false
+    || delegationCapabilities?.available === false
+    || (delegationCapabilities && delegationCapabilities.invocation !== "direct")
+  );
+  if (
+    claimsDelegationUnavailable
+    && store.hasProvenDirectDelegation(context)
+    && !store.hasAuthoritativeToolingRejection(context, input.previousRouteId)
+  ) {
+    const error = new Error(
+      "hostCapabilities contradict a previously observed direct delegation in this task; only an authoritative tooling rejection may downgrade it",
+    );
+    error.code = "INVALID_INPUT";
+    throw error;
+  }
+  if (claimsDelegationUnavailable) {
+    const route = contextualRoute(store, context, {
+      action: "continue",
+      codes: ["HOST_DELEGATION_UNAVAILABLE", previous?.action === "continue" ? "ROOT_LOCAL_RETRY" : null],
+    });
     store.commitRoute(context, route, null);
     return publicRoute(route);
   }
-  if (!initialOverride.override && isTrivialTask(input.goal, input.evidence)) {
+  if (!initialOverride.override && !previous && isTrivialTask(input.goal, input.evidence)) {
     const code = input.evidence.workProduct === false ? "NO_WORK_PRODUCT" : "TRIVIAL_CONTINUE";
     const route = contextualRoute(store, context, { action: "continue", codes: [code] });
     store.commitRoute(context, route, null);
@@ -501,8 +571,105 @@ async function routeWithStore(input, options, store) {
       eligibleLearning: exclusionCodes.length === 0,
       exclusionCodes,
     };
-    const committed = store.commitRoute(context, route, resolved.onceId);
-    if (committed.committed) return publicRoute(route);
+    let contextPackage = buildContextPackage(input);
+    let qualification = null;
+    if (!contextPackage.accepted) {
+      const fallback = contextualRoute(store, context, {
+        action: "continue",
+        category: scored.category,
+        codes: [contextPackage.reasonCode],
+        classifier: classifier.state,
+        escalation: escalation.status,
+      });
+      store.commitRoute(context, fallback, null);
+      return publicRoute(fallback);
+    }
+    const activeRouteIdAfterScoring = store.activeDelegationRouteId(context);
+    if (activeRouteIdAfterScoring) {
+      return busyRoute(store, context, activeRouteIdAfterScoring, {
+        category: scored.category,
+        classifier: classifier.state,
+        escalation: escalation.status,
+      });
+    }
+    if (typeof options.lifecycleHookProbe === "function") {
+      let readiness;
+      try {
+        readiness = await options.lifecycleHookProbe({
+          cwd: options.cwd || process.cwd(),
+          pluginRoot: options.pluginRoot,
+          store, context, contextId: input.contextId,
+        });
+      } catch {
+        readiness = null;
+      }
+      if (readiness?.ready !== true && readiness?.qualificationBinding) {
+        const target = selectExplicitRoute(delegateCatalog, "gpt-5.6-sol", "low", { effortWasExplicit: true });
+        qualification = target ? newTaskQualification(readiness.qualificationBinding, route.routeId, readiness.requalification) : null;
+        if (qualification) {
+          route.target = { model: target.model, effort: target.effort };
+          route.family = "sol";
+          route.category = "general";
+          route.reasonCodes = ["HOST_LIFECYCLE_QUALIFICATION"];
+          route.verificationGate = "structured-check";
+          route.classifier = { state: "not_needed" };
+          route.escalation = { state: "none", count: 0, limit: MAX_ESCALATIONS };
+          route.previousRouteId = null;
+          route.scoringSnapshot.eligibleLearning = false;
+          route.scoringSnapshot.exclusionCodes.push("NATIVE_LIFECYCLE_QUALIFICATION");
+          contextPackage = buildContextPackage({
+            goal: `Return exactly ${qualification.marker}. Do not call tools, read or write files, browse, change Router controls or spawn another child. This is only a fixed native lifecycle self-test, not the original task.`,
+            phase: "native-lifecycle-qualification", evidence: { workProduct: true, requirementsSettled: true, strongVerification: true },
+          });
+        }
+      }
+      if (readiness?.ready !== true && !qualification) {
+        const fallback = contextualRoute(store, context, {
+          action: "continue",
+          category: scored.category,
+          codes: [normalizeHookReadinessFailure(readiness)],
+          classifier: classifier.state,
+          escalation: escalation.status,
+        });
+        store.commitRoute(context, fallback, null);
+        return publicRoute(fallback);
+      }
+    }
+    const ticket = createDelegationTicket();
+    if (qualification) ticket.carrier.instruction = "Native lifecycle self-test only: launch this fixed carrier once, verify the no-tool child, then record one outcome. The server independently audits the complete native transcript. Only after success, route the original stage again. Never retry a failed self-test.";
+    const committed = store.commitRoute(context, route, qualification ? null : resolved.onceId, {
+      ticket,
+      contextPackage,
+      qualification,
+      cwd: options.cwd || process.cwd(),
+      disk: {
+        probe: options.diskProbe || null,
+        minimumFreeBytes: options.minimumFreeDiskBytes,
+      },
+      childBudget: { maximumBytes: options.routerChildByteLimit },
+    });
+    if (committed.committed) {
+      route.carrier = committed.carrier;
+      return publicRoute(route);
+    }
+    if (committed.busy) {
+      return busyRoute(store, context, committed.activeRouteId, {
+        category: scored.category,
+        classifier: classifier.state,
+        escalation: escalation.status,
+      });
+    }
+    if (committed.fallback) {
+      const fallback = contextualRoute(store, context, {
+        action: "continue",
+        category: scored.category,
+        codes: [committed.fallback],
+        classifier: classifier.state,
+        escalation: escalation.status,
+      });
+      store.commitRoute(context, fallback, null);
+      return publicRoute(fallback);
+    }
   }
   return failOpen("STORAGE_UNAVAILABLE");
 }

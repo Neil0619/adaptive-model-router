@@ -14,17 +14,40 @@ Codex Desktop can expose a smaller `PATH` than an interactive shell. The install
 
 If a task was created while MCP startup was broken, its native function inventory can remain frozen. Compatible upgrades keep that task usable through a verified one-call stdio bridge to the same installed MCP `tools/call`; reopening Desktop or creating a replacement task is not required.
 
-The native Codex commands are the primary installation path; no remote script execution is required:
+The reviewed repository wrapper is the supported installation path. It uses
+native Codex commands internally, then materializes and verifies the installed
+Desktop launch contract:
 
 ```bash
-codex plugin marketplace add Neil0619/adaptive-model-router --ref stable
-codex plugin add adaptive-model-router@adaptive-model-router
+git clone --branch stable --single-branch https://github.com/Neil0619/adaptive-model-router.git
+cd adaptive-model-router
+./install.sh
 ```
 
+```powershell
+git clone --branch stable --single-branch https://github.com/Neil0619/adaptive-model-router.git
+Set-Location adaptive-model-router
+.\install.ps1
+```
+
+Raw `codex plugin add` writes the portable source placeholder `node` into the
+host cache. It is a cold registration operation, not a complete Desktop-safe
+installation for this plugin. If it was used for development or recovery, run
+`./install.sh repair` or `.\install.ps1 -Action Repair` immediately. Repair
+does not change marketplace identity or re-register the plugin; it materializes
+the current installation, restores the running Desktop compatibility shim, and
+verifies MCP, Hooks, and the old-task bridge.
+
 After installation, start a new task. Open `/hooks`, review the plugin-bundled
-`SubagentStart`, `UserPromptSubmit`, and `Stop` command handlers, and trust
-their current definitions. If the ChatGPT desktop app still shows stale plugin
-state, restart the app and start another new task.
+`SessionStart(source=compact)`, `SubagentStart`, `SubagentStop`,
+`PreToolUse(Agent)`, `PostToolUse(Agent)`, `UserPromptSubmit`, and `Stop`
+command handlers, and trust their current definitions. If the ChatGPT desktop
+app still shows stale plugin state, restart the app and start another new task.
+
+The Router accepts only Codex's non-empty `session_id` as the stable task
+identity; `turn_id` is never a fallback. The trusted compact-session handler
+restores the same routing context before the immediate continuation after
+automatic or manual compaction.
 
 Automatic routing is opt-in. In that new task, send this standalone control
 once to enable it for all local Codex projects sharing the same plugin data:
@@ -35,7 +58,7 @@ router: global on
 
 Installing or upgrading the plugin never enables this setting silently.
 
-Optional local wrappers provide preflight checks and legacy-install detection:
+The wrapper also provides explicit AGENTS patching when requested:
 
 ```bash
 ./install.sh
@@ -59,6 +82,17 @@ If a legacy `adaptive-local` installation is present, an interactive wrapper ask
 
 ```powershell
 .\install.ps1 -Action Upgrade
+```
+
+To repair a healthy registration that was created by raw `plugin add`, or
+whose Desktop runtime directory was replaced by a Codex update:
+
+```bash
+./install.sh repair
+```
+
+```powershell
+.\install.ps1 -Action Repair
 ```
 
 ```bash
@@ -104,9 +138,11 @@ not a hot-upgrade primitive.
 
 The vault contains only validated copies of the plugin package plus an index of
 runtime directory names. It is outside Codex's host-managed cache, never stores
-prompts or project data, and is not an alternate executable source: restored
-trees must pass the current runtime, host-surface, symlink, and compatibility
-checks before an atomic directory rename. An invalid index or entry fails the
+prompts or project data, and is not an alternate executable source. A restored
+historical tree must match its own indexed host surface and the current shared
+runtime/storage compatibility contracts before an atomic directory rename; the
+current version must additionally match the complete current source surface.
+An invalid index, unsupported historical Hook set, or damaged entry fails the
 upgrade closed.
 
 The upgrade boundary is explicit:
@@ -148,29 +184,76 @@ instruction. The child executes only its assigned stage: it does not observe
 root-model intent, change router controls, call `route_stage` again, or own the
 route outcome. Verification and `record_outcome` remain in the root task.
 
-`route_stage` returns one contract:
+`route_stage` returns one of four actions:
 
 - `continue` for greetings, simple questions, and short tasks with no work product;
 - `delegate` with `target.model` and `target.effort` for bounded substantive work;
+- `busy` when this task already has one unresolved Router child, without creating another;
 - `ask_user` when an explicit target is unavailable or the reasoning-escalation limit is reached.
+
+Before returning an ordinary-work `delegate`, the plugin uses Codex's read-only `hooks/list`
+surface to confirm that all seven Router hooks in the active installation match
+the plugin definitions, are enabled, and are trusted. It separately requires a
+source-owned native proof that this exact host's Agent path dispatches the full
+`PreToolUse`/`PostToolUse` lifecycle. An untrusted definition returns
+`HOOK_TRUST_REQUIRED`, a different set returns `HOST_HOOK_SET_MISMATCH`, an
+unreadable status returns `HOST_HOOK_STATUS_UNAVAILABLE`, and a missing native
+round-trip proof returns `HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN`. All four continue
+root-only and issue no delegation ticket. The check never writes `config.toml`
+or accepts hook trust for the user.
+
+On the explicitly supported native macOS builds (`0.153.0` and
+`0.153.0-alpha.5`), a task without prior proof can first receive
+`delegate / HOST_LIFECYCLE_QUALIFICATION`: exactly one Sol/low child returning a
+fixed marker without tools or original task content. The server independently
+checks all four lifecycle events and the complete raw child transcript before
+accepting its outcome. Proof is task-scoped and bound to the executable, ordered
+Hook inventory, actual Hook shells, and runtime source. Failure or a changed
+binding keeps ordinary delegation disabled and never silently retries the
+self-test. Qualification neither consumes a once override nor enters learning;
+after success, route the original stage again normally.
 
 Priority is: request override, once override, session override, project override, optional global override, approved project policy, then the balanced default. Unknown or hidden models are never chosen automatically. Explicit unavailable targets are never silently substituted.
 
 Root visibility, bounded delegation, and auxiliary classification use separate
 capability catalogs. A model shown in the Codex picker is not automatically a
-valid subagent target. The caller supplies the current bounded-subagent
-models/efforts through `hostCapabilities`; older callers conservatively permit
+valid subagent target. The caller supplies the current direct native
+bounded-subagent models/efforts and invocation mode through `hostCapabilities`;
+a spawn tool visible only inside `functions.exec` is treated as unavailable.
+`list_agents` only reports agents that already exist, so an empty result is not
+evidence that direct `spawn_agent` is unavailable. After this task has completed
+a direct Router child dispatch, a later unavailable claim is rejected unless it
+is tied to an actual direct-tool rejection that proves no child was created.
+Older callers conservatively permit
 only known Sol and Terra targets. When the policy prefers Luna but the host
 does not expose Luna for bounded delegation, automatic routing falls back to
 Terra and reports `MODEL_FAMILY_FALLBACK`. An explicit Luna target instead
 returns `ask_user`.
 
-Every delegated route has a verification gate and one strict final outcome. If
-the root still omits an outcome, the Stop hook records `unknown` and allows the
-user-facing reply to finish without creating a continuation prompt. Unknown
-outcomes are excluded from learning.
+Every delegated route has a verification gate and one strict final outcome.
+The first outcome write is accepted only after the matching `PreToolUse`
+dispatch handshake consumes the route ticket; a route decision without an
+attempt is not a verification result. An occupied gate returns `busy` before a
+later capability claim is considered. If the root tries to finish with an
+unlaunched delegated route, the Stop hook blocks the first stop and identifies
+the required direct `spawn_agent` action; the hook re-entry is allowed only to
+avoid an infinite Stop loop. If the ticket is still unconsumed on that guarded
+re-entry, the Router marks the lifecycle ambiguous and retains the gate. It
+does not create an outcome or a `no_child` claim, archive the attempt, or permit
+a replacement child without authoritative no-child evidence.
 
-`continue` and `ask_user` routes do not accept outcomes. See the
+The gate is released only after the matching `PostToolUse`, child terminal
+observation (`SubagentStop` or explicit no-child proof), and outcome are all
+present. Missing, unknown, or ambiguous lifecycle evidence after dispatch
+retains the gate.
+The Stop hook never fabricates an `unknown` outcome.
+
+The auxiliary classifier uses the host's existing authenticated App Server
+state and creates only an `ephemeral` thread. It never redirects
+`CODEX_SQLITE_HOME` to an empty temporary store, and its redacted input remains
+subject to the same deadline and circuit breaker.
+
+`continue`, `busy`, and `ask_user` routes do not accept outcomes. See the
 [tool reference](docs/TOOLS.md) for the strict route and outcome contracts, all
 management tools, and the source-tree developer CLI.
 

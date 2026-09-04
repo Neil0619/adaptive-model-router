@@ -21,6 +21,10 @@ Do not create or push the release tag from this smoke task.
 - The bounded subagent receives the isolation context, completes only its
   assigned scope, and never creates a pending root-model event or recursively
   calls `route_stage`.
+- A deliberately unlaunched `delegate` is blocked by the first root Stop, names
+  the required `spawn_agent` action, and creates no outcome; if the guarded Stop
+  re-entry still finds the ticket unconsumed, it marks the lifecycle ambiguous
+  and retains the gate until authoritative reconciliation.
 - A Sol/Terra-only bounded capability never returns Luna; an explicit Luna
   override asks the user without starting a subagent.
 - Route and execution metadata keep the root boundary unchanged while recording
@@ -29,6 +33,8 @@ Do not create or push the release tag from this smoke task.
   the next stage, and current-task manual mode prevents delegation.
 - Status, history, diagnostics, Hook output, and SQLite contain no prompt,
   source, secret, or absolute project path.
+- The auxiliary classifier initializes from the logged-in host store, keeps its
+  thread ephemeral, and leaves no additional ID in `thread/list`.
 - Native and wrapper upgrade/uninstall/reinstall flows are idempotent.
 - One real Desktop task remains open across the compatible upgrade and, in the
   same Hook-injected context afterward, completes `route_stage → delegate →
@@ -65,6 +71,8 @@ Run the complete automated gate from the exact clone before installation:
 
 ```bash
 cd "$Source/plugins/adaptive-model-router"
+# Required after any manifest cachebuster update.
+npm run sync-runtime-version
 npm test
 npm run validate
 npm run eval
@@ -103,8 +111,21 @@ revision. It also requires the installed, enabled plugin to report version `0.4.
 Stop if it fails. Run it again after the final lifecycle reinstall in section 6.
 
 Open `$Project` in Codex, start a new task, review `/hooks`, and trust the
-current `SubagentStart`, `UserPromptSubmit`, and `Stop` definitions. Never
-bypass Hook trust.
+current `SessionStart(source=compact)`, `SubagentStart`, `SubagentStop`,
+`PreToolUse(Agent)`, `PostToolUse(Agent)`, `UserPromptSubmit`, and `Stop`
+definitions. Never bypass Hook trust.
+
+Before accepting trust, run one substantive `route_stage` probe and require
+`continue` with `HOOK_TRUST_REQUIRED`, no carrier, no delegation attempt, and no
+Agent. After accepting the exact current definitions, supported native builds
+first issue one `HOST_LIFECYCLE_QUALIFICATION` fixed no-tool child. Require the
+server's full source audit and outcome acceptance before routing the original
+stage into the normal `delegate` lifecycle. Unsupported builds return
+`continue / HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN` with no ticket or Agent. Trusted
+inventory alone must never authorize an ordinary-work child. The disposable
+`scripts/probe-native-qualification.mjs` exercises this production MCP admission
+path and checks two distinct children, two outcomes, and both gate releases;
+its temporary state does not qualify the current Desktop task.
 
 After this trust step, the smoke agent owns every remaining prompt, control
 message, host-managed model transition, verification, and restoration. It must
@@ -121,12 +142,27 @@ Use the managed route-lifecycle contract in section 5 of the
 name the skill, use `$adaptive-model-router`, or contain a router control prefix.
 
 The result must include one `delegate` route, exactly one bounded subagent using
-the returned model and `reasoning_effort`, successful root verification, and
-exactly one strict `record_outcome`. Machine-verify that route and execution
+the returned model and `reasoning_effort` through the direct native
+`spawn_agent` tool outside `functions.exec`, a caller-supplied
+`fork_turns: "none"` input validated without rewrite by the trusted
+`PreToolUse` hook, successful root verification,
+and exactly one strict `record_outcome`. Machine-verify that route and execution
 metadata keep the root task unchanged and record the bounded target separately.
+The native ordering probe must also accept the observed v2 sequence where a
+task-name-only `PostToolUse` precedes `SubagentStart`: the attempt stays
+non-ambiguous and busy until the trusted child claim supplies the agent ID, and
+only the matching `SubagentStop` plus outcome may finalize it.
 The subagent must execute only its assigned scope and return to
 the root without calling `route_stage`, asking for a manual/automatic decision,
 or creating a host-model change event.
+
+In a separate disposable task, call `route_stage` to obtain `delegate` and then
+attempt to end the turn without calling `spawn_agent`. Require the first Stop
+decision to be `block`, with the route ID and the exact required action in its
+reason. Require zero outcomes and the same occupied gate afterward. Allow the
+continued turn to use that exact carrier, complete the child lifecycle and
+record the verified outcome; require the gate to become available so the smoke
+does not leave a deliberate orphan.
 
 Treat `delegate` as the applicable skill's explicit authorization under any
 conditional host policy that permits skill-requested subagents. It is required,
@@ -138,7 +174,7 @@ Run `router: status` and `router: history 10`. Each route must distinguish its
 root-model snapshot from its bounded target. Run `diagnose_router` with the same
 host task ID and assert that all projections exclude the prompt, source, secret,
 and absolute project path. The Stop hook must not create outcome-bookkeeping
-feedback or replace the final user-facing reply.
+feedback, fabricate an `unknown` outcome, or replace the final user-facing reply.
 
 ## 4. Exercise both host-model decisions
 
@@ -169,7 +205,7 @@ Also run the negative control in section 7 of the
 
 In the same temporary project:
 
-1. Call `get_learning_status` and confirm database version 3 is healthy, the
+1. Call `get_learning_status` and confirm database version 5 is healthy, the
    active scoring profile is versioned, and no prompt or path is returned.
 2. Record the current counts of routes, outcomes, proposals, and learning
    cursors. Call `shadow_route_stage` for one risk review stage using the
@@ -333,7 +369,7 @@ Verification and record_outcome: PASS | FAIL
 Pending keep-automatic behavior: PASS | FAIL
 Manual-root behavior: PASS | FAIL
 Negative control: PASS | FAIL
-Learning status/database v3: PASS | FAIL
+Learning status/database v5: PASS | FAIL
 Shadow scoring had zero lifecycle side effects: PASS | FAIL
 Typed retry breakdown: PASS | FAIL
 Privacy assertion: PASS | FAIL
