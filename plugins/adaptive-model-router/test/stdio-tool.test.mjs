@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -179,24 +179,30 @@ test("POSIX one-shot command execution delivers a literal bridge request atomica
       name: "get_route_status",
       arguments: { contextId: "one-shot-command-test" },
     });
-    const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(bridge)} <<'ADAPTIVE_ROUTER_REQUEST'\n${request}\nADAPTIVE_ROUTER_REQUEST`;
-    const result = spawnSync("/bin/sh", ["-c", command], {
-      cwd: pluginRoot,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        ADAPTIVE_ROUTER_HOME: home,
-        ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
-      },
-      timeout: 20_000,
-      windowsHide: true,
-    });
-    assert.ifError(result.error);
-    assert.equal(result.status, 0, result.stderr);
-    const output = JSON.parse(result.stdout);
-    assert.equal(output.transport, "stdio-bridge");
-    assert.equal(output.tool, "get_route_status");
-    assert.equal(output.isError, false);
+    const nodeLink = join(home, "node ' \" $ROUTER_TEST_LITERAL $(printf injected) $((40 + 2)) `printf expanded` 中文");
+    const bridgeLink = join(home, "bridge ' \" $ROUTER_TEST_LITERAL $(printf inert) $((20 + 4)) `printf literal` 中文.mjs");
+    await symlink(process.execPath, nodeLink);
+    await symlink(bridge, bridgeLink);
+    for (const [nodePath, bridgePath] of [[process.execPath, bridge], [nodeLink, bridgeLink]]) {
+      const command = `"$1" "$2" <<'ADAPTIVE_ROUTER_REQUEST'\n${request}\nADAPTIVE_ROUTER_REQUEST`;
+      const result = spawnSync("/bin/sh", ["-c", command, "adaptive-router-stdio-test", nodePath, bridgePath], {
+        cwd: pluginRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ADAPTIVE_ROUTER_HOME: home,
+          ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
+        },
+        timeout: 20_000,
+        windowsHide: true,
+      });
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr);
+      const output = JSON.parse(result.stdout);
+      assert.equal(output.transport, "stdio-bridge");
+      assert.equal(output.tool, "get_route_status");
+      assert.equal(output.isError, false);
+    }
   } finally {
     await rm(home, { recursive: true, force: true });
   }

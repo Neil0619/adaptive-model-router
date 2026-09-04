@@ -233,6 +233,14 @@
 - 修正后 macOS 全量回归 264 项、263 通过、0 失败、1 项平台专属跳过，耗时 162.1 秒；validate、226 项 eval 与 diff check 通过。
 - 这些修正不能代替下一候选 SHA 的完整必需 CI。Windows CI 仍是合并关卡；后置的是 Windows 原生实机 smoke，而非 CI。
 
+## PR 安全评论与 shell 字面路径回归
+
+- 候选 `11a20d2a45c4b67bcb60b5d9db443cc9dbe04586` 的第二轮 9 项必需 CI 全部通过；两组 Windows 均为 264 项、255 通过、0 失败、9 项明确的平台前提跳过，权限拒写用例实际通过。但最终合并核验发现仓库还要求解决 review conversation，并保留一条 [CodeQL 评论](https://github.com/Neil0619/adaptive-model-router/pull/20#discussion_r3931552962)；不能仅凭检查任务成功就声称满足全部合并条件。
+- 告警指出 `JSON.stringify(path)` 的双引号不是 POSIX shell 转义。独立只读审查确认，根任务用指向真实 Node 和 bridge 的符号链接先复现：包含引号、空格、算术展开和反引号的路径被 shell 改写，退出码为 127。
+- 改为固定 `"$1" "$2"` 命令前缀、显式 `$0` 和独立 argv 传递两个路径，保留带引号的 here-document；回归再覆盖变量引用、命令替换与中文路径，正常路径和特殊字符路径均通过真实桥接调用。相关测试 13/13 通过，不引入生产代码、权限放宽或告警忽略。
+- 修正后完整 macOS 回归再次通过：264 项、263 通过、0 失败、1 项平台专属跳过，耗时 134.1 秒；validate、226 项 eval、diff check 通过，生产运行时摘要仍与已安装版本一致。
+- 后续仍须验证新候选的 CI 与 CodeQL 告警状态，再处理已修复的指定 conversation。仓库要求线性历史，最终使用受保护规则允许的 squash 合并，不创建绕过规则的 merge commit。
+
 ## 完成条件（候选提交快照）
 
 - 已满足：所有新增红测在修复前稳定失败、修复后稳定通过。
