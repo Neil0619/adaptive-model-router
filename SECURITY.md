@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Security fixes are provided for the latest `0.2.x` release while the project is pre-1.0.
+Security fixes are provided for the latest `0.4.x` release while the project is pre-1.0.
 
 ## Reporting a vulnerability
 
@@ -14,7 +14,8 @@ Include the affected version, operating system, Codex surface, minimal reproduct
 
 Plugin hooks are local commands and Codex requires the user to review and trust
 their exact definitions. Use `/hooks` to inspect the plugin-bundled
-`SessionStart(source=compact)`, `SubagentStart`, `UserPromptSubmit`, and `Stop`
+`SessionStart(source=compact)`, `SubagentStart`, `SubagentStop`,
+`PreToolUse(Agent)`, `PostToolUse(Agent)`, `UserPromptSubmit`, and `Stop`
 handlers. Changed definitions require review again because trust is tied to the
 current hook hash.
 

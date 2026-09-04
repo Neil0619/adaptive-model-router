@@ -292,7 +292,7 @@ assert(
 );
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "get_route_history"), "MCP must expose get_route_history");
 assert(TOOL_DEFINITIONS.some((tool) => tool.name === "resolve_host_model_intent"), "MCP must expose host-model intent resolution");
-for (const event of ["SessionStart", "SubagentStart", "UserPromptSubmit", "Stop"]) {
+for (const event of ["SessionStart", "SubagentStart", "SubagentStop", "PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"]) {
   const command = hooks.hooks?.[event]?.[0]?.hooks?.[0];
   assert(typeof command?.commandWindows === "string", `${event} must define commandWindows`);
   assert(command.commandWindows.includes("process.env.PLUGIN_ROOT"), `${event} Windows command must read PLUGIN_ROOT inside Node`);
@@ -300,6 +300,14 @@ for (const event of ["SessionStart", "SubagentStart", "UserPromptSubmit", "Stop"
   assert(command.command.includes("node-launcher.mjs") && command.commandWindows.includes("node-launcher.mjs"), `${event} must use the runtime launcher`);
 }
 assert(hooks.hooks.SessionStart[0].matcher === "^compact$", "SessionStart must match only source=compact");
+for (const event of ["PreToolUse", "PostToolUse"]) {
+  const matcher = new RegExp(hooks.hooks[event][0].matcher);
+  assert(matcher.test("Agent"), `${event} must retain the documented Agent alias`);
+  assert(matcher.test("spawn_agent"), `${event} must match the canonical live tool name`);
+  assert(matcher.test("collaborationspawn_agent"), `${event} must match the Codex 0.152 flattened collaboration namespace`);
+  assert(!matcher.test("collaboration.spawn_agent"), `${event} must not assume a separator in the flattened host name`);
+  assert(!matcher.test("send_message"), `${event} must not match unrelated collaboration tools`);
+}
 const entry = marketplace.plugins?.find((plugin) => plugin.name === manifest.name);
 assert(entry?.source?.path === "./plugins/adaptive-model-router", "marketplace source path is invalid");
 for (const tool of TOOL_DEFINITIONS) checkObjectSchemas(tool.inputSchema, tool.name);

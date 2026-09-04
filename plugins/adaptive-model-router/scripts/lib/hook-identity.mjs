@@ -1,6 +1,9 @@
 const HOOK_EVENTS = new Set([
   "SessionStart",
   "SubagentStart",
+  "SubagentStop",
+  "PreToolUse",
+  "PostToolUse",
   "UserPromptSubmit",
   "Stop",
 ]);

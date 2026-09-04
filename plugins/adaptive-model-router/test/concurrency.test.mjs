@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RouterStore } from "../scripts/lib/database.mjs";
+import {
+  consumeDelegationTicket,
+  observeAgentResult,
+} from "../scripts/lib/delegation-gate.mjs";
 import { listPolicyProposals } from "../scripts/lib/learning.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
 import { CATALOG, routeInput, temporaryProject } from "./fixtures.mjs";
@@ -44,16 +48,16 @@ test("50 processes concurrently migrate an empty SQLite database", async () => {
   try {
     const results = await Promise.all(Array.from({ length: 50 }, (_, index) => runWorker(project, "migrate", `migration-${index}`)));
     assert.equal(results.length, 50);
-    assert.ok(results.every((result) => result.version === 3 && result.health === "ok"));
+    assert.ok(results.every((result) => result.version === 5 && result.health === "ok"));
     const store = new RouterStore({ path: join(project.home, "router.sqlite3") });
-    assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 3);
+    assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 5);
     store.close();
   } finally {
     await project.cleanup();
   }
 });
 
-test("50 concurrent Stop processes finalize one pending outcome exactly once without blocking", async () => {
+test("50 concurrent Stop processes retain one pending gate without fabricating outcomes", async () => {
   const project = await temporaryProject("adaptive concurrency stop ");
   const previousHome = process.env.ADAPTIVE_ROUTER_HOME;
   process.env.ADAPTIVE_ROUTER_HOME = project.home;
@@ -70,18 +74,15 @@ test("50 concurrent Stop processes finalize one pending outcome exactly once wit
     const results = await Promise.all(
       Array.from({ length: 50 }, () => runWorker(project, "stop", "shared-stop")),
     );
-    assert.ok(results.every((result) => result.action === "allow"));
-    assert.equal(results.reduce((sum, result) => sum + result.recordedUnknown, 0), 1);
+    assert.ok(results.every((result) => result.action === "block"));
+    assert.equal(results.reduce((sum, result) => sum + result.recordedUnknown, 0), 0);
+    assert.ok(results.every((result) => result.gateRetained === true));
 
     const verified = new RouterStore();
-    assert.deepEqual(
-      { ...verified.db.prepare("SELECT route_id, status FROM outcomes").get() },
-      { route_id: route.routeId, status: "unknown" },
-    );
-    assert.equal(Number(verified.db.prepare("SELECT count(*) AS count FROM outcomes").get().count), 1);
+    assert.equal(Number(verified.db.prepare("SELECT count(*) AS count FROM outcomes").get().count), 0);
     const context = verified.context({ cwd: project.root, contextId: "shared-stop" });
-    assert.equal(verified.status(context).outcomeObservability.stopHookUnknown, 1);
-    assert.equal(verified.routeHistory(context).routes[0].outcome.source, "stop_hook");
+    assert.equal(verified.status(context).outcomeObservability.stopHookUnknown, 0);
+    assert.equal(verified.status(context).delegationGate.routeId, route.routeId);
     verified.close();
   } finally {
     if (previousHome == null) delete process.env.ADAPTIVE_ROUTER_HOME;
@@ -102,6 +103,26 @@ test("concurrent Stop and verified outcome writers leave one consistent terminal
       store: setup,
     });
     assert.equal(route.action, "delegate");
+    const setupContext = setup.context({ cwd: project.root, contextId: "stop-outcome-race" });
+    const toolInput = {
+      message: route.carrier.message,
+      task_name: route.carrier.taskName,
+      model: route.target.model,
+      reasoning_effort: route.target.effort,
+      fork_turns: "none",
+    };
+    setup.transaction(() => consumeDelegationTicket(setup.db, setupContext, {
+      taskName: route.carrier.taskName,
+      turnId: "stop-outcome-race-turn",
+      toolUseId: "stop-outcome-race-tool",
+      toolInput,
+    }));
+    setup.transaction(() => observeAgentResult(setup.db, setupContext, {
+      turnId: "stop-outcome-race-turn",
+      toolUseId: "stop-outcome-race-tool",
+      toolInput,
+      toolResponse: { no_agent_created: true },
+    }));
     setup.close();
 
     const recordPayload = JSON.stringify({
@@ -124,19 +145,14 @@ test("concurrent Stop and verified outcome writers leave one consistent terminal
       .map((row) => ({ ...row }));
     assert.equal(rows.length, 1);
     assert.equal(rows[0].route_id, route.routeId);
-    assert.ok(["passed", "unknown"].includes(rows[0].status));
+    assert.equal(rows[0].status, "passed");
     const context = verified.context({ cwd: project.root, contextId: "stop-outcome-race" });
     const historyOutcome = verified.routeHistory(context).routes[0].outcome;
     const stopObservationCount = Number(verified.db.prepare(`
       SELECT count(*) AS count FROM stop_observations WHERE resolved_at IS NOT NULL
     `).get().count);
-    if (rows[0].status === "passed") {
-      assert.equal(historyOutcome.source, "record_outcome");
-      assert.equal(stopObservationCount, 0);
-    } else {
-      assert.equal(historyOutcome.source, "stop_hook");
-      assert.equal(stopObservationCount, 1);
-    }
+    assert.equal(historyOutcome.source, "record_outcome");
+    assert.equal(stopObservationCount, 0);
     verified.close();
   } finally {
     if (previousHome == null) delete process.env.ADAPTIVE_ROUTER_HOME;
@@ -157,20 +173,49 @@ test("concurrent routes claim once exactly once and distinct contexts generate o
     setup.close();
 
     const results = await Promise.all(Array.from({ length: 50 }, (_, index) => runWorker(project, "route-outcome", "shared", index)));
-    assert.equal(results.filter((result) => result.route.target.model === "gpt-5.6-sol").length, 1);
-    assert.equal(results.filter((result) => result.route.target.model === "gpt-5.6-terra").length, 49);
+    assert.equal(results.filter((result) => result.route.action === "delegate" && result.route.target.model === "gpt-5.6-sol").length, 1);
+    assert.equal(results.filter((result) => result.route.action === "busy").length, 49);
 
     const store = new RouterStore();
-    assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM routes").get().count), 50);
-    assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM outcomes").get().count), 50);
+    assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM routes").get().count), 1);
+    assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM outcomes").get().count), 1);
     assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM overrides WHERE scope = 'once'").get().count), 0);
     assert.equal(listPolicyProposals({ contextId: "shared" }, { store, cwd: project.root }).length, 0);
+    const firstResult = results.find((result) => result.route.action === "delegate");
+    const firstRoute = firstResult.route;
+    const sharedContext = store.context({ cwd: project.root, contextId: "shared" });
+    const firstToolInput = {
+      message: firstRoute.carrier.message,
+      task_name: firstRoute.carrier.taskName,
+      model: firstRoute.target.model,
+      reasoning_effort: firstRoute.target.effort,
+      fork_turns: "none",
+    };
+    store.transaction(() => observeAgentResult(store.db, sharedContext, {
+      turnId: firstResult.dispatch.turnId,
+      toolUseId: firstResult.dispatch.toolUseId,
+      toolInput: firstToolInput,
+      toolResponse: { no_agent_created: true },
+    }));
+    assert.equal(store.status(sharedContext).delegationGate.state, "available");
     store.clearOverrides(store.context({ cwd: project.root, contextId: "shared" }), "session");
     store.close();
 
-    await Promise.all(Array.from({ length: 12 }, (_, index) => (
-      runWorker(project, "route-outcome", `learning-${index}`, index)
-    )));
+    const learningResults = [];
+    for (let offset = 0; offset < 12; offset += 4) {
+      learningResults.push(...await Promise.all(Array.from({ length: 4 }, (_, index) => (
+        runWorker(project, "route-outcome-complete", `learning-${offset + index}`, offset + index)
+      ))));
+    }
+    assert.equal(
+      learningResults.filter((result) => result.route.action === "delegate" && result.outcome?.recorded).length,
+      12,
+      JSON.stringify(learningResults.map((result) => ({
+        action: result.route.action,
+        reasons: result.route.reasonCodes,
+        outcome: result.outcome,
+      }))),
+    );
     const proposalStore = new RouterStore();
     const proposals = listPolicyProposals({ contextId: "learning-0" }, { store: proposalStore, cwd: project.root });
     assert.equal(proposals.length, 1);

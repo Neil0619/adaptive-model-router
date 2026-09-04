@@ -124,10 +124,11 @@ export function recordOutcome(input, options = {}) {
     const route = store.findRoute(context, input.routeId);
     if (!route) throw new Error("routeId does not belong to the current project and context");
     validateOutcomeSemantics(input, route);
-    const result = store.insertOutcome(context, route, input);
-    const safety = result.recorded ? store.enforceScoringSafety(context, route) : null;
+    const result = store.insertOutcome(context, route, input, options.qualificationProof);
+    const qualification = parseJson(route.reason_codes_json, []).includes("HOST_LIFECYCLE_QUALIFICATION");
+    const safety = result.recorded && !qualification ? store.enforceScoringSafety(context, route) : null;
     let proposal = null;
-    if (result.recorded && input.status !== "unknown") proposal = maybeGenerateProposal(store, context, route.category);
+    if (result.recorded && !qualification && input.status !== "unknown") proposal = maybeGenerateProposal(store, context, route.category);
     return { ...result, proposal, safety };
   } finally {
     ownedStore?.close();

@@ -10,11 +10,18 @@ import { resolveCodexCommand, spawnSpec } from "./codex-command.mjs";
 export { resolveCodexCommand, spawnSpec } from "./codex-command.mjs";
 
 export class AppServerClient {
-  constructor({ timeoutMs = 8_000, spawnImpl = spawn, resolveImpl = resolveCodexCommand, clock = Date.now } = {}) {
+  constructor({
+    timeoutMs = 8_000,
+    spawnImpl = spawn,
+    resolveImpl = resolveCodexCommand,
+    clock = Date.now,
+    isolateSqlite = false,
+  } = {}) {
     this.timeoutMs = timeoutMs;
     this.spawnImpl = spawnImpl;
     this.resolveImpl = resolveImpl;
     this.clock = clock;
+    this.isolateSqlite = isolateSqlite;
     this.nextId = 1;
     this.pending = new Map();
     this.waiters = new Set();
@@ -35,15 +42,21 @@ export class AppServerClient {
     const resolved = await this.resolveImpl();
     this.spawnKind = resolved.kind;
     this.remaining(deadlineAt);
-    const appHome = await mkdtemp(join(tmpdir(), "adaptive-model-router-app-server-"));
+    const appHome = this.isolateSqlite
+      ? await mkdtemp(join(tmpdir(), "adaptive-model-router-app-server-"))
+      : null;
     this.appHome = appHome;
-    const spec = spawnSpec(resolved, ["app-server", "--listen", "stdio://"], {
+    const launchEnv = {
       ...process.env,
       ADAPTIVE_ROUTER_INTERNAL: "1",
-      CODEX_SQLITE_HOME: appHome,
-    });
+    };
+    if (appHome) launchEnv.CODEX_SQLITE_HOME = appHome;
+    const spec = spawnSpec(resolved, ["app-server", "--listen", "stdio://"], launchEnv);
     try {
       this.process = this.spawnImpl(spec.command, spec.args, {
+        // Reopen the pathname: a long-lived MCP can retain the deleted inode
+        // of a plugin cache that the host pruned and the installer restored.
+        cwd: process.cwd(),
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
         windowsVerbatimArguments: spec.windowsVerbatimArguments,
@@ -66,6 +79,7 @@ export class AppServerClient {
     lines.on("line", (line) => this.handleLine(line));
     await this.request("initialize", {
       clientInfo: { name: "adaptive_model_router", title: "Adaptive Model Router", version: ROUTER_VERSION },
+      capabilities: { experimentalApi: true, requestAttestation: false },
     }, deadlineAt);
     this.notify("initialized", {});
   }
@@ -167,6 +181,11 @@ export class AppServerClient {
       cursor = typeof page.nextCursor === "string" && page.nextCursor ? page.nextCursor : null;
     } while (cursor);
     return models;
+  }
+
+  async listHooks(cwd, deadlineAt = this.clock() + this.timeoutMs) {
+    await this.start(deadlineAt);
+    return this.request("hooks/list", { cwds: [cwd] }, deadlineAt);
   }
 
   async classify({ model, effort, prompt, outputSchema }, deadlineAt = this.clock() + this.timeoutMs) {

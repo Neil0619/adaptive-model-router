@@ -71,6 +71,10 @@ export const HOST_CAPABILITIES_SCHEMA = {
       required: ["available", "targets"],
       properties: {
         available: { type: "boolean" },
+        invocation: {
+          type: "string",
+          enum: ["direct", "code_mode_nested", "unavailable"],
+        },
         targets: {
           type: "array",
           maxItems: 32,
@@ -133,9 +137,10 @@ export const ROUTE_OUTPUT_SCHEMA = {
   additionalProperties: false,
   required: ["schemaVersion", "routeId", "action", "category", "reasonCodes", "verificationGate", "classifier", "escalation", "rootTask", "taskMode"],
   properties: {
-    schemaVersion: { type: "string", enum: ["3.0"] },
+    schemaVersion: { type: "string", enum: ["5.0"] },
     routeId: { type: "string", minLength: 1 },
-    action: { type: "string", enum: ["delegate", "continue", "ask_user"] },
+    blockingRouteId: { type: "string", minLength: 1 },
+    action: { type: "string", enum: ["delegate", "continue", "ask_user", "busy"] },
     category: { type: "string", enum: CATEGORIES },
     target: {
       type: "object",
@@ -144,6 +149,17 @@ export const ROUTE_OUTPUT_SCHEMA = {
       properties: {
         model: { type: "string", minLength: 1 },
         effort: { type: "string", enum: EFFORT_ORDER },
+      },
+    },
+    carrier: {
+      type: "object",
+      additionalProperties: false,
+      required: ["type", "taskName", "message", "instruction"],
+      properties: {
+        type: { type: "string", enum: ["adaptive-model-router/delegation-ticket-v2"] },
+        taskName: { type: "string", pattern: "^router_[a-f0-9]{32}$" },
+        message: { type: "string", minLength: 1, maxLength: 512 },
+        instruction: { type: "string", minLength: 1, maxLength: 512 },
       },
     },
     reasonCodes: { type: "array", minItems: 1, maxItems: 8, items: { type: "string", enum: REASON_CODES } },

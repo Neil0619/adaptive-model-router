@@ -42,6 +42,7 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
         hostCapabilities: {
           delegation: {
             available: true,
+            invocation: "direct",
             targets: [
               { model: "gpt-5.6-sol", efforts: ["low", "medium", "high"] },
               { model: "gpt-5.6-terra", efforts: ["low", "medium", "high"] },
@@ -98,12 +99,14 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
     assert.equal(responses[7].result.isError, true);
     assert.match(responses[7].result.content[0].text, />= 1/);
     assert.equal(responses[8].result.isError, false);
-    assert.equal(responses[8].result.structuredContent.action, "delegate");
-    assert.deepEqual(responses[8].result.structuredContent.target, {
-      model: "gpt-5.6-terra",
-      effort: "low",
-    });
-    assert.ok(responses[8].result.structuredContent.reasonCodes.includes("MODEL_FAMILY_FALLBACK"));
+    assert.equal(responses[8].result.structuredContent.action, "continue");
+    assert.ok(responses[8].result.structuredContent.reasonCodes.some((reasonCode) => [
+      "HOOK_TRUST_REQUIRED",
+      "HOST_HOOK_SET_MISMATCH",
+      "HOST_HOOK_STATUS_UNAVAILABLE",
+      "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN",
+    ].includes(reasonCode)));
+    assert.equal(responses[8].result.structuredContent.target, undefined);
   } finally {
     await project.cleanup();
   }

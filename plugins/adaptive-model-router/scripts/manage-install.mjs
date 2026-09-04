@@ -42,7 +42,15 @@ const INSTALL_VERSION = SOURCE_MANIFEST.version;
 const REQUIRED_TASK_TOOLS = Object.freeze(["diagnose_router", "record_outcome", "route_stage"]);
 const LIVE_TASK_SMOKE_TOOLS = Object.freeze(["diagnose_router", "route_stage"]);
 const LEGACY_HOOK_EVENTS = Object.freeze(["SubagentStart", "UserPromptSubmit", "Stop"]);
-const HOOK_EVENTS = Object.freeze(["SessionStart", "SubagentStart", "UserPromptSubmit", "Stop"]);
+const HOOK_EVENTS = Object.freeze([
+  "SessionStart",
+  "SubagentStart",
+  "SubagentStop",
+  "PreToolUse",
+  "PostToolUse",
+  "UserPromptSubmit",
+  "Stop",
+]);
 const LIVE_BRIDGE_FILES = Object.freeze([
   "compatibility.json",
   "scripts/lib/plugin-data.mjs",
@@ -62,6 +70,7 @@ const RUNTIME_VAULT_DIRECTORY = "runtime-shell-vault";
 const RUNTIME_VAULT_INDEX = "index.json";
 const INSTALLER_LIFECYCLE_DATABASE = "installer-lifecycle.sqlite3";
 const INSTALLER_LIFECYCLE_TIMEOUT_MS = 5_000;
+const HOST_COMMAND_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 let installerLifecycleLock = null;
 
 if (
@@ -114,6 +123,7 @@ function parseArgs(values) {
 function runSpec(spec, invocationArgs, { json = false, quiet = false, label = spec.command } = {}) {
   const result = spawnSync(spec.command, spec.args, {
     encoding: "utf8",
+    maxBuffer: HOST_COMMAND_MAX_BUFFER_BYTES,
     windowsHide: true,
     windowsVerbatimArguments: spec.windowsVerbatimArguments,
     env: spec.env || process.env,
@@ -138,7 +148,7 @@ function runSpec(spec, invocationArgs, { json = false, quiet = false, label = sp
   try {
     return JSON.parse(result.stdout);
   } catch {
-    throw new InstallError("Codex CLI returned invalid JSON", 5);
+    throw new InstallError(`${label} ${invocationArgs.join(" ")} returned invalid JSON`, 5);
   }
 }
 
@@ -269,8 +279,9 @@ function hookConfigAtRoot(root) {
     throw new Error("Router Hook event set is unsupported");
   }
   const manifest = JSON.parse(readFileSync(join(root, ".codex-plugin", "plugin.json"), "utf8"));
-  if (manifest?.version === INSTALL_VERSION && !configuredEvents.includes("SessionStart")) {
-    throw new Error("Current Router Hook configuration is missing SessionStart");
+  if (manifest?.version === INSTALL_VERSION) {
+    const missing = HOOK_EVENTS.filter((event) => !configuredEvents.includes(event));
+    if (missing.length) throw new Error(`Current Router Hook configuration is missing ${missing.join(", ")}`);
   }
   const events = HOOK_EVENTS.filter((event) => configuredEvents.includes(event));
   const handlers = events.map((event) => {
@@ -737,7 +748,7 @@ function readRuntimeVaultIndex(root) {
   }
 }
 
-function vaultRuntimeHealth(root, directory) {
+function inspectVaultRuntime(root, directory) {
   try {
     assertSafeRuntimeTree(root);
     const health = runtimeHealthAtRoot(root);
@@ -745,17 +756,57 @@ function vaultRuntimeHealth(root, directory) {
       !health ||
       health.version !== directory ||
       basename(root) !== directory ||
-      compareRuntimeVersions(health.version, INSTALL_VERSION) > 0 ||
-      !sameRuntimeContract(health.descriptor, SOURCE_RUNTIME) ||
-      !sameLiveCompatibility(health.compatibility, SOURCE_COMPATIBILITY) ||
-      (directory === INSTALL_VERSION && !sameHostSurface(root))
+      compareRuntimeVersions(health.version, INSTALL_VERSION) > 0
     ) {
-      return null;
+      return { state: "damaged", health: null };
     }
-    return health;
+    const compatible =
+      sameRuntimeContract(health.descriptor, SOURCE_RUNTIME) &&
+      sameLiveCompatibility(health.compatibility, SOURCE_COMPATIBILITY);
+    if (directory === INSTALL_VERSION) {
+      return compatible && sameHostSurface(root)
+        ? { state: "compatible", health }
+        : { state: "damaged", health: null };
+    }
+    return compatible
+      ? { state: "compatible", health }
+      : { state: "obsolete", health };
   } catch {
-    return null;
+    return { state: "damaged", health: null };
   }
+}
+
+function vaultRuntimeHealth(root, directory) {
+  const inspection = inspectVaultRuntime(root, directory);
+  return inspection.state === "compatible" ? inspection.health : null;
+}
+
+function reconcileRuntimeVaultIndex(vaultRoot) {
+  const indexed = readRuntimeVaultIndex(vaultRoot);
+  const compatible = [];
+  const obsolete = [];
+  for (const directory of indexed) {
+    const inspection = inspectVaultRuntime(join(vaultRoot, directory), directory);
+    if (inspection.state === "damaged") {
+      throw new InstallError(
+        "RUNTIME_VAULT_DAMAGED: an indexed historical runtime is missing or invalid",
+        5,
+        "RUNTIME_VAULT_DAMAGED",
+      );
+    }
+    if (inspection.state === "obsolete") obsolete.push(directory);
+    else compatible.push(directory);
+  }
+  if (obsolete.length > 0) {
+    atomicWrite(join(vaultRoot, RUNTIME_VAULT_INDEX), `${JSON.stringify({
+      schemaVersion: 1,
+      directories: compatible,
+    })}\n`);
+    process.stdout.write(
+      `Preserved ${obsolete.length} obsolete Router runtime archive${obsolete.length === 1 ? "" : "s"} outside the active compatibility index.\n`,
+    );
+  }
+  return compatible;
 }
 
 function archiveRuntimeRoot(vaultRoot, root) {
@@ -831,16 +882,7 @@ function archiveRuntimeRoot(vaultRoot, root) {
 
 function archiveRuntimeRoots(roots) {
   const vaultRoot = runtimeVaultRoot();
-  const indexed = new Set(readRuntimeVaultIndex(vaultRoot));
-  for (const directory of indexed) {
-    if (!vaultRuntimeHealth(join(vaultRoot, directory), directory)) {
-      throw new InstallError(
-        "RUNTIME_VAULT_DAMAGED: an indexed historical runtime is missing or invalid",
-        5,
-        "RUNTIME_VAULT_DAMAGED",
-      );
-    }
-  }
+  const indexed = new Set(reconcileRuntimeVaultIndex(vaultRoot));
   for (const root of [...new Set(roots.map((entry) => resolve(entry)))].sort()) {
     const health = runtimeHealthAtRoot(root);
     const archivedRoot = safeRuntimeDirectoryName(health?.version)
@@ -977,7 +1019,7 @@ function restoreVaultedRuntimeRoot(vaultRoot, versionsRoot, versionsRootIdentity
 
 function restoreVaultedRuntimeRoots(anchorRoot) {
   const vaultRoot = runtimeVaultRoot();
-  const indexed = readRuntimeVaultIndex(vaultRoot);
+  const indexed = reconcileRuntimeVaultIndex(vaultRoot);
   if (indexed.length === 0) return [];
   const versionsRoot = dirname(anchorRoot);
   const versionsRootIdentity = directoryIdentity(versionsRoot);
@@ -1804,7 +1846,7 @@ function agentsPath() {
   return join(codexHome(), "AGENTS.md");
 }
 
-const AGENTS_INSTRUCTION = "When adaptive routing context is present and route_stage returns action=delegate, the applicable router skill explicitly authorizes and requires exactly one bounded subagent under conditional policies that allow skill-requested delegation; this action is not a suggestion. Use the returned model and reasoning effort, keep the root task as orchestrator, avoid overlapping writers, never silently continue the delegated stage in the root task or ask the user to re-authorize it, verify the delegated work, and record exactly one final outcome. Only an actual host-tool rejection enters the documented failed/tooling flow.";
+const AGENTS_INSTRUCTION = "When adaptive routing context is present and route_stage returns action=delegate, the applicable router skill explicitly authorizes and requires exactly one bounded subagent under conditional policies that allow skill-requested delegation; this action is not a suggestion. Use only the direct native spawn_agent tool outside functions.exec, use the returned model and reasoning effort, pass carrier.taskName as the exact task_name and carrier.message as the exact message with fork_turns=none, keep the root task as orchestrator, avoid overlapping writers, verify the delegated work, and record exactly one final outcome only after the matching spawn_agent dispatch handshake has consumed the route ticket. An empty list_agents result describes existing agents and is never evidence that direct spawn_agent is unavailable; after a successful direct dispatch, do not downgrade that capability unless the current direct spawn_agent call actually rejects before creating a child. A spawn tool visible only inside code mode is not a compatible delegation capability. For action=busy, do not create or retry an Agent and do not record an outcome for the busy decision; continue root-only and report blockingRouteId. If the root tries to stop before dispatching a delegated route, the Stop hook blocks once and identifies the required spawn_agent action. A guarded Stop re-entry with a still-unconsumed ticket marks the launch lifecycle ambiguous and retains the gate without creating an outcome or no-child claim; it never archives the attempt or permits a replacement child without authoritative no-child evidence. A denied or ambiguous launch fails closed and must not be retried into a known busy gate.";
 const AGENTS_RESTORE_PATTERN = /<!-- adaptive-model-router:restore separator=([012]) created=([01]) -->/;
 
 function agentsBlock({ separatorLength, created }) {

@@ -14,8 +14,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const RUNTIME_DESCRIPTOR = "runtime.json";
 export const SHELL_PROTOCOL_VERSION = 1;
-export const TOOL_CONTRACT_VERSION = 3;
-export const STORAGE_CONTRACT_VERSION = 1;
+export const TOOL_CONTRACT_VERSION = 6;
+export const STORAGE_CONTRACT_VERSION = 2;
 export const RUNTIME_PROBE_TIMEOUT_MS = 5_000;
 const POINTER_SCHEMA_VERSION = 1;
 const MAX_FAILED_RUNTIMES = 16;
@@ -490,7 +490,7 @@ export function runtimePublicState(resolution, env = process.env) {
     toolContractVersion: TOOL_CONTRACT_VERSION,
     storageContractVersion: STORAGE_CONTRACT_VERSION,
     runtimeVersion: resolution.candidate.descriptor.runtimeVersion,
-    activeVersion: pointer.activeVersion || resolution.candidate.descriptor.runtimeVersion,
+    activeVersion: resolution.active.descriptor.runtimeVersion,
     previousVersion: pointer.previousVersion,
     failedRuntimeCount: pointer.failedDirectories.length,
     databaseVersion: resolution.candidate.descriptor.databaseVersion,

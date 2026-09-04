@@ -4,6 +4,12 @@ import { randomUUID } from "node:crypto";
 import { DEFAULT_SCORING_PROFILE, SCHEMA_VERSION } from "../scripts/lib/constants.mjs";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { recordOutcome } from "../scripts/lib/learning.mjs";
+import {
+  buildContextPackage,
+  consumeDelegationTicket,
+  createDelegationTicket,
+  observeAgentResult,
+} from "../scripts/lib/delegation-gate.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
@@ -31,7 +37,36 @@ function passedOutcome(route, contextId) {
   };
 }
 
-test("database v3 stores redacted immutable score snapshots and excludes overrides from learning", async () => {
+let lifecycleSequence = 0;
+function finishNoChild(store, context, route, contextId, cwd, status = "passed", failureType = null) {
+  const sequence = ++lifecycleSequence;
+  const toolInput = {
+    message: route.carrier.message,
+    task_name: route.carrier.taskName,
+    model: route.target.model,
+    reasoning_effort: route.target.effort,
+    fork_turns: "none",
+  };
+  const consumed = store.transaction(() => consumeDelegationTicket(store.db, context, {
+    taskName: route.carrier.taskName,
+    turnId: `score-turn-${sequence}`,
+    toolUseId: `score-tool-${sequence}`,
+    toolInput,
+  }));
+  store.transaction(() => observeAgentResult(store.db, context, {
+    turnId: `score-turn-${sequence}`,
+    toolUseId: `score-tool-${sequence}`,
+    toolInput,
+    toolResponse: { no_agent_created: true },
+  }));
+  return recordOutcome({
+    ...passedOutcome(route, contextId),
+    status,
+    failureType,
+  }, { store, cwd });
+}
+
+test("database v5 stores redacted immutable score snapshots and excludes overrides from learning", async () => {
   const project = await temporaryProject("adaptive scoring snapshots ");
   try {
     await withRouterEnvironment(project, async () => {
@@ -51,7 +86,7 @@ test("database v3 stores redacted immutable score snapshots and excludes overrid
       const explicitRow = store.db.prepare(`
         SELECT * FROM route_score_snapshots WHERE route_id = ?
       `).get(explicit.routeId);
-      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 3);
+      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 5);
       assert.equal(automaticRow.eligible_learning, 1);
       assert.equal(explicitRow.eligible_learning, 0);
       assert.deepEqual(JSON.parse(explicitRow.exclusion_codes_json), ["OVERRIDE_APPLIED"]);
@@ -60,7 +95,13 @@ test("database v3 stores redacted immutable score snapshots and excludes overrid
       const profile = store.ensureScoringProfile(store.context({ cwd: project.root, contextId: "snapshot-auto" }));
       assert.equal(automaticRow.profile_id, profile.profileId);
       assert.equal(profile.profileVersion, DEFAULT_SCORING_PROFILE.profileVersion);
-      recordOutcome(passedOutcome(automatic, "snapshot-auto"), { store, cwd: project.root });
+      finishNoChild(
+        store,
+        store.context({ cwd: project.root, contextId: "snapshot-auto" }),
+        automatic,
+        "snapshot-auto",
+        project.root,
+      );
       const status = await callRouterTool("get_learning_status", {
         contextId: "snapshot-auto",
       }, { store, cwd: project.root });
@@ -72,16 +113,33 @@ test("database v3 stores redacted immutable score snapshots and excludes overrid
       const environmentRoute = await routeStage(routeInput({
         contextId: "snapshot-environment",
       }), { catalog: CATALOG, cwd: project.root, store });
+      const environmentContext = store.context({ cwd: project.root, contextId: "snapshot-environment" });
+      const sequence = ++lifecycleSequence;
+      const environmentToolInput = {
+        message: environmentRoute.carrier.message,
+        task_name: environmentRoute.carrier.taskName,
+        model: environmentRoute.target.model,
+        reasoning_effort: environmentRoute.target.effort,
+        fork_turns: "none",
+      };
+      store.transaction(() => consumeDelegationTicket(store.db, environmentContext, {
+        taskName: environmentRoute.carrier.taskName,
+        turnId: `score-turn-${sequence}`,
+        toolUseId: `score-tool-${sequence}`,
+        toolInput: environmentToolInput,
+      }));
+      store.transaction(() => observeAgentResult(store.db, environmentContext, {
+        turnId: `score-turn-${sequence}`,
+        toolUseId: `score-tool-${sequence}`,
+        toolInput: environmentToolInput,
+        toolResponse: { no_agent_created: true },
+      }));
       recordOutcome({
-        routeId: environmentRoute.routeId,
-        contextId: "snapshot-environment",
+        ...passedOutcome(environmentRoute, "snapshot-environment"),
         status: "failed",
-        gate: environmentRoute.verificationGate,
         failureType: "environment",
         retries: 1,
         retryBreakdown: { reasoning: 0, environment: 1, information: 0, tooling: 0 },
-        escalations: environmentRoute.escalation.count,
-        userCorrection: false,
       }, { store, cwd: project.root });
       const afterEnvironment = store.learningStatus(
         store.context({ cwd: project.root, contextId: "snapshot-auto" }),
@@ -193,6 +251,15 @@ test("classifier-adjusted and escalated routes are quarantined from online learn
       const first = await routeStage(routeInput({
         contextId: "escalation-quarantine",
       }), { catalog: CATALOG, cwd: project.root, store });
+      finishNoChild(
+        store,
+        store.context({ cwd: project.root, contextId: "escalation-quarantine" }),
+        first,
+        "escalation-quarantine",
+        project.root,
+        "failed",
+        "reasoning",
+      );
       const escalated = await routeStage(routeInput({
         contextId: "escalation-quarantine",
         previousRouteId: first.routeId,
@@ -271,18 +338,15 @@ test("offline profiles are immutable and a hard risk-floor violation rolls back 
           exclusionCodes: [],
         },
       };
-      assert.equal(store.commitRoute(context, unsafeRoute).committed, true);
-      const result = recordOutcome({
-        routeId,
-        contextId,
-        status: "passed",
-        gate: "full-checks",
-        failureType: null,
-        retries: 0,
-        retryBreakdown: ZERO_RETRIES,
-        escalations: 0,
-        userCorrection: false,
-      }, { store, cwd: project.root });
+      const ticket = createDelegationTicket();
+      assert.equal(store.commitRoute(context, unsafeRoute, null, {
+        ticket,
+        contextPackage: buildContextPackage(routeInput({ contextId })),
+        cwd: project.root,
+        disk: { probe: () => 16n * 1024n * 1024n * 1024n },
+      }).committed, true);
+      unsafeRoute.carrier = ticket.carrier;
+      const result = finishNoChild(store, context, unsafeRoute, contextId, project.root);
       assert.equal(result.safety.rolledBack, true);
       assert.equal(store.ensureScoringProfile(context).profileId, baseline.profileId);
       const learning = store.learningStatus(context);

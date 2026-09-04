@@ -43,9 +43,13 @@ Optional input:
 - `override`: a model, effort, or both for this call. An unavailable explicit
   target returns `ask_user`; it is never silently replaced.
 - `hostCapabilities.delegation`: the current host's bounded-subagent
-  capability, with `available` plus strict `targets[]` entries containing one
-  model slug and its supported `efforts`. When present, this is the only source
-  of bounded targets. Do not derive it from the root picker or model cache.
+  capability, with `available`, `invocation`, and strict `targets[]` entries
+  containing one model slug and its supported `efforts`. Use
+  `invocation: "direct"` only for a native `spawn_agent` call available outside
+  `functions.exec`. A tool visible only inside code mode must be reported as
+  `available: false`, `invocation: "code_mode_nested"`, with no targets. When
+  present, this is the only source of bounded targets. Do not derive it from
+  the root picker or model cache.
 
 Example for a host that currently exposes Sol and Terra:
 
@@ -54,6 +58,7 @@ Example for a host that currently exposes Sol and Terra:
   "hostCapabilities": {
     "delegation": {
       "available": true,
+      "invocation": "direct",
       "targets": [
         {
           "model": "gpt-5.6-sol",
@@ -82,8 +87,8 @@ mentions are not evidence. Each adds 18 points and they may stack.
 
 Output always contains:
 
-- `schemaVersion: "3.0"` and `routeId`;
-- `action`: `continue`, `delegate`, or `ask_user`;
+- `schemaVersion: "5.0"` and `routeId`;
+- `action`: `continue`, `delegate`, `ask_user`, or `busy`;
 - optional `target { model, effort }` only for `delegate`;
 - `category`, enumerated `reasonCodes`, and `verificationGate`;
 - classifier and escalation status.
@@ -95,7 +100,8 @@ When `taskMode` is `pending_confirmation` or `manual_root`, `route_stage`
 returns `continue` with `HOST_MODEL_INTENT_PENDING` or
 `MANUAL_ROOT_SELECTED`; it never delegates in those modes.
 
-If the action is `delegate`, create exactly one bounded subagent using
+If the action is `delegate`, create exactly one bounded subagent with the
+direct native `spawn_agent` tool outside `functions.exec`, using
 `target.model` and map `target.effort` to the host's `reasoning_effort`
 parameter. The root integrates the result and runs the returned verification
 gate. `delegate` is an instruction, not a recommendation. Under a conditional
@@ -103,9 +109,22 @@ host policy that permits subagents when an applicable skill explicitly requests
 them, the Adaptive Model Router skill's `delegate` action is that authorization.
 Do not reinterpret the conditional policy as a blanket prohibition, silently
 continue the delegated stage in the root, or ask the user to authorize it again.
-If the host cannot express those parameters, report delegation as unavailable
+If the host cannot express those parameters through the direct tool, report delegation as unavailable
 before routing; if the host tool rejects a declared target at startup, use the
 tooling-failure flow below. Do not claim the root model changed.
+Do not use `list_agents` or the absence of an existing child to infer whether
+`spawn_agent` is callable. A completed direct child lifecycle is trusted
+capability evidence for that task; a later unavailable declaration requires an
+actual direct-call rejection with explicit no-child proof.
+
+`delegate` with `HOST_LIFECYCLE_QUALIFICATION` is a one-time fixed no-tool
+self-test, not the requested work stage. Follow its exact carrier once. The
+source-owned `record_outcome` verifier must validate its native lifecycle and
+complete raw child transcript before accepting `passed`. After success, route
+the original stage again; its once override is still available. Failure or a
+changed task/host/Hook/runtime binding cannot trigger a replacement self-test.
+There is no caller-supplied proof parameter, and qualification is excluded from
+learning.
 
 The root-visible catalog, bounded delegate catalog, and classifier catalog are
 independent. A Luna entry in the root picker does not authorize Luna as a
@@ -114,8 +133,10 @@ contain it, automatic routing selects Terra and includes
 `MODEL_FAMILY_FALLBACK`. An explicit unavailable Luna target returns
 `ask_user / EXPLICIT_TARGET_UNAVAILABLE`.
 
-If the host rejects a returned target before startup, record that route as
-`failed` with `failureType: tooling`. An automatic route may then be retried
+If the host rejects a returned target before startup, the matching `PreToolUse`
+must already have consumed the route ticket and `PostToolUse` must explicitly
+prove that no child was created. Only then record that route as `failed` with
+`failureType: tooling`. An automatic route may then be retried
 once with `previousRouteId`; the rejected model is excluded. An explicit route
 asks the user instead. If the automatic retry is also rejected, record it and
 continue in the root. Do not treat a committed route as proof of startup.
@@ -163,10 +184,16 @@ duplicate outcomes are idempotent; conflicting duplicates fail. `unknown`
 outcomes do not participate in learning. `retryBreakdown` is required and must
 sum exactly to `retries`.
 
-The root should record the verified result before stopping. If it still omits an
-outcome, the Stop hook atomically records `unknown` and allows the user-facing
-reply to finish. It never creates a continuation prompt solely for outcome
-bookkeeping. Replayed or concurrent Stop events remain idempotent.
+The first outcome write also requires the matching delegation ticket to have
+been consumed by the dispatch handshake. An unlaunched route cannot be labeled
+passed, failed, or unknown. If the root tries to stop before dispatching a
+returned `delegate`, the Stop hook blocks that first stop and requests the exact
+direct `spawn_agent` action. The host's guarded Stop re-entry is allowed to
+prevent an infinite hook loop. If the ticket remains unconsumed, that re-entry
+marks the lifecycle ambiguous and retains its gate, carrier material, and
+child-space reservation. Without authoritative no-child evidence it never
+archives the attempt, creates an outcome, or permits a replacement child. The
+hook never synthesizes an outcome.
 
 ## Status and controls
 

@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_SCORING_PROFILE } from "../scripts/lib/constants.mjs";
 import { RouterStore } from "../scripts/lib/database.mjs";
+import { consumeDelegationTicket, observeAgentResult } from "../scripts/lib/delegation-gate.mjs";
 import {
   approvePolicyProposal,
   listPolicyProposals,
@@ -45,6 +46,32 @@ function outcomeFor(route, contextId, overrides = {}) {
   };
 }
 
+let lifecycleSequence = 0;
+function recordCompletedOutcome(store, cwd, route, contextId, overrides = {}) {
+  const sequence = ++lifecycleSequence;
+  const context = store.context({ cwd, contextId });
+  const toolInput = {
+    message: route.carrier.message,
+    task_name: route.carrier.taskName,
+    model: route.target.model,
+    reasoning_effort: route.target.effort,
+    fork_turns: "none",
+  };
+  const consumed = store.transaction(() => consumeDelegationTicket(store.db, context, {
+    taskName: route.carrier.taskName,
+    turnId: `learning-turn-${sequence}`,
+    toolUseId: `learning-tool-${sequence}`,
+    toolInput,
+  }));
+  store.transaction(() => observeAgentResult(store.db, context, {
+    turnId: `learning-turn-${sequence}`,
+    toolUseId: `learning-tool-${sequence}`,
+    toolInput,
+    toolResponse: { no_agent_created: true },
+  }));
+  return recordOutcome(outcomeFor(route, contextId, overrides), { store, cwd });
+}
+
 test("record_outcome rejects permissive strings and inconsistent failure fields", async () => {
   const project = await temporaryProject();
   try {
@@ -75,7 +102,7 @@ test("outcomes are exactly-once: identical is idempotent and conflicting is reje
       const store = new RouterStore();
       const route = await createRoute(store, project.root, "idempotent");
       const outcome = outcomeFor(route, "idempotent");
-      assert.equal(recordOutcome(outcome, { store, cwd: project.root }).recorded, true);
+      assert.equal(recordCompletedOutcome(store, project.root, route, "idempotent").recorded, true);
       assert.equal(recordOutcome(outcome, { store, cwd: project.root }).idempotent, true);
       assert.throws(
         () => recordOutcome({ ...outcome, status: "failed", failureType: "reasoning" }, { store, cwd: project.root }),
@@ -98,7 +125,7 @@ test("unknown outcomes never enter the learning window", async () => {
       for (let index = 0; index < 21; index += 1) {
         const contextId = `unknown-${index}`;
         const route = await createRoute(store, project.root, contextId, `Implement parser variant ${index} with tests.`);
-        recordOutcome(outcomeFor(route, contextId, { status: "unknown" }), { store, cwd: project.root });
+        recordCompletedOutcome(store, project.root, route, contextId, { status: "unknown" });
       }
       assert.deepEqual(listPolicyProposals({ contextId: "unknown-0" }, { store, cwd: project.root }), []);
       store.close();
@@ -117,11 +144,12 @@ test("+5 proposal requires 12 eligible results and four distinct affected result
         const contextId = `plus-${index}`;
         const route = await createRoute(store, project.root, contextId, `Implement parser case ${index} with tests.`);
         const failed = index < 4;
-        recordOutcome(outcomeFor(route, contextId, failed ? { status: "failed", retries: index === 0 ? 1 : 0 } : {}), { store, cwd: project.root });
+        recordCompletedOutcome(store, project.root, route, contextId,
+          failed ? { status: "failed", retries: index === 0 ? 1 : 0 } : {});
       }
       assert.equal(listPolicyProposals({ contextId: "plus-0" }, { store, cwd: project.root }).length, 0);
       const route = await createRoute(store, project.root, "plus-11", "Implement parser case twelve with tests.");
-      recordOutcome(outcomeFor(route, "plus-11"), { store, cwd: project.root });
+      recordCompletedOutcome(store, project.root, route, "plus-11");
       const proposals = listPolicyProposals({ contextId: "plus-0" }, { store, cwd: project.root });
       assert.equal(proposals.length, 1);
       assert.equal(proposals[0].delta, 5);
@@ -144,11 +172,11 @@ test("-5 proposal requires 20 completely clean eligible results", async () => {
       for (let index = 0; index < 19; index += 1) {
         const contextId = `minus-${index}`;
         const route = await createRoute(store, cleanProject, contextId, `Implement specified option ${index} with targeted tests.`);
-        recordOutcome(outcomeFor(route, contextId), { store, cwd: cleanProject });
+        recordCompletedOutcome(store, cleanProject, route, contextId);
       }
       assert.equal(listPolicyProposals({ contextId: "minus-0" }, { store, cwd: cleanProject }).length, 0);
       const route = await createRoute(store, cleanProject, "minus-19", "Implement specified option twenty with targeted tests.");
-      recordOutcome(outcomeFor(route, "minus-19"), { store, cwd: cleanProject });
+      recordCompletedOutcome(store, cleanProject, route, "minus-19");
       const proposals = listPolicyProposals({ contextId: "minus-0" }, { store, cwd: cleanProject });
       assert.equal(proposals.length, 1);
       assert.equal(proposals[0].delta, -5);
@@ -167,7 +195,8 @@ test("reject and approve are idempotent and advance evidence windows", async () 
       for (let index = 0; index < 12; index += 1) {
         const contextId = `decision-${index}`;
         const route = await createRoute(store, project.root, contextId, `Implement decision case ${index} with tests.`);
-        recordOutcome(outcomeFor(route, contextId, index < 4 ? { status: "failed" } : {}), { store, cwd: project.root });
+        recordCompletedOutcome(store, project.root, route, contextId,
+          index < 4 ? { status: "failed" } : {});
       }
       const proposal = listPolicyProposals({ contextId: "decision-0" }, { store, cwd: project.root })[0];
       const rejected = rejectPolicyProposal({ contextId: "decision-0", proposalId: proposal.proposalId }, { store, cwd: project.root });
@@ -176,7 +205,7 @@ test("reject and approve are idempotent and advance evidence windows", async () 
       for (let index = 0; index < 3; index += 1) {
         const contextId = `decision-later-${index}`;
         const route = await createRoute(store, project.root, contextId, `Implement later case ${index} with tests.`);
-        recordOutcome(outcomeFor(route, contextId, { status: "failed" }), { store, cwd: project.root });
+        recordCompletedOutcome(store, project.root, route, contextId, { status: "failed" });
       }
       assert.equal(listPolicyProposals({ contextId: "decision-0" }, { store, cwd: project.root }).length, 0);
 
@@ -235,7 +264,8 @@ test("profile reanchor stales pending evidence and explicit rebase preserves the
       for (let index = 0; index < 12; index += 1) {
         const contextId = `rebase-${index}`;
         const route = await createRoute(store, project.root, contextId, `Implement rebase case ${index} with tests.`);
-        recordOutcome(outcomeFor(route, contextId, index < 4 ? { status: "failed" } : {}), { store, cwd: project.root });
+        recordCompletedOutcome(store, project.root, route, contextId,
+          index < 4 ? { status: "failed" } : {});
       }
       const pending = listPolicyProposals({ contextId: "rebase-0" }, { store, cwd: project.root })[0];
       assert.equal(pending.delta, 5);

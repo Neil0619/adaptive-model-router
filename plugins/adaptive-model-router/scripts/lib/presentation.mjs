@@ -39,7 +39,10 @@ function transitionText(transition, locale) {
   return "not delegated";
 }
 
-function outcomeText(outcome, locale) {
+function outcomeText(outcome, locale, reconciliation = null) {
+  if (reconciliation?.status === "reconciled_failure") return locale === "zh"
+    ? "tooling 失败（原生证据核对后终结；未补造委派结果）"
+    : "tooling failure (closed by native recovery; no fabricated outcome)";
   if (!outcome) return locale === "zh" ? "待记录" : "pending";
   if (outcome.status === "unknown" && outcome.source === "stop_hook") {
     return locale === "zh" ? "unknown（Stop 自动收敛）" : "unknown (auto-finalized by Stop)";
@@ -78,7 +81,7 @@ export function formatRouteStatus(status, { locale = "en" } = {}) {
       lines.push(`最近路由：${latest.createdAt} · ${latest.routeId}`);
       lines.push(`变化：${transitionText(latest.transition, "zh")}。`);
       lines.push(`原因：${latest.reasonCodes.join(", ")}。`);
-      lines.push(`结果：${outcomeText(latest.outcome, "zh")}。`);
+      lines.push(`结果：${outcomeText(latest.outcome, "zh", latest.reconciliation)}。`);
     }
     lines.push(`待记录结果：${status.pendingOutcomes}；Stop 自动收敛 unknown：${status.outcomeObservability?.stopHookUnknown ?? 0}；待审批策略：${status.pendingProposals}。`);
     lines.push("查看记录：发送“路由器：历史 10”。");
@@ -102,7 +105,7 @@ export function formatRouteStatus(status, { locale = "en" } = {}) {
     lines.push(`Latest route: ${latest.createdAt} · ${latest.routeId}`);
     lines.push(`Transition: ${transitionText(latest.transition, "en")}.`);
     lines.push(`Reasons: ${latest.reasonCodes.join(", ")}.`);
-    lines.push(`Outcome: ${outcomeText(latest.outcome, "en")}.`);
+    lines.push(`Outcome: ${outcomeText(latest.outcome, "en", latest.reconciliation)}.`);
   }
   lines.push(`Pending outcomes: ${status.pendingOutcomes}; Stop-auto-finalized unknown outcomes: ${status.outcomeObservability?.stopHookUnknown ?? 0}; pending policy proposals: ${status.pendingProposals}.`);
   lines.push('View records: send "router: history 10".');
@@ -123,7 +126,7 @@ export function formatRouteHistory(history, { locale = "en" } = {}) {
         `根任务 ${rootText(route.rootTask, "zh")}`,
         routeActionText(route, "zh"),
         transitionText(route.transition, "zh"),
-        `结果 ${outcomeText(route.outcome, "zh")}`,
+        `结果 ${outcomeText(route.outcome, "zh", route.reconciliation)}`,
         `routeId ${route.routeId}`,
         `原因 ${route.reasonCodes.join(", ")}`,
       ].join(" · "));
@@ -141,7 +144,7 @@ export function formatRouteHistory(history, { locale = "en" } = {}) {
       `root ${rootText(route.rootTask, "en")}`,
       routeActionText(route, "en"),
       transitionText(route.transition, "en"),
-      `outcome ${outcomeText(route.outcome, "en")}`,
+      `outcome ${outcomeText(route.outcome, "en", route.reconciliation)}`,
       `routeId ${route.routeId}`,
       `reasons ${route.reasonCodes.join(", ")}`,
     ].join(" · "));

@@ -63,18 +63,25 @@ flowchart LR
 - `scripts/lib/router.mjs` applies deterministic scoring, override priority, catalog capability checks, and monotonic escalation.
 - `scripts/lib/scorer.mjs` evaluates an immutable scoring-profile definition;
   approved project category offsets remain a separate bounded layer.
-- `scripts/lib/app-server.mjs` owns one short-lived classifier app-server process with a single total deadline and early-notification buffering.
+- `scripts/lib/app-server.mjs` owns one short-lived classifier app-server
+  process with a single total deadline and early-notification buffering. It
+  reuses the host's authenticated state and creates only an ephemeral thread;
+  it does not replace `CODEX_SQLITE_HOME` with an empty store.
 - `scripts/lib/database.mjs` owns SQLite migrations, immutable scoring profiles
   and snapshots, short `BEGIN IMMEDIATE` transactions, exactly-once claims, and
-  project/context isolation. Its route projection labels outcomes as explicit
-  `record_outcome` or Stop-auto-finalized `unknown` without adding a parallel
-  outcome log or changing the storage contract.
+  project/context isolation. Its route projection contains only explicit
+  `record_outcome` results; the Stop hook never manufactures an outcome. On a
+  guarded Stop re-entry marks a still-unconsumed attempt ambiguous and retains
+  its gate because re-entry is not authoritative no-child evidence. Legacy
+  pre-dispatch outcomes accepted by older runtimes are separately quarantined
+  while their audit rows remain.
 - `scripts/lib/learning.mjs` validates typed retry outcomes, filters eligible
   snapshots, and manages approval-gated immutable policy revisions.
 - `scripts/hook.mjs` handles exact control prefixes, the global automatic
   opt-in, root-model observation, fixed model-visible context, visible
   status/history reports, post-compaction context recovery, bounded-subagent
-  isolation, and non-blocking Stop fallback for missing outcomes.
+  isolation, and a one-shot Stop block when a returned delegate has not crossed
+  the dispatch handshake.
 - `scripts/lib/hook-identity.mjs` accepts only the host's non-empty stable
   `session_id`; `scripts/lib/hook-diagnostics.mjs` records one privacy-safe
   identity observation for Hook troubleshooting without persisting raw IDs.
@@ -107,14 +114,43 @@ flowchart LR
    compatibility. Build the bounded delegate catalog from the current
    `hostCapabilities.delegation`; when absent, permit only known Sol/Terra
    entries from the visible catalog. Never infer Luna delegation from root
-   visibility.
+   visibility. An active delegation gate is checked before any later
+   unavailable capability declaration. An empty `list_agents` result is not a
+   capability signal, and a context with a proven direct child cannot downgrade
+   without an actual no-child tooling rejection.
 8. Score locally. Only substantive borderline stages may call the auxiliary
    classifier. Its independent ephemeral app-server calls `model/list` and
    chooses Luna, then Terra, then Sol from that classifier-only catalog.
 9. Apply risk floors and any monotonic failure escalation.
 10. Insert the route. A once override is claimed and deleted in the same transaction as a real `delegate` insert. The row snapshots the currently observed root-model slug separately from the bounded target.
-11. For a `delegate` route, the root performs the verification gate and records
-   exactly one outcome. `continue` and `ask_user` routes do not have outcomes.
+11. Trusted Hook inventory is necessary but not sufficient for delegation. A
+    source-owned native capability proof must first establish that the exact
+    host Agent path dispatches the full lifecycle. Supported macOS hosts may
+    first issue one fixed no-tool `HOST_LIFECYCLE_QUALIFICATION` child, with no
+    original task content, once-override consumption, or learning eligibility.
+    Its outcome is accepted only after the server verifies the full native/raw
+    transcript and four actual Hook observations. An opaque in-process proof
+    token binds that verification to the outcome transaction; no public input
+    can supply a proof or bypass. The task proof is invalidated by executable,
+    ordered Hook set, shell, or runtime changes. Failed qualification is not
+    retried; unsupported hosts remain `continue / HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN`.
+12. `PreToolUse` binds the exact root turn, tool-use ID, input digest, and
+    one-shot ticket before dispatch. A direct v2 `spawn_agent` result may expose
+    only the exact task name and may reach `PostToolUse` before
+    `SubagentStart`. That ordering remains pending, not ambiguous: the gate
+    stays occupied until the matching trusted child start supplies the agent
+    identity. Conflicting names, identities, explicit no-child results followed
+    by a start, or missing correlation remain fail-closed.
+13. For a `delegate` route, the root performs the verification gate and records
+   exactly one outcome only after step 12 consumed the ticket. An unlaunched
+   route cannot receive an outcome. A first root Stop before dispatch is blocked
+   with the required carrier action; if the guarded re-entry still finds an
+   unconsumed ticket, it marks the lifecycle ambiguous and retains the gate,
+   carrier, and reservation until authoritative reconciliation. `continue` and
+   `ask_user` routes do not have
+   outcomes. A local verification failure after `continue` may reference that
+   route with `ROOT_LOCAL_RETRY`, but it does not inherit or increment subagent
+   escalation state.
 
 The route stores the model target and decision metadata, not the prompt or
 evidence payload. On retry, callers provide only `previousRouteId` and factual

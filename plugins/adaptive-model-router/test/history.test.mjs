@@ -4,10 +4,9 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RouterStore } from "../scripts/lib/database.mjs";
-import { recordOutcome } from "../scripts/lib/learning.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
-import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
+import { CATALOG, completeNoChildRoute, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = join(pluginRoot, "scripts", "codex-route.mjs");
@@ -24,36 +23,23 @@ test("history shows timestamped model transitions, outcomes, filters, and the ro
         contextId,
         override: { model: "gpt-5.6-terra", effort: "medium" },
       }), { catalog: CATALOG, cwd: project.root, store });
-      recordOutcome({
-        routeId: first.routeId,
-        contextId,
-        status: "passed",
-        gate: first.verificationGate,
-        failureType: null,
-        retries: 0,
-        retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
-        escalations: 0,
-        userCorrection: false,
-      }, { store, cwd: project.root });
+      completeNoChildRoute(first, { store, cwd: project.root, contextId });
       const same = await routeStage(routeInput({
         contextId,
         override: { model: "gpt-5.6-terra", effort: "medium" },
       }), { catalog: CATALOG, cwd: project.root, store });
+      completeNoChildRoute(same, { store, cwd: project.root, contextId });
       const changed = await routeStage(routeInput({
         contextId,
         override: { model: "gpt-5.6-sol", effort: "high" },
       }), { catalog: CATALOG, cwd: project.root, store });
-      recordOutcome({
-        routeId: changed.routeId,
+      completeNoChildRoute(changed, {
+        store,
+        cwd: project.root,
         contextId,
         status: "failed",
-        gate: changed.verificationGate,
         failureType: "reasoning",
-        retries: 1,
-        retryBreakdown: { reasoning: 1, environment: 0, information: 0, tooling: 0 },
-        escalations: 0,
-        userCorrection: true,
-      }, { store, cwd: project.root });
+      });
       const continued = await routeStage(routeInput({
         contextId,
         evidence: { workProduct: true, hostCanDelegate: false },
@@ -87,9 +73,9 @@ test("history shows timestamped model transitions, outcomes, filters, and the ro
       assert.deepEqual(history.routes[1].transition.to, { model: "gpt-5.6-sol", effort: "high" });
       assert.equal(history.routes[1].outcome.status, "failed");
       assert.equal(history.routes[1].outcome.source, "record_outcome");
-      assert.equal(history.routes[1].outcome.userCorrection, true);
+      assert.equal(history.routes[1].outcome.userCorrection, false);
       assert.equal(history.routes[2].transition.state, "target_unchanged");
-      assert.equal(history.routes[2].outcome, null);
+      assert.equal(history.routes[2].outcome.status, "passed");
       assert.equal(history.routes[3].transition.state, "initial_delegate");
       assert.equal(history.routes[3].outcome.status, "passed");
       assert.equal(history.routes[3].outcome.source, "record_outcome");
@@ -177,17 +163,7 @@ test("status currentStage distinguishes pending delegation, completed work, and 
       assert.equal(status.currentStage.state, "delegated_pending_outcome");
       assert.deepEqual(status.currentStage.target, delegated.target);
 
-      recordOutcome({
-        routeId: delegated.routeId,
-        contextId,
-        status: "passed",
-        gate: delegated.verificationGate,
-        failureType: null,
-        retries: 0,
-        retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
-        escalations: 0,
-        userCorrection: false,
-      }, { store, cwd: project.root });
+      completeNoChildRoute(delegated, { store, cwd: project.root, contextId });
       status = store.status(store.context({ cwd: project.root, contextId }));
       assert.equal(status.currentStage.state, "root");
       assert.equal(status.currentStage.target, null);

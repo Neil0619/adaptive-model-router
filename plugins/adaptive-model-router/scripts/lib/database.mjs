@@ -15,12 +15,24 @@ import {
 import { databasePath, legacyStatePresent, opaqueId, projectIdentityMaterial } from "./context.mjs";
 import { canonicalJson, isSqliteBusy, parseJson, payloadHash, sleepSync } from "./io.mjs";
 import { normalizeModelSlug } from "./model-slug.mjs";
+import { readNativeRecoveryReceipt } from "./delegation-recovery.mjs";
+import { reserveTaskQualification, consumeQualificationOutcome } from "./lifecycle-qualification.mjs";
+import {
+  markPredispatchReconciliation,
+  insertDelegationAttempt,
+  inspectFreeDisk,
+  inspectRouterChildBudget,
+  markDelegationOutcome,
+  reconcileLegacyPredispatchOutcomes,
+  unresolvedAttempt,
+} from "./delegation-gate.mjs";
 
 const GLOBAL_PROJECT = "__global__";
 const GLOBAL_CONTEXT = "__global__";
 const DEFAULT_HISTORY_LIMIT = 20;
 const MAX_HISTORY_LIMIT = 100;
 const INSPECTION_GUARD_PREFIX = "inspection_guard:";
+const LEGACY_DELEGATION_BLOCK_PREFIX = "legacy_delegation_block:";
 const INSPECTION_GUARD_TTL_MS = 60 * 60 * 1_000;
 const STOP_OUTCOME_MARKER = "stop:auto-finalized";
 const STORAGE_CONTRACT_SCHEMA = Object.freeze({
@@ -77,6 +89,17 @@ const STORAGE_CONTRACT_SCHEMA = Object.freeze({
   ],
   learning_events: [
     "event_id", "project_id", "event_type", "profile_id", "details_json", "created_at",
+  ],
+  delegation_attempts: [
+    "route_id", "project_id", "context_key", "ticket_hash", "model", "effort",
+    "context_package", "context_package_bytes", "ticket_consumed", "root_turn_id",
+    "tool_use_id", "dispatch_input_digest", "post_observed", "agent_id", "no_child",
+    "stop_observed", "transcript_bytes", "early_agent_id", "early_transcript_bytes",
+    "outcome_recorded", "outcome_status", "ambiguous",
+    "created_at", "updated_at", "finalized_at",
+  ],
+  delegation_usage: [
+    "project_id", "context_key", "total_transcript_bytes", "untrusted", "updated_at",
   ],
 });
 function nowIso() {
@@ -150,6 +173,9 @@ export class RouterStore {
       this.db.exec("PRAGMA foreign_keys = ON");
       this.db.exec("PRAGMA trusted_schema = OFF");
       this.migrate();
+      if (!this.forwardDatabaseVersion) {
+        this.transaction(() => reconcileLegacyPredispatchOutcomes(this.db));
+      }
       this.salt = this.getOrCreateSalt();
       this.identityCache = new Map();
     } catch (error) {
@@ -468,6 +494,85 @@ export class RouterStore {
           CREATE INDEX IF NOT EXISTS learning_events_project
             ON learning_events(project_id, created_at DESC);
         `);
+      }
+      if (current <= 3) {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS delegation_attempts (
+            route_id TEXT PRIMARY KEY REFERENCES routes(route_id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+            project_id TEXT NOT NULL,
+            context_key TEXT NOT NULL,
+            ticket_hash TEXT UNIQUE,
+            model TEXT NOT NULL,
+            effort TEXT NOT NULL,
+            context_package TEXT,
+            context_package_bytes INTEGER NOT NULL CHECK (context_package_bytes >= 0),
+            ticket_consumed INTEGER NOT NULL DEFAULT 0 CHECK (ticket_consumed IN (0, 1)),
+            root_turn_id TEXT,
+            tool_use_id TEXT,
+            dispatch_input_digest TEXT,
+            post_observed INTEGER NOT NULL DEFAULT 0 CHECK (post_observed IN (0, 1)),
+            agent_id TEXT,
+            no_child INTEGER NOT NULL DEFAULT 0 CHECK (no_child IN (0, 1)),
+            stop_observed INTEGER NOT NULL DEFAULT 0 CHECK (stop_observed IN (0, 1)),
+            transcript_bytes INTEGER CHECK (transcript_bytes >= 0),
+            early_agent_id TEXT,
+            early_transcript_bytes INTEGER CHECK (early_transcript_bytes >= 0),
+            outcome_recorded INTEGER NOT NULL DEFAULT 0 CHECK (outcome_recorded IN (0, 1)),
+            outcome_status TEXT CHECK (outcome_status IN ('passed', 'failed', 'unknown')),
+            ambiguous INTEGER NOT NULL DEFAULT 0 CHECK (ambiguous IN (0, 1)),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            finalized_at TEXT,
+            CHECK ((ticket_consumed = 0 AND root_turn_id IS NULL AND tool_use_id IS NULL
+                    AND dispatch_input_digest IS NULL)
+                   OR (ticket_consumed = 1 AND root_turn_id IS NOT NULL AND tool_use_id IS NOT NULL
+                       AND dispatch_input_digest IS NOT NULL)),
+            CHECK ((no_child = 0) OR (post_observed = 1 AND agent_id IS NULL)),
+            CHECK ((outcome_recorded = 0 AND outcome_status IS NULL)
+                   OR (outcome_recorded = 1 AND outcome_status IS NOT NULL))
+          );
+          CREATE UNIQUE INDEX IF NOT EXISTS one_unresolved_router_delegation
+            ON delegation_attempts(project_id, context_key) WHERE finalized_at IS NULL;
+          CREATE UNIQUE INDEX IF NOT EXISTS one_router_tool_use
+            ON delegation_attempts(project_id, context_key, root_turn_id, tool_use_id)
+            WHERE tool_use_id IS NOT NULL;
+          CREATE UNIQUE INDEX IF NOT EXISTS one_router_agent
+            ON delegation_attempts(project_id, context_key, agent_id)
+            WHERE agent_id IS NOT NULL;
+          CREATE INDEX IF NOT EXISTS delegation_attempts_terminal
+            ON delegation_attempts(project_id, context_key, finalized_at DESC);
+          CREATE TABLE IF NOT EXISTS delegation_usage (
+            project_id TEXT NOT NULL,
+            context_key TEXT NOT NULL,
+            total_transcript_bytes INTEGER NOT NULL DEFAULT 0 CHECK (total_transcript_bytes >= 0),
+            untrusted INTEGER NOT NULL DEFAULT 0 CHECK (untrusted IN (0, 1)),
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(project_id, context_key)
+          );
+          CREATE TRIGGER IF NOT EXISTS require_router_delegation_attempt
+            BEFORE INSERT ON routes
+            WHEN NEW.action = 'delegate' AND NOT EXISTS(
+              SELECT 1 FROM delegation_attempts
+              WHERE route_id = NEW.route_id
+                AND project_id = NEW.project_id
+                AND context_key = NEW.context_key
+                AND finalized_at IS NULL
+            )
+            BEGIN
+              SELECT RAISE(ABORT, 'delegate route requires atomic gate admission');
+            END;
+        `);
+      }
+      if (current <= 4) {
+        this.db.prepare(`
+          INSERT OR IGNORE INTO meta(key, value)
+          SELECT ? || r.project_id || ':' || r.context_key, MIN(r.route_id)
+          FROM routes r
+          LEFT JOIN outcomes o ON o.route_id = r.route_id
+          LEFT JOIN delegation_attempts da ON da.route_id = r.route_id
+          WHERE r.action = 'delegate' AND o.route_id IS NULL AND da.route_id IS NULL
+          GROUP BY r.project_id, r.context_key
+        `).run(LEGACY_DELEGATION_BLOCK_PREFIX);
       }
       this.db.exec(`PRAGMA user_version = ${DATABASE_VERSION}`);
     });
@@ -857,14 +962,46 @@ export class RouterStore {
     return { source: null, override: null, onceId: null };
   }
 
-  commitRoute(context, route, onceId = null) {
+  commitRoute(context, route, onceId = null, admission = null) {
     return this.transaction(() => {
+      if (route.action === "delegate") {
+        const activeRouteId = this.activeDelegationRouteId(context);
+        if (activeRouteId) {
+          return { committed: false, retry: false, busy: true, activeRouteId };
+        }
+        if (!admission?.ticket || !admission?.contextPackage) {
+          throw new Error("delegate route is missing its admission ticket or context package");
+        }
+        const childBudget = inspectRouterChildBudget(this.db, context, admission.childBudget);
+        if (!childBudget.trusted) {
+          return { committed: false, retry: false, fallback: "ROUTER_CHILD_STORAGE_UNTRUSTED" };
+        }
+        if (!childBudget.allowed) {
+          return { committed: false, retry: false, fallback: "ROUTER_CHILD_STORAGE_LIMIT" };
+        }
+        const disk = inspectFreeDisk(admission.cwd, {
+          ...admission.disk,
+          reservedBytes: childBudget.nextReservationBytes,
+        });
+        if (!disk.trusted) {
+          return { committed: false, retry: false, fallback: "DISK_STATE_UNAVAILABLE" };
+        }
+        if (!disk.allowed) {
+          return { committed: false, retry: false, fallback: "LOW_DISK_FALLBACK" };
+        }
+      }
       if (onceId != null) {
         const row = this.db.prepare(`
           SELECT id FROM overrides WHERE id = ? AND scope = 'once' AND project_id = ? AND context_key = ?
         `).get(onceId, context.projectId, context.contextKey);
         if (!row) return { committed: false, retry: true };
         this.db.prepare("DELETE FROM overrides WHERE id = ?").run(onceId);
+      }
+      if (admission?.qualification && !reserveTaskQualification(this.db, context, admission.qualification, admission.ticket.ticketHash)) {
+        return { committed: false, retry: false, fallback: "HOST_LIFECYCLE_QUALIFICATION_FAILED" };
+      }
+      if (route.action === "delegate") {
+        insertDelegationAttempt(this.db, context, route, admission.ticket, admission.contextPackage);
       }
       this.db.prepare(`
         INSERT INTO routes(
@@ -917,8 +1054,43 @@ export class RouterStore {
           nowIso(),
         );
       }
-      return { committed: true, retry: false };
+      return { committed: true, retry: false, carrier: admission?.ticket?.carrier || null };
     });
+  }
+
+  activeDelegationRouteId(context) {
+    const active = unresolvedAttempt(this.db, context)?.route_id;
+    if (active) return active;
+    return this.db.prepare("SELECT value FROM meta WHERE key = ?")
+      .get(`${LEGACY_DELEGATION_BLOCK_PREFIX}${context.projectId}:${context.contextKey}`)?.value || null;
+  }
+
+  hasProvenDirectDelegation(context) {
+    return Boolean(this.db.prepare(`
+      SELECT 1
+      FROM delegation_attempts
+      WHERE project_id = ? AND context_key = ?
+        AND ticket_consumed = 1
+        AND no_child = 0
+        AND (agent_id IS NOT NULL OR early_agent_id IS NOT NULL)
+      LIMIT 1
+    `).get(context.projectId, context.contextKey));
+  }
+
+  hasAuthoritativeToolingRejection(context, routeId) {
+    if (!routeId) return false;
+    return Boolean(this.db.prepare(`
+      SELECT 1
+      FROM delegation_attempts da
+      JOIN outcomes o ON o.route_id = da.route_id
+      WHERE da.route_id = ? AND da.project_id = ? AND da.context_key = ?
+        AND da.ticket_consumed = 1
+        AND da.post_observed = 1
+        AND da.no_child = 1
+        AND o.status = 'failed'
+        AND o.failure_type = 'tooling'
+      LIMIT 1
+    `).get(routeId, context.projectId, context.contextKey));
   }
 
   findRoute(context, routeId) {
@@ -986,6 +1158,7 @@ export class RouterStore {
     `);
     const routes = rows.map((row) => {
       const target = row.model ? { model: row.model, effort: row.effort } : null;
+      const recovery = readNativeRecoveryReceipt(this.db, context, row.route_id);
       let transition = { state: "not_delegated" };
       if (target) {
         const prior = previousDelegate.get(context.projectId, context.contextKey, row.route_sequence);
@@ -1020,6 +1193,13 @@ export class RouterStore {
           changedByRouter: false,
         },
         createdAt: row.created_at,
+        ...(recovery ? { reconciliation: {
+          status: recovery.status,
+          failureType: recovery.failureType,
+          source: recovery.source,
+          evidenceDigest: recovery.evidenceDigest,
+          recordedAt: recovery.recordedAt,
+        } } : {}),
         outcome: row.outcome_status ? {
           status: row.outcome_status,
           gate: row.outcome_gate,
@@ -1049,7 +1229,7 @@ export class RouterStore {
     };
   }
 
-  insertOutcome(context, route, outcome) {
+  insertOutcome(context, route, outcome, qualificationProof = null) {
     const normalized = {
       status: outcome.status,
       gate: outcome.gate,
@@ -1085,6 +1265,20 @@ export class RouterStore {
         }
         return { recorded: false, idempotent: true, status: normalized.status };
       }
+      const attempt = this.db.prepare(`
+        SELECT ticket_consumed
+        FROM delegation_attempts
+        WHERE route_id = ? AND project_id = ? AND context_key = ?
+      `).get(route.route_id, context.projectId, context.contextKey);
+      if (!attempt || attempt.ticket_consumed !== 1) {
+        const error = new Error("record_outcome requires a completed dispatch handshake for the delegated route");
+        error.code = "OUTCOME_BEFORE_DISPATCH";
+        throw error;
+      }
+      const qualificationConsumed = consumeQualificationOutcome(this.db, context, route.route_id, outcome, qualificationProof);
+      if (parseJson(route.reason_codes_json, []).includes("HOST_LIFECYCLE_QUALIFICATION") && !qualificationConsumed) {
+        throw new Error("native qualification requires source-owned verification");
+      }
       const result = this.db.prepare(`
         INSERT INTO outcomes(
           route_id, project_id, context_key, category, status, gate, failure_type,
@@ -1109,74 +1303,47 @@ export class RouterStore {
         hash,
         nowIso(),
       );
+      markDelegationOutcome(this.db, context, route.route_id, normalized.status);
       return { recorded: true, idempotent: false, status: normalized.status, seq: Number(result.lastInsertRowid) };
     });
   }
 
-  handleStop(context) {
+  handleStop(context, { stopHookActive = false } = {}) {
     return this.transaction(() => {
-      const stoppedAt = nowIso();
-      this.db.prepare(`
-        UPDATE stop_observations
-        SET resolved_at = ?
-        WHERE project_id = ? AND context_key = ? AND resolved_at IS NULL
-          AND EXISTS(
-            SELECT 1 FROM outcomes o WHERE o.route_id = stop_observations.route_id
-          )
-      `).run(stoppedAt, context.projectId, context.contextKey);
-      const pending = this.db.prepare(`
-        SELECT r.* FROM routes r
-        LEFT JOIN outcomes o ON o.route_id = r.route_id
-        WHERE r.project_id = ? AND r.context_key = ? AND r.action = 'delegate' AND o.route_id IS NULL
-        ORDER BY r.rowid
-      `).all(context.projectId, context.contextKey);
-      if (!pending.length) return { action: "allow", recordedUnknown: 0 };
-      let recordedUnknown = 0;
-      for (const route of pending) {
-        const normalized = {
-          status: "unknown",
-          gate: route.verification_gate,
-          failureType: null,
-          retries: 0,
-          retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
-          escalations: route.escalation_count,
-          userCorrection: false,
-        };
-        const result = this.db.prepare(`
-          INSERT OR IGNORE INTO outcomes(
-            route_id, project_id, context_key, category, status, gate, failure_type,
-            retries, escalations, user_correction, payload_hash, recorded_at
-          ) VALUES(?, ?, ?, ?, 'unknown', ?, NULL, 0, ?, 0, ?, ?)
-        `).run(
-          route.route_id,
-          context.projectId,
-          context.contextKey,
-          route.category,
-          route.verification_gate,
-          route.escalation_count,
-          payloadHash(normalized),
-          stoppedAt,
-        );
-        const inserted = Number(result.changes);
-        recordedUnknown += inserted;
-        if (inserted === 1) {
-          this.db.prepare(`
-            INSERT INTO stop_observations(
-              project_id, context_key, route_id, reminded_at, resolved_at
-            ) VALUES(?, ?, ?, ?, ?)
-            ON CONFLICT(project_id, context_key, route_id) DO UPDATE SET
-              reminded_at = excluded.reminded_at,
-              resolved_at = excluded.resolved_at
-          `).run(
-            context.projectId,
-            context.contextKey,
-            route.route_id,
-            STOP_OUTCOME_MARKER,
-            stoppedAt,
-          );
+      const attempt = unresolvedAttempt(this.db, context);
+      if (attempt && attempt.ticket_consumed === 0) {
+        if (stopHookActive) {
+          const retained = markPredispatchReconciliation(this.db, context, attempt.route_id);
+          return {
+            action: "allow",
+            routeId: attempt.route_id,
+            recordedUnknown: 0,
+            gateRetained: true,
+            reconciliationRequired: retained,
+          };
         }
+        if (attempt.ambiguous === 1) {
+          return {
+            action: "block",
+            routeId: attempt.route_id,
+            reason: `Adaptive Router route ${attempt.route_id} has an ambiguous launch lifecycle. Do not create a replacement child or record an outcome; keep the delegation gate occupied for reconciliation.`,
+            recordedUnknown: 0,
+            gateRetained: true,
+          };
+        }
+        return {
+          action: "block",
+          routeId: attempt.route_id,
+          reason: `Adaptive Router route ${attempt.route_id} returned delegate, but no matching spawn_agent dispatch handshake was observed. Use the exact carrier from that route_stage result to call the direct spawn_agent tool now. Do not call route_stage or record_outcome first; only an actual host rejection may enter the tooling-failure path.`,
+          recordedUnknown: 0,
+          gateRetained: true,
+        };
       }
-      return { action: "allow", recordedUnknown };
+      return {
+        action: "allow",
+        recordedUnknown: 0,
+        gateRetained: Boolean(attempt),
+      };
     });
   }
 
@@ -1632,6 +1799,7 @@ export class RouterStore {
       rootTask: latest.rootTask,
       createdAt: latest.createdAt,
       outcome: latest.outcome,
+      ...(latest.reconciliation ? { reconciliation: latest.reconciliation } : {}),
     } : null;
     const pendingProposals = Number(this.db.prepare(`
       SELECT count(*) AS count FROM policy_proposals WHERE project_id = ? AND status = 'pending'
@@ -1639,6 +1807,10 @@ export class RouterStore {
     const pendingOutcomes = Number(this.db.prepare(`
       SELECT count(*) AS count FROM routes r LEFT JOIN outcomes o ON o.route_id = r.route_id
       WHERE r.project_id = ? AND r.context_key = ? AND r.action = 'delegate' AND o.route_id IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM delegation_attempts da
+          WHERE da.route_id = r.route_id AND da.ticket_consumed = 0 AND da.finalized_at IS NOT NULL
+        )
     `).get(context.projectId, context.contextKey).count);
     const stopHookUnknown = Number(this.db.prepare(`
       SELECT count(*) AS count
@@ -1651,6 +1823,10 @@ export class RouterStore {
         AND so.reminded_at = '${STOP_OUTCOME_MARKER}'
       WHERE o.project_id = ? AND o.context_key = ? AND o.status = 'unknown'
     `).get(context.projectId, context.contextKey).count);
+    const activeDelegation = unresolvedAttempt(this.db, context);
+    const legacyDelegationBlock = activeDelegation ? null : this.db.prepare(
+      "SELECT value FROM meta WHERE key = ?",
+    ).get(`${LEGACY_DELEGATION_BLOCK_PREFIX}${context.projectId}:${context.contextKey}`)?.value || null;
     return {
       routerVersion: ROUTER_VERSION,
       projectKey: context.projectId.slice(0, 12),
@@ -1666,8 +1842,10 @@ export class RouterStore {
         ? { state: "pending_model_intent", target: null, since: hostState.pendingChange?.detectedAt || null }
         : hostState.taskMode === "manual_root"
           ? { state: "manual_root", target: null, since: null }
-          : !latest
+        : !latest
         ? { state: "no_route", target: null, since: null }
+        : latest.reconciliation
+          ? { state: "reconciled_failure", target: latest.target, since: latest.reconciliation.recordedAt }
         : latest.action === "delegate" && latest.outcome == null
           ? { state: "delegated_pending_outcome", target: latest.target, since: latest.createdAt }
           : latest.action === "ask_user"
@@ -1686,6 +1864,24 @@ export class RouterStore {
       latestRoute: latestStatus,
       pendingOutcomes,
       pendingProposals,
+      delegationGate: activeDelegation ? {
+        state: "occupied",
+        routeId: activeDelegation.route_id,
+        ticketConsumed: activeDelegation.ticket_consumed === 1,
+        childCorrelated: Boolean(activeDelegation.agent_id),
+        childStopped: activeDelegation.stop_observed === 1,
+        outcomeRecorded: activeDelegation.outcome_recorded === 1,
+        ambiguous: activeDelegation.ambiguous === 1,
+      } : legacyDelegationBlock ? {
+        state: "occupied",
+        routeId: legacyDelegationBlock,
+        ticketConsumed: false,
+        childCorrelated: false,
+        childStopped: false,
+        outcomeRecorded: false,
+        ambiguous: true,
+        reason: "legacy_cutover_unresolved",
+      } : { state: "available" },
       outcomeObservability: { stopHookUnknown },
     };
   }
@@ -1713,9 +1909,14 @@ export class RouterStore {
   clearProject(context) {
     return this.transaction(() => {
       const projectId = context.projectId;
+      this.db.prepare("DELETE FROM meta WHERE key LIKE ?").run(`native_qualification:${projectId}:%`);
       this.db.prepare("DELETE FROM meta WHERE key LIKE ?")
         .run(`${INSPECTION_GUARD_PREFIX}${projectId}:%`);
+      this.db.prepare("DELETE FROM meta WHERE key LIKE ?")
+        .run(`${LEGACY_DELEGATION_BLOCK_PREFIX}${projectId}:%`);
       this.db.prepare("DELETE FROM outcomes WHERE project_id = ?").run(projectId);
+      this.db.prepare("DELETE FROM delegation_attempts WHERE project_id = ?").run(projectId);
+      this.db.prepare("DELETE FROM delegation_usage WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM stop_observations WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM route_score_snapshots WHERE project_id = ?").run(projectId);
       this.db.prepare("DELETE FROM routes WHERE project_id = ?").run(projectId);

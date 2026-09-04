@@ -45,3 +45,10 @@ test("hook identity audit is bounded and never includes raw ids, prompt, or cwd"
   });
   assert.equal(JSON.stringify(resolved.audit).includes(secret), false);
 });
+
+test("official Agent lifecycle hook events retain their audited identities", () => {
+  for (const event of ["PreToolUse", "PostToolUse", "SubagentStop"]) {
+    const resolved = resolveHookIdentity({ hook_event_name: event, session_id: "trusted-session" });
+    assert.equal(resolved.audit.hookEvent, event);
+  }
+});

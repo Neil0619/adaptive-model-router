@@ -85,13 +85,16 @@ Local preflight:
 
 ```bash
 cd plugins/adaptive-model-router
+# After changing the manifest cachebuster, synchronize runtime.json before any
+# validation or installation. A manifest/runtime mismatch is not installable.
+npm run sync-runtime-version
 npm test
 npm run validate
 npm run eval
 ```
 
 On native Windows, run the canonical orchestrator only after trusting the
-current candidate's four hooks in a dedicated, disposable Codex Home. The
+current candidate's seven hooks in a dedicated, disposable Codex Home. The
 runner refuses the operator's default Codex Home:
 
 ```powershell
@@ -159,12 +162,21 @@ new Desktop task cannot substitute for it:
 1. Install from the frozen candidate ref with the two native Codex commands;
    published `stable` remains on v0.3.0 until all smoke evidence passes.
 2. Review and trust the plugin's `SessionStart(source=compact)`,
-   `SubagentStart`, `UserPromptSubmit`, and `Stop` handlers.
+   `SubagentStart`, `SubagentStop`, `PreToolUse(Agent)`, `PostToolUse(Agent)`,
+   `UserPromptSubmit`, and `Stop` handlers.
+   Before trust, require a substantive route to return root-only
+   `HOOK_TRUST_REQUIRED` with no ticket or Agent. The readiness check must use
+   read-only `hooks/list`; it must never write `config.toml` or accept trust on
+   the operator's behalf.
 3. Send `router: global on` once, restart into a new project/task, and confirm
    the setting persists without repeating the command.
 4. Submit an ordinary substantive task that does not name the skill or include
    a trigger phrase, and obtain a `delegate` route.
-5. Create exactly one bounded subagent using the returned model and effort;
+5. Create exactly one bounded subagent with the direct native `spawn_agent`
+   tool outside `functions.exec`, using the returned model and effort,
+   pass `carrier.taskName` as the exact task name and `carrier.message` as the
+   exact message, supply `fork_turns: "none"`, and require the trusted
+   `PreToolUse` hook to validate it without rewriting the host-encrypted input;
    machine-verify that route and execution metadata keep the root boundary
    unchanged and record the bounded target separately.
    Confirm the route input uses the host's bounded-subagent capability rather
@@ -196,7 +208,7 @@ new Desktop task cannot substitute for it:
     target and outcome, unchanged root model, advanced compatible runtime, and
     the expected native or `stdio-bridge` transport. Any shim/bridge skip,
     fallback-local result, or consumer-identity change is a blocking failure.
-11. Confirm database v3 learning status, a versioned scoring profile, typed
+11. Confirm database v5 learning status, a versioned scoring profile, typed
     retry breakdown, and shadow scoring with no route/outcome/proposal/cursor
     changes.
 

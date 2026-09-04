@@ -141,7 +141,13 @@ async function handle(message) {
       let result = await runtime.service.callRouterTool(
         message.params?.name,
         message.params?.arguments || {},
-        { store },
+        {
+          store,
+          routeOptions: {
+            enforceLifecycleHooks: true,
+            pluginRoot,
+          },
+        },
       );
       if (
         message.params?.name === "diagnose_router" &&

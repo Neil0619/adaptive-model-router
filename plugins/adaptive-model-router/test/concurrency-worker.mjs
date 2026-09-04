@@ -1,4 +1,5 @@
 import { RouterStore } from "../scripts/lib/database.mjs";
+import { consumeDelegationTicket, observeAgentResult } from "../scripts/lib/delegation-gate.mjs";
 import { approvePolicyProposal, recordOutcome } from "../scripts/lib/learning.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
 
@@ -18,7 +19,7 @@ if (operation === "migrate") {
   const diagnosis = store.diagnose(context);
   store.close();
   process.stdout.write(`${JSON.stringify({ version: diagnosis.databaseVersion, health: diagnosis.databaseHealth })}\n`);
-} else if (operation === "route-outcome") {
+} else if (["route-outcome", "route-outcome-complete"].includes(operation)) {
   const index = Number(value);
   const route = await routeStage({
     goal: `Rename generated fixture group ${index} using the fixed mapping.`,
@@ -26,8 +27,37 @@ if (operation === "migrate") {
     evidence: { workProduct: true, mechanical: true, requirementsSettled: true, batchSize: 50 },
     contextId,
   }, { catalog, cwd });
-  const status = index < 4 ? "failed" : "passed";
-  const outcome = recordOutcome({
+  let outcome = null;
+  let dispatch = null;
+  if (route.action === "delegate") {
+    const status = index < 4 ? "failed" : "passed";
+    const store = new RouterStore();
+    const context = store.context({ cwd, contextId });
+    const toolInput = {
+      message: route.carrier.message,
+      task_name: route.carrier.taskName,
+      model: route.target.model,
+      reasoning_effort: route.target.effort,
+      fork_turns: "none",
+    };
+    const turnId = `worker-turn-${index}`;
+    const toolUseId = `worker-tool-${index}`;
+    store.transaction(() => consumeDelegationTicket(store.db, context, {
+      taskName: route.carrier.taskName,
+      turnId,
+      toolUseId,
+      toolInput,
+    }));
+    if (operation === "route-outcome-complete") {
+      store.transaction(() => observeAgentResult(store.db, context, {
+        turnId,
+        toolUseId,
+        toolInput,
+        toolResponse: { no_agent_created: true },
+      }));
+    }
+    dispatch = { turnId, toolUseId };
+    outcome = recordOutcome({
     routeId: route.routeId,
     contextId,
     status,
@@ -37,8 +67,18 @@ if (operation === "migrate") {
     retryBreakdown: { reasoning: index === 0 ? 1 : 0, environment: 0, information: 0, tooling: 0 },
     escalations: route.escalation.count,
     userCorrection: false,
-  }, { cwd });
-  process.stdout.write(`${JSON.stringify({ route, outcome })}\n`);
+    }, { store, cwd });
+    store.close();
+  }
+  process.stdout.write(`${JSON.stringify({ route, outcome, dispatch })}\n`);
+} else if (operation === "route-only") {
+  const route = await routeStage({
+    goal: "Implement the specified parser with targeted tests.",
+    phase: "implementation",
+    evidence: { workProduct: true, requirementsSettled: true, strongVerification: true },
+    contextId,
+  }, { catalog, cwd });
+  process.stdout.write(`${JSON.stringify(route)}\n`);
 } else if (operation === "approve") {
   const result = approvePolicyProposal({ contextId, proposalId: value }, { cwd });
   process.stdout.write(`${JSON.stringify(result)}\n`);

@@ -2,6 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmdirSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AppServerClient, resolveCodexCommand, spawnSpec } from "../scripts/lib/app-server.mjs";
 import { buildClassifierPrompt, classifyBorderline } from "../scripts/lib/classifier.mjs";
 import { RouterStore } from "../scripts/lib/database.mjs";
@@ -31,17 +35,23 @@ class FakeChild extends EventEmitter {
   }
 }
 
-function fakeClient({ mode = "final", delayInitialize = 0 } = {}) {
+function fakeClient({ mode = "final", delayInitialize = 0, onSpawn = null } = {}) {
   let child;
+  let initializeParams = null;
+  let spawnOptions = null;
+  let threadStartParams = null;
   const result = JSON.stringify({
     complexityAdjustment: 10,
     category: "implementation",
     confidence: 0.9,
     reasonCodes: ["CLASSIFIER_COMPLEXITY_UP"],
   });
-  const spawnImpl = () => {
+  const spawnImpl = (_command, _args, options) => {
+    spawnOptions = options;
+    onSpawn?.(options);
     child = new FakeChild((message, processHandle) => {
       if (message.method === "initialize") {
+        initializeParams = message.params;
         setTimeout(() => processHandle.send({ id: message.id, result: {} }), delayInitialize);
       } else if (message.method === "model/list") {
         queueMicrotask(() => processHandle.send({
@@ -58,6 +68,7 @@ function fakeClient({ mode = "final", delayInitialize = 0 } = {}) {
           },
         }));
       } else if (message.method === "thread/start") {
+        threadStartParams = message.params;
         queueMicrotask(() => processHandle.send({ id: message.id, result: { thread: { id: "thread-1" } } }));
       } else if (message.method === "turn/start") {
         queueMicrotask(() => {
@@ -78,7 +89,13 @@ function fakeClient({ mode = "final", delayInitialize = 0 } = {}) {
     return child;
   };
   const client = new AppServerClient({ timeoutMs: 500, spawnImpl, resolveImpl: async () => ({ path: "codex", kind: "direct" }) });
-  return { client, get child() { return child; } };
+  return {
+    client,
+    get child() { return child; },
+    get initializeParams() { return initializeParams; },
+    get spawnOptions() { return spawnOptions; },
+    get threadStartParams() { return threadStartParams; },
+  };
 }
 
 const OUTPUT_SCHEMA = {
@@ -118,6 +135,68 @@ test("app-server classifier catalog comes from model/list", async () => {
       "gpt-5.6-terra",
       "gpt-5.6-luna",
     ]);
+  } finally {
+    fixture.client.close();
+  }
+});
+
+test("app-server initializes the current host protocol explicitly", async () => {
+  const fixture = fakeClient();
+  try {
+    await fixture.client.start(Date.now() + 500);
+    assert.deepEqual(fixture.initializeParams.capabilities, {
+      experimentalApi: true,
+      requestAttestation: false,
+    });
+  } finally {
+    fixture.client.close();
+  }
+});
+
+test("app-server explicitly reopens its cwd instead of inheriting a deleted cache inode", async () => {
+  const fixture = fakeClient();
+  try {
+    await fixture.client.start();
+    assert.equal(fixture.spawnOptions.cwd, process.cwd());
+  } finally { fixture.client.close(); }
+});
+
+test("app-server child starts after its parent cache directory was removed and restored", { skip: process.platform === "win32" }, async () => {
+  const original = process.cwd();
+  const scratch = mkdtempSync(join(tmpdir(), "router-unlinked-cwd-"));
+  const fixture = fakeClient({ onSpawn: (options) => {
+    const result = spawnSync(process.execPath, ["-p", "process.cwd()"], { ...options, stdio: "pipe", encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), realpathSync(scratch));
+  } });
+  try {
+    process.chdir(scratch);
+    process.cwd(); // Retain the same cached pathname as the long-lived MCP.
+    rmdirSync(scratch);
+    mkdirSync(scratch);
+    await fixture.client.start();
+  } finally {
+    fixture.client.close();
+    process.chdir(original);
+    rmdirSync(scratch);
+  }
+});
+
+test("classifier reuses the authenticated host store and keeps its thread ephemeral", async () => {
+  const fixture = fakeClient();
+  try {
+    await fixture.client.classify({
+      model: "gpt-5.6-luna",
+      effort: "low",
+      prompt: "safe",
+      outputSchema: OUTPUT_SCHEMA,
+    });
+    assert.equal(
+      fixture.spawnOptions.env.CODEX_SQLITE_HOME,
+      process.env.CODEX_SQLITE_HOME,
+      "the classifier must not replace the authenticated host store with an empty temporary database",
+    );
+    assert.equal(fixture.threadStartParams.ephemeral, true);
   } finally {
     fixture.client.close();
   }
