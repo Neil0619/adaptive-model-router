@@ -258,6 +258,10 @@ override for this operation, and it never directly enables ordinary delegation.
 The same authorization temporarily enables task-scoped lifecycle diagnostics.
 Records contain only enumerated stages/reasons, field types, hashes and boolean
 identity comparisons, never prompts, carriers, tool input/output or raw paths.
+The current writer requires private POSIX file modes and refuses output when
+group/other permission bits are present. Windows does not expose that private-mode
+attestation through Node's file modes, so its CI checks refusal rather than claiming
+successful capture. Native Windows capture qualification remains deferred.
 The private diagnostic file is bounded to 64 KiB per run (concurrent writers can
 add at most their already-bounded pending records). These observations help
 locate a failure; they are not admission or lifecycle proof. Disable capture

@@ -180,7 +180,7 @@ test("POSIX one-shot command execution delivers a literal bridge request atomica
       arguments: { contextId: "one-shot-command-test" },
     });
     const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(bridge)} <<'ADAPTIVE_ROUTER_REQUEST'\n${request}\nADAPTIVE_ROUTER_REQUEST`;
-    const result = spawnSync("/bin/zsh", ["-lc", command], {
+    const result = spawnSync("/bin/sh", ["-c", command], {
       cwd: pluginRoot,
       encoding: "utf8",
       env: {
@@ -191,6 +191,7 @@ test("POSIX one-shot command execution delivers a literal bridge request atomica
       timeout: 20_000,
       windowsHide: true,
     });
+    assert.ifError(result.error);
     assert.equal(result.status, 0, result.stderr);
     const output = JSON.parse(result.stdout);
     assert.equal(output.transport, "stdio-bridge");

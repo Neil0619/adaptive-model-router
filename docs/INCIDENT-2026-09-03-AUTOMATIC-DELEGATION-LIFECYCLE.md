@@ -1,6 +1,6 @@
 # 自动委派未启动与能力降级事故修复方案
 
-状态：macOS 本地修复、实装和当前 Desktop 自动委派验收已闭环。`131336` 的单次资格自检完成四个 Hook、双重原生无工具审计及服务端复核；随后正常自动委派自动选择 Sol/high，完成真实只读代码审查和根任务完整验收，两条唯一成功 outcome 均已记录，gate available。临时采集已关闭，旧失败资格、outcome、缺失事件和独立恢复回执全部保留。最新全量回归为 263 项、262 通过、1 项 Windows 专属跳过。正在准备受保护分支的候选提交、PR 与必需 CI，尚未完成远端合并。下面各次验收结果均为当时快照；旧失败原因不从本次成功倒推，Windows 实机测试仍按用户要求后置。
+状态：macOS 本地修复、实装和当前 Desktop 自动委派验收已闭环。`131336` 的单次资格自检完成四个 Hook、双重原生无工具审计及服务端复核；随后正常自动委派自动选择 Sol/high，完成真实只读代码审查和根任务完整验收，两条唯一成功 outcome 均已记录，gate available。临时采集已关闭，旧失败资格、outcome、缺失事件和独立恢复回执全部保留。修复已进入 [PR #20](https://github.com/Neil0619/adaptive-model-router/pull/20)；本篇记录候选提交时的证据，远端 CI 和合并状态以 PR 记录及远端提交为准。下面各次验收结果均为当时快照；旧失败原因不从本次成功倒推，Windows 实机测试仍按用户要求后置。
 
 ## 已确认故障
 
@@ -224,7 +224,16 @@
 - 补充并发契约后全量回归再次通过：263 项、262 通过、0 失败、1 项 Windows 专属跳过，耗时 147.4 秒；validate、226 项 eval、`sh -n install.sh`、diff check 均通过。本机没有 `pwsh`，PowerShell 解析交由必需 Installer syntax CI 执行，不能把 macOS 回归说成 Windows 实机验收。
 - 根任务完成上述验证后，于 `2026-09-04T06:15:34.114Z` 为普通审查 route 记录唯一 `passed / full-checks` outcome；retries/escalations 均为 0，safety 检查无 rollback、无新 proposal。新鲜 status 确认 gate available、pendingOutcomes=0；运行时仍为 active `131336`、数据库健康，旧记录未改写。
 
-## 完成条件
+## PR #20 首轮 CI 与测试可移植性修正
+
+- 首个候选提交 `11ca2fc52c98fffefa36c5ceab81c15d353a9207` 已推送；[首轮 CI](https://github.com/Neil0619/adaptive-model-router/actions/runs/33844393323) 的两组 macOS、Installer syntax（含 PowerShell）和插件校验通过，独立 CodeQL 通过。两组 Linux 各只有一次性 shell 请求测试失败：夹具硬编码 `/bin/zsh`，进程 status 为 null。注入仅缺失该 shell 的条件可复现同一断言，改为 `/bin/sh -c` 并显式检查启动 error 后通过。
+- Windows 两组在诊断测试停滞，取消该失败轮次后日志明确停在 `lifecycle-diagnostics.test.mjs`。根任务注入 group/other mode bits，复现运行时拒写后测试把零字节记录当作正常预算而无限填充的路径。补上正记录长度和逐次前进断言后，同一条件会立即明确失败，不再死循环。
+- 运行时的私密文件拒写保护没有放宽。依赖 POSIX 私密权限的三个正向诊断用例只在支持的系统执行；新增跨平台负向用例，断言非私密 mode 不追加记录且不改变 Hook stdout。[Node 文件模式文档](https://nodejs.org/docs/latest-v24.x/api/fs.html#fschmodpath-mode-callback) 明确 Windows 不实现 owner/group/other 区分，不能把跳过正向前提用例说成 Windows 诊断资格通过。
+- 两个相关测试文件 13/13 通过；缺失 zsh、零进展快速失败和权限拒写三个隔离探针均符合预期。该轮补丁仅修改测试与文档，源端和已安装 `131336` 运行时摘要仍为 `01d2a2288727cef6bcb2330b06c41e6dfc6617d6199688c6527cd7c8ce0a774c`，不重发资格授权、不重新运行一次性自检。
+- 修正后 macOS 全量回归 264 项、263 通过、0 失败、1 项平台专属跳过，耗时 162.1 秒；validate、226 项 eval 与 diff check 通过。
+- 这些修正不能代替下一候选 SHA 的完整必需 CI。Windows CI 仍是合并关卡；后置的是 Windows 原生实机 smoke，而非 CI。
+
+## 完成条件（候选提交快照）
 
 - 已满足：所有新增红测在修复前稳定失败、修复后稳定通过。
 - 已满足：新运行时不再允许产生“unconsumed ticket + accepted outcome + unavailable masked gate”。
@@ -238,5 +247,5 @@
 - 已满足：资格失败 route `83ed1306-8d31-4933-bf53-e05bd9077681` 已经独立 `/3` 回执安全恢复，未改写原失败与缺失事件。
 - 已满足：当前 Desktop 任务的 Start/Stop 可信关联与完整资格验收，唯一新成功与旧失败记录均保留。
 - 已满足：随后普通自动委派端到端验收、根任务完整代码/测试验证和唯一 outcome，具备提交已验证候选的条件。
-- 未满足：候选 PR 的全部必需 CI、受保护 main 合并及远端最终状态核验；尚不能将目标标记为完成。
+- 候选提交时待核验：PR 的全部必需 CI、受保护 main 合并及远端最终状态；必须以 PR 检查与合并记录闭环，不能用本文候选快照替代。
 - 已满足：没有改写或删除无关用户变更；Windows 实机测试仍按用户要求后置，没有创建发布 tag 或发布包。

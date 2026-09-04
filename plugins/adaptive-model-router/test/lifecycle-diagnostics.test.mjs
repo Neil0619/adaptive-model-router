@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,10 @@ import { RouterStore } from "../scripts/lib/database.mjs";
 import { readThreadSpawnIdentity } from "../scripts/lib/subagent-session.mjs";
 import { payloadHash } from "../scripts/lib/io.mjs";
 import { temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
+
+const privatePosixModes = {
+  skip: process.platform === "win32" ? "Windows cannot attest private POSIX file modes; refusal is tested separately" : false,
+};
 
 test("identity diagnostics distinguish absent metadata from rejected identity without changing admission", () => {
   const observations = [];
@@ -70,11 +74,15 @@ async function withConcurrentDiagnostic(run) {
   } finally { await project.cleanup(); }
 }
 
-test("concurrent diagnostics stay within the documented bounded in-flight allowance", async () => {
+test("concurrent diagnostics stay within the documented bounded in-flight allowance", privatePosixModes, async () => {
   await withConcurrentDiagnostic(async ({ trace, path, startWriter, release }) => {
     const entryBytes = statSync(path).size;
-    assert.ok(entryBytes <= 4096);
-    while (65536 - statSync(path).size >= 2 * entryBytes) trace("entry");
+    assert.ok(entryBytes > 0 && entryBytes <= 4096, "diagnostic entry must be written before filling its budget");
+    while (65536 - statSync(path).size >= 2 * entryBytes) {
+      const previous = statSync(path).size;
+      trace("entry");
+      assert.equal(statSync(path).size, previous + entryBytes, "diagnostic fill must make progress");
+    }
     const before = statSync(path).size;
     const workers = [startWriter("size"), startWriter("size")];
     await Promise.all(workers.map((worker) => worker.ready));
@@ -89,7 +97,7 @@ test("concurrent diagnostics stay within the documented bounded in-flight allowa
   });
 });
 
-test("closing diagnostics rejects new records while an already admitted write may finish", async () => {
+test("closing diagnostics rejects new records while an already admitted write may finish", privatePosixModes, async () => {
   const { closeQualificationDiagnostics } = await import("../scripts/lib/qualification-retry.mjs");
   await withConcurrentDiagnostic(async ({ store, input, trace, path, startWriter, release }) => {
     const before = readFileSync(path, "utf8");
@@ -109,7 +117,27 @@ test("closing diagnostics rejects new records while an already admitted write ma
   });
 });
 
-test("lifecycle diagnostics are task-scoped, bounded, expiring, redacted and separately closed", async () => {
+test("diagnostics refuse non-private file modes without changing Hook stdout", async () => {
+  const { createLifecycleDiagnostic } = await import("../scripts/lib/lifecycle-diagnostics.mjs");
+  const { closeQualificationDiagnostics } = await import("../scripts/lib/qualification-retry.mjs");
+  await withConcurrentDiagnostic(async ({ store, input, trace, path }) => {
+    chmodSync(path, 0o644);
+    assert.notEqual(statSync(path).mode & 0o077, 0);
+    const before = readFileSync(path, "utf8");
+    if (process.platform === "win32") assert.equal(before, "");
+    trace("result", { claimed: false });
+    createLifecycleDiagnostic(input, "subagent-start")("identity", { reason: "identity_mismatch" });
+    const child = spawnSync(process.execPath, [fileURLToPath(new URL("../scripts/hook.mjs", import.meta.url)), "subagent-start"],
+      { input: JSON.stringify({ ...input, transcript_path: null }), encoding: "utf8", cwd: input.cwd, timeout: 5000 });
+    assert.ifError(child.error);
+    assert.equal(child.status, 0, child.stderr);
+    assert.equal(child.stdout, "");
+    assert.equal(readFileSync(path, "utf8"), before);
+    assert.equal(closeQualificationDiagnostics(store, input.session_id).status, "closed");
+  });
+});
+
+test("lifecycle diagnostics are task-scoped, bounded, expiring, redacted and separately closed", privatePosixModes, async () => {
   const { createLifecycleDiagnostic } = await import("../scripts/lib/lifecycle-diagnostics.mjs");
   const { closeQualificationDiagnostics } = await import("../scripts/lib/qualification-retry.mjs");
   const project = await temporaryProject("router-diagnostic-");
