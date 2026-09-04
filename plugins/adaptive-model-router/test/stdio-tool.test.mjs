@@ -184,14 +184,17 @@ test("POSIX one-shot command execution delivers a literal bridge request atomica
     await symlink(process.execPath, nodeLink);
     await symlink(bridge, bridgeLink);
     for (const [nodePath, bridgePath] of [[process.execPath, bridge], [nodeLink, bridgeLink]]) {
-      const command = `"$1" "$2" <<'ADAPTIVE_ROUTER_REQUEST'\n${request}\nADAPTIVE_ROUTER_REQUEST`;
-      const result = spawnSync("/bin/sh", ["-c", command, "adaptive-router-stdio-test", nodePath, bridgePath], {
+      // Keep the shell program fixed and expand child-local path values only inside quotes.
+      const command = `"$ADAPTIVE_ROUTER_TEST_NODE" "$ADAPTIVE_ROUTER_TEST_BRIDGE" <<'ADAPTIVE_ROUTER_REQUEST'\n${request}\nADAPTIVE_ROUTER_REQUEST`;
+      const result = spawnSync("/bin/sh", ["-c", command], {
         cwd: pluginRoot,
         encoding: "utf8",
         env: {
           ...process.env,
           ADAPTIVE_ROUTER_HOME: home,
           ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
+          ADAPTIVE_ROUTER_TEST_NODE: nodePath,
+          ADAPTIVE_ROUTER_TEST_BRIDGE: bridgePath,
         },
         timeout: 20_000,
         windowsHide: true,

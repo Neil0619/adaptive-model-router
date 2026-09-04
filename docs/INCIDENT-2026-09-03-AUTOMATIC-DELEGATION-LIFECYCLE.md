@@ -239,6 +239,7 @@
 - 告警指出 `JSON.stringify(path)` 的双引号不是 POSIX shell 转义。独立只读审查确认，根任务用指向真实 Node 和 bridge 的符号链接先复现：包含引号、空格、算术展开和反引号的路径被 shell 改写，退出码为 127。
 - 改为固定 `"$1" "$2"` 命令前缀、显式 `$0` 和独立 argv 传递两个路径，保留带引号的 here-document；回归再覆盖变量引用、命令替换与中文路径，正常路径和特殊字符路径均通过真实桥接调用。相关测试 13/13 通过，不引入生产代码、权限放宽或告警忽略。
 - 修正后完整 macOS 回归再次通过：264 项、263 通过、0 失败、1 项平台专属跳过，耗时 134.1 秒；validate、226 项 eval、diff check 通过，生产运行时摘要仍与已安装版本一致。
+- `4bfd2ba` 的 CodeQL 将告警 6 标记 fixed 并自动解决旧评论，但对位置参数创建告警 7。[间接命令模型](https://github.com/github/codeql/blob/main/javascript/ql/lib/semmle/javascript/security/dataflow/IndirectCommandArgument.qll) 将 `sh -c` 参数数组整体视为输入，未区分后续 `$0`/数据参数。为保持固定 shell 程序和明确的数据边界，最终夹具改用两个仅传给该子进程的专用环境变量，并只在双引号内展开路径；不拼接路径、不使用 eval，也不添加告警忽略规则。相同真实路径回归 13/13、validate、226 项 eval 通过；本机没有 CodeQL CLI，最终告警状态和完整跨平台结果须由新候选 CI 确认。
 - 后续仍须验证新候选的 CI 与 CodeQL 告警状态，再处理已修复的指定 conversation。仓库要求线性历史，最终使用受保护规则允许的 squash 合并，不创建绕过规则的 merge commit。
 
 ## 完成条件（候选提交快照）
