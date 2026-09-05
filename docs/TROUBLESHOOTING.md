@@ -531,6 +531,14 @@ subagent. History rows separately label their root-model snapshot and bounded
 stage target. See [Routing triggers and history](ROUTING.md) for the exact
 distinction and score thresholds.
 
+Routine conversation notices intentionally omit route IDs. They remain in
+explicit status/history reports and internal route/outcome records; missing
+IDs in a normal notice do not mean that tracing was disabled. A delegated
+target includes `service_tier=unknown` when no direct, child-scoped host
+evidence is available. Do not interpret that as Standard mode or infer Fast
+from the parent setting or a model's supported tiers. A requested tier alone
+does not verify the tier actually used to serve the request.
+
 ## A model change reminder keeps appearing
 
 A changed host model creates a pending intent event. The current and later

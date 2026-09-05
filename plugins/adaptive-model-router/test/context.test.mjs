@@ -77,7 +77,7 @@ test("the same context ID does not share session overrides across projects", asy
       const store = new RouterStore();
       const first = store.context({ cwd: project.root, contextId: "same-session" });
       const second = store.context({ cwd: other, contextId: "same-session" });
-      store.setOverride(first, { scope: "session", model: "gpt-5.6-sol" });
+      store.setOverride(first, { scope: "session", model: "gpt-6-astra" });
       assert.equal(store.resolveOverride(first).source, "session");
       assert.equal(store.resolveOverride(second).source, null);
       store.close();

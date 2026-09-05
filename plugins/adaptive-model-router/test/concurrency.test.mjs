@@ -48,9 +48,9 @@ test("50 processes concurrently migrate an empty SQLite database", async () => {
   try {
     const results = await Promise.all(Array.from({ length: 50 }, (_, index) => runWorker(project, "migrate", `migration-${index}`)));
     assert.equal(results.length, 50);
-    assert.ok(results.every((result) => result.version === 5 && result.health === "ok"));
+    assert.ok(results.every((result) => result.version === 6 && result.health === "ok"));
     const store = new RouterStore({ path: join(project.home, "router.sqlite3") });
-    assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 5);
+    assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 6);
     store.close();
   } finally {
     await project.cleanup();
@@ -161,19 +161,19 @@ test("concurrent Stop and verified outcome writers leave one consistent terminal
   }
 });
 
-test("concurrent routes claim once exactly once and distinct contexts generate one approved proposal", async () => {
+test("concurrent routes claim once exactly once and new-policy outcomes remain outside legacy learning", async () => {
   const project = await temporaryProject("adaptive concurrency data ");
   const previousHome = process.env.ADAPTIVE_ROUTER_HOME;
   process.env.ADAPTIVE_ROUTER_HOME = project.home;
   try {
     const setup = new RouterStore();
     const context = setup.context({ cwd: project.root, contextId: "shared" });
-    setup.setOverride(context, { scope: "session", model: "gpt-5.6-terra", effort: "medium" });
-    setup.setOverride(context, { scope: "once", model: "gpt-5.6-sol", effort: "high" });
+    setup.setOverride(context, { scope: "session", model: "gpt-6-astra", effort: "medium" });
+    setup.setOverride(context, { scope: "once", model: "gpt-6-astra", effort: "high" });
     setup.close();
 
     const results = await Promise.all(Array.from({ length: 50 }, (_, index) => runWorker(project, "route-outcome", "shared", index)));
-    assert.equal(results.filter((result) => result.route.action === "delegate" && result.route.target.model === "gpt-5.6-sol").length, 1);
+    assert.equal(results.filter((result) => result.route.action === "delegate" && result.route.target.model === "gpt-6-astra").length, 1);
     assert.equal(results.filter((result) => result.route.action === "busy").length, 49);
 
     const store = new RouterStore();
@@ -218,20 +218,9 @@ test("concurrent routes claim once exactly once and distinct contexts generate o
     );
     const proposalStore = new RouterStore();
     const proposals = listPolicyProposals({ contextId: "learning-0" }, { store: proposalStore, cwd: project.root });
-    assert.equal(proposals.length, 1);
-    assert.equal(proposals[0].delta, 5);
-    assert.ok(proposals[0].eligibleCount >= 12);
-    assert.ok(proposals[0].affectedCount >= 4);
-    assert.ok(proposals[0].contextCount >= 4);
+    assert.equal(proposals.length, 0);
+    assert.equal(proposalStore.db.prepare("SELECT count(*) AS n FROM route_score_snapshots WHERE eligible_learning=1").get().n, 0);
     proposalStore.close();
-
-    const approvals = await Promise.all(Array.from({ length: 50 }, () => runWorker(project, "approve", "shared", proposals[0].proposalId)));
-    assert.equal(approvals.filter((result) => result.idempotent === false).length, 1);
-    const finalStore = new RouterStore();
-    const finalContext = finalStore.context({ cwd: project.root, contextId: "shared" });
-    assert.equal(Number(finalStore.db.prepare("SELECT count(*) AS count FROM policy_revisions WHERE project_id = ?").get(finalContext.projectId).count), 2);
-    assert.equal(Number(finalStore.db.prepare("SELECT count(*) AS count FROM policy_proposals WHERE status = 'approved'").get().count), 1);
-    finalStore.close();
   } finally {
     if (previousHome == null) delete process.env.ADAPTIVE_ROUTER_HOME;
     else process.env.ADAPTIVE_ROUTER_HOME = previousHome;

@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "date": "2026-09-06",
+  "candidateVersion": "0.4.0+codex.20260905170206",
+  "cliVersion": "0.153.3",
+  "kind": "native-unissued-ticket-denial",
+  "events": [
+    {
+      "stage": "inventory",
+      "hookSetDigest": "6cfdb4793aa465eb69b60139f84cbde6f35c7e83db9ba8b4230ba909693bd3f8"
+    },
+    {
+      "stage": "started",
+      "mode": "deny",
+      "threadIdDigest": "24b02f52c64f6b874e37e446487e5bd39a1d687c7671d93ceaa4ff608791072b"
+    },
+    {
+      "stage": "hook",
+      "event": "userPromptSubmit",
+      "status": "completed",
+      "root": true,
+      "sourceDigest": "725a10226349987cac98e75e45bf8408bac6f513ed896421c8e824bb862fb026",
+      "entries": []
+    },
+    {
+      "stage": "hook",
+      "event": "preToolUse",
+      "status": "blocked",
+      "root": true,
+      "sourceDigest": "725a10226349987cac98e75e45bf8408bac6f513ed896421c8e824bb862fb026",
+      "entries": [
+        {
+          "kind": "feedback",
+          "digest": "70482aa1bcecda2d684f18446dded9ec8d96b8abe464ecc5bc9bdfb8f6be9e7e"
+        }
+      ]
+    },
+    {
+      "stage": "hook",
+      "event": "stop",
+      "status": "completed",
+      "root": true,
+      "sourceDigest": "725a10226349987cac98e75e45bf8408bac6f513ed896421c8e824bb862fb026",
+      "entries": []
+    },
+    {
+      "stage": "turn-complete",
+      "turnIdDigest": "636a91a6e8ca556359d9d5ecfe892ccc33ff30a5b3eb712148119eebc175f429",
+      "status": "completed"
+    },
+    {
+      "stage": "summary",
+      "mode": "deny",
+      "passed": true,
+      "rootModel": "gpt-6-astra",
+      "rootEffort": "high",
+      "attempt": null,
+      "noOpEvidence": null,
+      "child": {
+        "exists": false,
+        "itemTypes": [],
+        "markerMatches": false
+      },
+      "hookSequence": [
+        {
+          "root": true,
+          "event": "userPromptSubmit",
+          "status": "completed"
+        },
+        {
+          "root": true,
+          "event": "preToolUse",
+          "status": "blocked"
+        },
+        {
+          "root": true,
+          "event": "stop",
+          "status": "completed"
+        }
+      ]
+    },
+    {
+      "stage": "archived-probe-thread",
+      "threadIdDigest": "24b02f52c64f6b874e37e446487e5bd39a1d687c7671d93ceaa4ff608791072b"
+    }
+  ]
+}

@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "id": "gpt6-quality-first-v1",
+  "allowedModels": [
+    {
+      "model": "gpt-6-astra",
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    }
+  ],
+  "targets": {
+    "low": {
+      "model": "gpt-6-astra",
+      "effort": "low"
+    },
+    "medium": {
+      "model": "gpt-6-astra",
+      "effort": "medium"
+    },
+    "high": {
+      "model": "gpt-6-astra",
+      "effort": "high"
+    },
+    "xhigh": {
+      "model": "gpt-6-astra",
+      "effort": "xhigh"
+    },
+    "max": {
+      "model": "gpt-6-astra",
+      "effort": "max"
+    },
+    "ultra": {
+      "model": "gpt-6-astra",
+      "effort": "ultra"
+    }
+  },
+  "conditions": {
+    "xhighHardSignals": 2,
+    "maxHardSignals": 3,
+    "defaultLevel": "high",
+    "low": {
+      "requires": [
+        "requirementsSettled",
+        "strongVerification",
+        "declaredMechanical",
+        "exactOutputCheck"
+      ],
+      "forbids": [
+        "risk",
+        "security",
+        "migration",
+        "publicContract",
+        "review",
+        "ambiguity",
+        "crossCutting",
+        "architectureTradeoff",
+        "implementation"
+      ]
+    },
+    "medium": {
+      "requires": [
+        "requirementsSettled",
+        "strongVerification"
+      ],
+      "forbids": [
+        "risk",
+        "security",
+        "migration",
+        "publicContract",
+        "review",
+        "ambiguity",
+        "crossCutting",
+        "architectureTradeoff"
+      ]
+    },
+    "xhighCrossCuttingWith": [
+      "ambiguity",
+      "architectureTradeoff"
+    ],
+    "maxRequiresAny": [
+      "highFailureCost",
+      "irreversible"
+    ],
+    "riskFloorSignals": [
+      "risk",
+      "security",
+      "migration",
+      "publicContract",
+      "review",
+      "architectureTradeoff"
+    ]
+  },
+  "fallbacks": {
+    "low": [
+      "medium",
+      "high"
+    ],
+    "medium": [
+      "high"
+    ],
+    "high": [
+      "xhigh"
+    ],
+    "xhigh": [
+      "max"
+    ],
+    "max": [],
+    "ultra": []
+  },
+  "escalation": {
+    "limit": 2,
+    "next": {
+      "low": "high",
+      "medium": "high",
+      "high": "xhigh",
+      "xhigh": "max",
+      "max": "ultra"
+    }
+  },
+  "purposes": {
+    "classifier": "low",
+    "qualification": "low",
+    "smoke": "high"
+  }
+}

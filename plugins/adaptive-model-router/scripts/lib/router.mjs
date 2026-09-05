@@ -1,17 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { getModelCatalog, selectAutomaticRoute, selectDelegateCatalog, selectExplicitRoute } from "./catalog.mjs";
+import { getModelCatalog, selectDelegateCatalog } from "./catalog.mjs";
 import { classifyBorderline } from "./classifier.mjs";
-import { MAX_ESCALATIONS, SCHEMA_VERSION, EFFORT_ORDER, FAMILY_ORDER } from "./constants.mjs";
+import { MAX_ESCALATIONS, SCHEMA_VERSION } from "./constants.mjs";
 import { ROUTE_INPUT_SCHEMA, ROUTE_OUTPUT_SCHEMA } from "./contracts.mjs";
 import { RouterStore } from "./database.mjs";
 import { buildContextPackage, createDelegationTicket } from "./delegation-gate.mjs";
 import { normalizeHookReadinessFailure } from "./hook-readiness.mjs";
 import { newTaskQualification } from "./lifecycle-qualification.mjs";
-import { clamp } from "./io.mjs";
+import { clamp, parseJson } from "./io.mjs";
+import { opaqueId } from "./context.mjs";
+import { readModelPolicy } from "./model-policy-store.mjs";
+import { decideWorkLevel, resolveModelTarget, nextWorkLevel, levelForTarget } from "./model-policy.mjs";
 import { normalizeModelSlug } from "./model-slug.mjs";
 import { assertSchema } from "./schema.mjs";
 import {
-  desiredRoute,
   deterministicReasonCodes,
   isTrivialTask,
   scoreTask,
@@ -19,18 +21,6 @@ import {
 
 function uniqueCodes(codes) {
   return [...new Set(codes.filter(Boolean))].slice(0, 8);
-}
-
-function stepEffort(effort) {
-  const index = EFFORT_ORDER.indexOf(effort);
-  if (index < 0) return null;
-  return EFFORT_ORDER[Math.min(index + 1, EFFORT_ORDER.length - 1)];
-}
-
-function strongerFamily(family) {
-  const index = FAMILY_ORDER.indexOf(family);
-  if (index < 0 || index === FAMILY_ORDER.length - 1) return family;
-  return FAMILY_ORDER[index + 1];
 }
 
 function publicRoute(internal) {
@@ -46,6 +36,7 @@ function publicRoute(internal) {
     rootTask: internal.rootTask,
     taskMode: internal.taskMode,
   };
+  if (internal.decision) result.decision = internal.decision;
   if (internal.blockingRouteId) result.blockingRouteId = internal.blockingRouteId;
   if (internal.target) result.target = internal.target;
   if (internal.carrier) result.carrier = internal.carrier;
@@ -143,7 +134,7 @@ function validateRouteInput(input) {
       error.code = "INVALID_INPUT";
       throw error;
     }
-    input.override.model = normalized;
+    input = { ...input, override: { ...input.override, model: normalized } };
   }
   if (input.evidence.verificationFailed === true) {
     if (!input.previousRouteId) throw new Error("previousRouteId is required after verification failure");
@@ -177,95 +168,11 @@ function validateRouteInput(input) {
       models.add(normalized);
     }
   }
-}
-
-function routeWasExplicit(route) {
-  let codes = [];
-  try {
-    codes = JSON.parse(route.reason_codes_json || "[]");
-  } catch {
-    return false;
-  }
-  return codes.some((code) => ["EXPLICIT_OVERRIDE", "ONCE_OVERRIDE", "SESSION_OVERRIDE", "PROJECT_OVERRIDE", "GLOBAL_OVERRIDE"].includes(code));
-}
-
-function routeWasToolingRetry(route) {
-  try {
-    return JSON.parse(route.reason_codes_json || "[]").includes("TOOLING_TARGET_EXCLUDED");
-  } catch {
-    return false;
-  }
-}
-
-function escalationPlan(previous, evidence, desired) {
-  if (!previous || evidence.verificationFailed !== true) {
-    return { desired, status: { state: "none", count: 0, limit: MAX_ESCALATIONS }, minimumEffort: null, previousModel: null };
-  }
-  if (previous.action === "continue") {
-    return {
-      desired,
-      status: { state: "none", count: 0, limit: MAX_ESCALATIONS },
-      minimumEffort: null,
-      previousModel: null,
-      reasonCode: "ROOT_LOCAL_RETRY",
-    };
-  }
-  const priorCount = Number(previous.escalation_count || 0);
-  if (["environment", "information"].includes(evidence.failureType)) {
-    return {
-      desired: { ...desired, family: previous.family || desired.family, effort: previous.effort || desired.effort },
-      status: { state: "held", count: priorCount, limit: MAX_ESCALATIONS },
-      minimumEffort: previous.effort,
-      previousModel: previous.model,
-      reasonCode: "NON_REASONING_FAILURE",
-    };
-  }
-  if (evidence.failureType !== "reasoning") {
-    return {
-      desired,
-      status: { state: "held", count: priorCount, limit: MAX_ESCALATIONS },
-      minimumEffort: previous.effort,
-      previousModel: null,
-      reasonCode: "NON_REASONING_FAILURE",
-    };
-  }
-  if (priorCount >= MAX_ESCALATIONS) {
-    return {
-      askUser: true,
-      desired,
-      status: { state: "exhausted", count: MAX_ESCALATIONS, limit: MAX_ESCALATIONS },
-      reasonCode: "ESCALATION_LIMIT_REACHED",
-    };
-  }
-  const count = priorCount + 1;
-  let family = previous.family || desired.family;
-  let effort = stepEffort(previous.effort) || desired.effort;
-  let previousModel = previous.model;
-  if (count >= 2 || effort === previous.effort) {
-    const stronger = strongerFamily(family);
-    if (stronger !== family) {
-      family = stronger;
-      previousModel = null;
-    } else if (effort === previous.effort) {
-      return {
-        askUser: true,
-        desired,
-        status: { state: "unavailable", count: priorCount, limit: MAX_ESCALATIONS },
-        reasonCode: "MONOTONIC_ESCALATION_UNAVAILABLE",
-      };
-    }
-  }
-  return {
-    desired: { ...desired, family, effort },
-    status: { state: "increased", count, limit: MAX_ESCALATIONS },
-    minimumEffort: previous.effort,
-    previousModel,
-    reasonCode: "REASONING_ESCALATION",
-  };
+  return input;
 }
 
 async function routeWithStore(input, options, store) {
-  validateRouteInput(input);
+  input = validateRouteInput(input);
   const inspectionContext = store.context({
     cwd: options.cwd || process.cwd(),
     contextId: input.contextId,
@@ -300,9 +207,9 @@ async function routeWithStore(input, options, store) {
     return publicRoute(route);
   }
 
-  const policy = store.ensurePolicy(context);
+  // Legacy scoring remains an immutable diagnostic; its offsets never select a target.
   const scoringProfile = store.ensureScoringProfile(context);
-
+  const modelPolicy = readModelPolicy(store.db);
   const initialOverride = store.resolveOverride(context, input.override || null, settings);
   if (!settings.enabled || initialOverride.override?.mode === "disabled") {
     const route = contextualRoute(store, context, { action: "continue", codes: ["ROUTER_DISABLED"] });
@@ -310,266 +217,175 @@ async function routeWithStore(input, options, store) {
     return publicRoute(route);
   }
   const activeRouteId = store.activeDelegationRouteId(context);
-  if (activeRouteId) {
-    const activeRoute = store.findRoute(context, activeRouteId);
-    return busyRoute(store, context, activeRouteId, {
-      category: activeRoute?.category || "general",
-    });
-  }
+  if (activeRouteId) return busyRoute(store, context, activeRouteId);
   const delegationCapabilities = input.hostCapabilities?.delegation || null;
-  const claimsDelegationUnavailable = (
-    input.evidence.hostCanDelegate === false
-    || delegationCapabilities?.available === false
-    || (delegationCapabilities && delegationCapabilities.invocation !== "direct")
-  );
-  if (
-    claimsDelegationUnavailable
-    && store.hasProvenDirectDelegation(context)
-    && !store.hasAuthoritativeToolingRejection(context, input.previousRouteId)
-  ) {
-    const error = new Error(
-      "hostCapabilities contradict a previously observed direct delegation in this task; only an authoritative tooling rejection may downgrade it",
-    );
+  const claimsDelegationUnavailable = !delegationCapabilities?.available || delegationCapabilities.invocation !== "direct";
+  if (claimsDelegationUnavailable && store.hasProvenDirectDelegation(context)
+    && !store.hasAuthoritativeToolingRejection(context, input.previousRouteId)) {
+    const error = new Error("hostCapabilities contradict a previously observed direct delegation in this task; only an authoritative tooling rejection may downgrade it");
     error.code = "INVALID_INPUT";
     throw error;
   }
   if (claimsDelegationUnavailable) {
-    const route = contextualRoute(store, context, {
-      action: "continue",
-      codes: ["HOST_DELEGATION_UNAVAILABLE", previous?.action === "continue" ? "ROOT_LOCAL_RETRY" : null],
-    });
+    const explicit = initialOverride.override;
+    const rejected = explicit ? resolveModelTarget({ policy: modelPolicy, catalog: [], override: explicit,
+      demand: decideWorkLevel(scoreTask({ goal: input.goal, phase: input.phase, evidence: input.evidence }), input.evidence, modelPolicy) }).reason : null;
+    const route = contextualRoute(store, context, { action: explicit ? "ask_user" : "continue", codes: [rejected || "HOST_DELEGATION_UNAVAILABLE"] });
     store.commitRoute(context, route, null);
     return publicRoute(route);
   }
-  if (!initialOverride.override && !previous && isTrivialTask(input.goal, input.evidence)) {
-    const code = input.evidence.workProduct === false ? "NO_WORK_PRODUCT" : "TRIVIAL_CONTINUE";
-    const route = contextualRoute(store, context, { action: "continue", codes: [code] });
-    store.commitRoute(context, route, null);
-    return publicRoute(route);
+  let stageKey = opaqueId(store.salt, "stage", `${context.contextKey}\0${input.stageId || input.phase}`);
+  if (previous?.stage_key) {
+    if (input.stageId && previous.stage_key !== stageKey) {
+      const error = new Error("previousRouteId must reference the same stageId");
+      error.code = "INVALID_INPUT";
+      throw error;
+    }
+    stageKey = previous.stage_key;
   }
-
-  if (delegationCapabilities?.available && !delegationCapabilities.targets.length) {
-    const route = contextualRoute(store, context, { action: "continue", codes: ["HOST_DELEGATION_UNAVAILABLE"] });
-    store.commitRoute(context, route, null);
-    return publicRoute(route);
+  let evidence = input.evidence;
+  const prior = store.db.prepare(`SELECT r.*, o.status AS final_status, o.failure_type AS final_failure
+    FROM routes r LEFT JOIN outcomes o ON o.route_id=r.route_id
+    WHERE r.project_id=? AND r.context_key=? AND r.stage_key=? AND r.action='delegate'
+    ORDER BY r.rowid DESC LIMIT 1`).get(context.projectId, context.contextKey, stageKey);
+  if (previous && prior && previous.route_id !== prior.route_id
+    && (previous.action === "delegate" || prior.final_status !== "passed")) {
+    const error = new Error("previousRouteId must reference the latest delegated attempt of this stage");
+    error.code = "INVALID_INPUT";
+    throw error;
   }
-
-  let scored = scoreTask({
-    goal: input.goal,
-    phase: input.phase,
-    evidence: input.evidence,
-    policy,
-    profile: { ...scoringProfile.definition, profileVersion: scoringProfile.profileVersion },
-  });
-  let classifier = { state: "not_needed", result: null, reasonCode: null };
-  let classifierAdjustment = 0;
-  const targetFullyLocked = Boolean(initialOverride.override?.model && initialOverride.override?.effort);
-  if (scored.borderline && !targetFullyLocked) {
-    classifier = await classifyBorderline({
-      goal: input.goal,
-      phase: input.phase,
-      signals: scored.signals,
-      context,
-      store,
-      settings,
-      timeoutMs: options.classifierTimeoutMs,
-      appServer: options.appServer,
-      now: options.now,
-    });
-    if (classifier.result) {
-      classifierAdjustment = classifier.result.complexityAdjustment;
-      scored = {
-        ...scored,
-        score: clamp(scored.score + classifierAdjustment, 0, 100),
-        confidence: Math.max(scored.confidence, classifier.result.confidence),
-      };
+  if (!previous) {
+    if (prior && prior.final_status !== "passed") {
+      previous = prior;
+      if (prior.final_status === "failed") evidence = { ...evidence, verificationFailed: true, failureType: prior.final_failure };
     }
   }
-  if (
-    !initialOverride.override
-    && !previous
-    && scored.score <= scoringProfile.definition.thresholds.rootMax
-    && Number(input.evidence.batchSize || 0) <= 1
-    && !scored.signals.implementation
-    && !scored.signals.review
-    && !scored.signals.risk
-    && !scored.signals.security
-    && !scored.signals.migration
-  ) {
-    const route = contextualRoute(store, context, {
-      action: "continue",
-      category: scored.category,
-      codes: ["LOW_COMPLEXITY_CONTINUE", classifier.reasonCode],
-      classifier: classifier.state,
-    });
+  if (!initialOverride.override && !previous && isTrivialTask(input.goal, evidence)) {
+    const route = contextualRoute(store, context, { action: "continue", codes: [evidence.workProduct === false ? "NO_WORK_PRODUCT" : "TRIVIAL_CONTINUE"] });
+    store.commitRoute(context, route, null);
+    return publicRoute(route);
+  }
+  let scored = scoreTask({ goal: input.goal, phase: input.phase, evidence, policy: {},
+    profile: { ...scoringProfile.definition, profileVersion: scoringProfile.profileVersion } });
+  let desired = decideWorkLevel(scored, evidence, modelPolicy);
+  let classifier = { state: "not_needed", result: null, reasonCode: null };
+  let classifierAdjustment = 0;
+  if (scored.borderline && !initialOverride.override && settings.classifierMode === "auxiliary") {
+    classifier = await classifyBorderline({ goal: input.goal, phase: input.phase, signals: scored.signals,
+      context, store, settings, modelPolicy, timeoutMs: options.classifierTimeoutMs,
+      appServer: options.appServer, now: options.now });
+    classifierAdjustment = classifier.result?.complexityAdjustment || 0;
+    scored = { ...scored, score: clamp(scored.score + classifierAdjustment, 0, 100) };
+  }
+  if (!initialOverride.override && !previous && desired.rule === "EXACT_MECHANICAL"
+    && Number(evidence.batchSize || 0) <= 1) {
+    const route = contextualRoute(store, context, { action: "continue", category: scored.category,
+      codes: ["LOW_COMPLEXITY_CONTINUE"], classifier: classifier.state });
     store.commitRoute(context, route, null);
     return publicRoute(route);
   }
   const catalogResult = await getModelCatalog({ provided: options.catalog || null, store });
-  if (!catalogResult.models.length && !delegationCapabilities?.available) {
-    const route = contextualRoute(store, context, { action: "continue", codes: ["CATALOG_UNAVAILABLE"] });
-    store.commitRoute(context, route, null);
-    return publicRoute(route);
-  }
   const delegateCatalog = selectDelegateCatalog(catalogResult.models, delegationCapabilities);
-  if (!delegateCatalog.length) {
-    const route = contextualRoute(store, context, {
-      action: "continue",
-      codes: [delegationCapabilities ? "HOST_DELEGATION_UNAVAILABLE" : "CATALOG_UNAVAILABLE"],
-    });
+  const escalation = { state: "none", count: 0, limit: modelPolicy.definition.escalation.limit };
+  let previousTarget = null;
+  let heldTarget = null;
+  let escalationCode = null;
+  let failureCode = null;
+  if (previous?.action === "delegate") {
+    const priorDecision = parseJson(previous.decision_json, {});
+    previousTarget = { model: previous.model, effort: previous.effort };
+    const priorLevel = priorDecision.workLevel || levelForTarget(modelPolicy, previousTarget);
+    escalation.count = Number(previous.escalation_count || 0);
+    if (priorDecision.policyDigest !== modelPolicy.digest) failureCode = "MODEL_STAGE_POLICY_CHANGED";
+    else if (evidence.verificationFailed === true) {
+      const outcome = store.db.prepare("SELECT status,failure_type FROM outcomes WHERE route_id=?").get(previous.route_id);
+      if (outcome?.status !== "failed" || outcome.failure_type !== evidence.failureType) {
+        const error = new Error("verificationFailed requires the matching recorded failed outcome");
+        error.code = "INVALID_INPUT";
+        throw error;
+      }
+      if (initialOverride.source === "request") {
+        // A current explicit user choice is not an automatic enhancement and
+        // cannot replenish (or consume) the stage's automatic budget.
+        escalation.state = "held";
+        previousTarget = null;
+      } else if (evidence.failureType === "reasoning") {
+        const next = levelForTarget(modelPolicy, previousTarget) ? nextWorkLevel(modelPolicy, priorLevel) : null;
+        if (escalation.count >= escalation.limit) failureCode = "ESCALATION_LIMIT_REACHED";
+        else if (!next) failureCode = "MONOTONIC_ESCALATION_UNAVAILABLE";
+        else {
+          desired = { ...desired, workLevel: next, rule: "REASONING_ESCALATION" };
+          escalation.state = "increased";
+          escalation.count += 1;
+          escalationCode = "REASONING_ESCALATION";
+        }
+      } else {
+        escalation.state = "held";
+        heldTarget = previousTarget;
+        desired = { ...desired, workLevel: priorLevel, rule: "NON_REASONING_FAILURE" };
+        escalationCode = "NON_REASONING_FAILURE";
+      }
+    } else {
+      const outcome = store.db.prepare("SELECT status FROM outcomes WHERE route_id=?").get(previous.route_id);
+      if (outcome?.status !== "passed") {
+        if (initialOverride.source === "request") previousTarget = null;
+        else {
+          heldTarget = previousTarget;
+          desired = { ...desired, workLevel: priorLevel, rule: "MODEL_STAGE_HELD" };
+        }
+        escalation.state = "held";
+      } else {
+        previousTarget = null;
+        escalation.count = 0;
+      }
+    }
+  } else if (previous) escalationCode = "ROOT_LOCAL_RETRY";
+  const decision = (workLevel, rule) => ({ policyId: modelPolicy.definition.id, policyDigest: modelPolicy.digest,
+    policyVersion: modelPolicy.definition.schemaVersion, workLevel, rule });
+  const finish = (action, code, rule = desired.rule) => {
+    const route = contextualRoute(store, context, { action, category: scored.category,
+      codes: [code], classifier: classifier.state, escalation });
+    route.previousRouteId = previous?.route_id || null;
+    route.stageKey = stageKey;
+    route.decision = decision(desired.workLevel, rule);
     store.commitRoute(context, route, null);
     return publicRoute(route);
+  };
+  if (failureCode) {
+    escalation.state = failureCode === "ESCALATION_LIMIT_REACHED" ? "exhausted" : "unavailable";
+    return finish("ask_user", failureCode);
   }
-  let desired = desiredRoute(scored, input.evidence);
-  const escalation = escalationPlan(previous, input.evidence, desired);
-  const toolingRetry = input.evidence.verificationFailed === true && input.evidence.failureType === "tooling";
-  const previousWasExplicit = toolingRetry && previous && routeWasExplicit(previous);
-  const toolingRetryExhausted = toolingRetry && previous && routeWasToolingRetry(previous);
-  if (previousWasExplicit) {
-    const route = contextualRoute(store, context, {
-      action: "ask_user",
-      category: scored.category,
-      codes: ["EXPLICIT_TARGET_UNAVAILABLE"],
-      classifier: classifier.state,
-      escalation: escalation.status,
-    });
-    route.previousRouteId = input.previousRouteId || null;
-    store.commitRoute(context, route, null);
-    return publicRoute(route);
-  }
-  if (toolingRetryExhausted) {
-    const route = contextualRoute(store, context, {
-      action: "continue",
-      category: scored.category,
-      codes: ["HOST_DELEGATION_UNAVAILABLE"],
-      classifier: classifier.state,
-      escalation: escalation.status,
-    });
-    route.previousRouteId = input.previousRouteId || null;
-    store.commitRoute(context, route, null);
-    return publicRoute(route);
-  }
-  if (escalation.askUser) {
-    const route = contextualRoute(store, context, {
-      action: "ask_user",
-      category: scored.category,
-      codes: [escalation.reasonCode],
-      classifier: classifier.state,
-      escalation: escalation.status,
-    });
-    route.previousRouteId = input.previousRouteId || null;
-    store.commitRoute(context, route, null);
-    return publicRoute(route);
-  }
-  desired = escalation.desired;
-  if (desired.effort === "ultra" && input.evidence.parallelWriteRisk === true) {
-    const route = contextualRoute(store, context, {
-      action: "ask_user",
-      category: scored.category,
-      codes: ["ULTRA_PARALLEL_WRITE_RISK", escalation.reasonCode],
-      classifier: classifier.state,
-      escalation: escalation.status,
-    });
-    route.previousRouteId = input.previousRouteId || null;
-    store.commitRoute(context, route, null);
-    return publicRoute(route);
-  }
-
+  if (desired.workLevel === "ultra" && evidence.parallelWriteRisk === true) return finish("ask_user", "ULTRA_PARALLEL_WRITE_RISK");
   for (let claimAttempt = 0; claimAttempt < 2; claimAttempt += 1) {
     const resolved = store.resolveOverride(context, input.override || null, settings);
-    const override = resolved.override;
-    if (override?.mode === "disabled") {
-      const route = contextualRoute(store, context, { action: "continue", category: scored.category, codes: ["ROUTER_DISABLED"] });
-      store.commitRoute(context, route, null);
-      return publicRoute(route);
+    if (resolved.override?.mode === "disabled") return finish("continue", "ROUTER_DISABLED");
+    const override = resolved.override || heldTarget;
+    if (override?.effort === "ultra" && evidence.parallelWriteRisk === true) return finish("ask_user", "ULTRA_PARALLEL_WRITE_RISK");
+    const selection = resolveModelTarget({ policy: modelPolicy, catalog: delegateCatalog, demand: desired,
+      override, previous: previousTarget, escalation: escalation.state === "increased" });
+    if (!selection.target) {
+      if (escalation.state === "increased") {
+        escalation.state = "unavailable";
+        escalation.count = Number(previous.escalation_count || 0);
+      }
+      return finish(resolved.override || previousTarget ? "ask_user" : "continue", selection.reason);
     }
-    const requestedEffort = override?.effort || desired.effort;
-    if (requestedEffort === "ultra" && input.evidence.parallelWriteRisk === true) {
-      const route = contextualRoute(store, context, {
-        action: "ask_user",
-        category: scored.category,
-        codes: ["ULTRA_PARALLEL_WRITE_RISK", sourceCode(resolved.source)],
-        classifier: classifier.state,
-        escalation: escalation.status,
-      });
-      route.previousRouteId = input.previousRouteId || null;
-      store.commitRoute(context, route, null);
-      return publicRoute(route);
-    }
-    let selected;
-    if (override?.model) {
-      selected = selectExplicitRoute(delegateCatalog, override.model, requestedEffort, {
-        effortWasExplicit: override.effort != null,
-        minimumEffort: escalation.minimumEffort,
-      });
-    } else if (escalation.previousModel && !override?.model) {
-      selected = selectExplicitRoute(delegateCatalog, escalation.previousModel, requestedEffort, {
-        effortWasExplicit: false,
-        minimumEffort: escalation.minimumEffort,
-      });
-    } else {
-      selected = selectAutomaticRoute(delegateCatalog, desired.family, requestedEffort, {
-        minimumEffort: escalation.minimumEffort,
-        exactEffort: override?.effort != null,
-        excludeModels: toolingRetry && previous?.model ? [previous.model] : [],
-      });
-    }
-    if (override?.effort && selected?.effort !== override.effort) selected = null;
-    if (!selected || (scored.signals.risk && !override?.model && selected.family !== "sol")) {
-      const explicit = Boolean(override?.model || override?.effort);
-      const code = explicit ? "EXPLICIT_TARGET_UNAVAILABLE" : escalation.status.state === "increased"
-        ? "MONOTONIC_ESCALATION_UNAVAILABLE"
-        : "CATALOG_UNAVAILABLE";
-      const route = contextualRoute(store, context, {
-        action: explicit || escalation.status.state === "increased" ? "ask_user" : "continue",
-        category: scored.category,
-        codes: [code, sourceCode(resolved.source)],
-        classifier: classifier.state,
-        escalation: explicit ? escalation.status : { ...escalation.status, state: escalation.status.state === "increased" ? "unavailable" : escalation.status.state },
-      });
-      route.previousRouteId = input.previousRouteId || null;
-      store.commitRoute(context, route, null);
-      return publicRoute(route);
-    }
-    const learned = Number(policy.categoryOffsets?.[scored.category] || 0) !== 0;
-    const codes = [
-      toolingRetry ? "TOOLING_TARGET_EXCLUDED" : null,
-      sourceCode(resolved.source),
-      escalation.reasonCode,
-      classifier.reasonCode,
-      ...deterministicReasonCodes(scored, { learned }),
-    ];
-    if (selected.familyFallback) codes.push("MODEL_FAMILY_FALLBACK");
-    if (selected.effortFallback) codes.push("EFFORT_CAPABILITY_FALLBACK");
     const route = contextualRoute(store, context, {
-      action: "delegate",
-      category: scored.category,
-      codes,
-      gate: desired.verificationGate,
-      classifier: classifier.state,
-      escalation: escalation.status,
+      action: "delegate", category: scored.category,
+      codes: [sourceCode(resolved.source), escalationCode, desired.rule, selection.reason,
+        ...deterministicReasonCodes(scored).filter((code) => code !== "MAX_EFFORT_GATE")].filter(Boolean),
+      gate: desired.verificationGate, classifier: classifier.state, escalation,
     });
-    route.target = { model: selected.model, effort: selected.effort };
-    route.family = selected.family;
-    route.previousRouteId = input.previousRouteId || null;
-    const exclusionCodes = [
-      resolved.source ? "OVERRIDE_APPLIED" : null,
-      classifier.state === "used" ? "CLASSIFIER_ADJUSTED" : null,
-      escalation.status.count > 0 ? "ESCALATED_ROUTE" : null,
-      toolingRetry ? "TOOLING_RETRY" : null,
-    ].filter(Boolean);
+    route.target = selection.target;
+    route.family = "configured";
+    route.previousRouteId = previous?.route_id || null;
+    route.stageKey = stageKey;
+    route.decision = decision(selection.workLevel, desired.rule);
     route.scoringSnapshot = {
-      profileId: scoringProfile.profileId,
-      baseScore: scored.baseScore,
-      finalScore: scored.score,
-      signals: scored.signals,
-      policyOffset: scored.policyOffset,
-      classifierAdjustment,
-      hardSignalCount: scored.hardSignalCount,
-      desiredFamily: desired.family,
-      desiredEffort: desired.effort,
-      eligibleLearning: exclusionCodes.length === 0,
-      exclusionCodes,
+      profileId: scoringProfile.profileId, baseScore: scored.baseScore, finalScore: scored.score,
+      signals: scored.signals, policyOffset: 0, classifierAdjustment, hardSignalCount: scored.hardSignalCount,
+      desiredFamily: "configured", desiredEffort: route.target.effort,
+      eligibleLearning: false, exclusionCodes: ["MODEL_POLICY_OBSERVE_ONLY"],
     };
     let contextPackage = buildContextPackage(input);
     let qualification = null;
@@ -579,7 +395,7 @@ async function routeWithStore(input, options, store) {
         category: scored.category,
         codes: [contextPackage.reasonCode],
         classifier: classifier.state,
-        escalation: escalation.status,
+        escalation,
       });
       store.commitRoute(context, fallback, null);
       return publicRoute(fallback);
@@ -589,7 +405,7 @@ async function routeWithStore(input, options, store) {
       return busyRoute(store, context, activeRouteIdAfterScoring, {
         category: scored.category,
         classifier: classifier.state,
-        escalation: escalation.status,
+        escalation,
       });
     }
     if (typeof options.lifecycleHookProbe === "function") {
@@ -604,17 +420,20 @@ async function routeWithStore(input, options, store) {
         readiness = null;
       }
       if (readiness?.ready !== true && readiness?.qualificationBinding) {
-        const target = selectExplicitRoute(delegateCatalog, "gpt-5.6-sol", "low", { effortWasExplicit: true });
+        const target = resolveModelTarget({ policy: modelPolicy, catalog: delegateCatalog, purpose: "qualification" }).target;
         qualification = target ? newTaskQualification(readiness.qualificationBinding, route.routeId, readiness.requalification) : null;
         if (qualification) {
+          qualification.modelPolicy = { digest: modelPolicy.digest, target };
           route.target = { model: target.model, effort: target.effort };
-          route.family = "sol";
+          route.family = "configured";
+          route.decision = decision(modelPolicy.definition.purposes.qualification, "HOST_LIFECYCLE_QUALIFICATION");
           route.category = "general";
           route.reasonCodes = ["HOST_LIFECYCLE_QUALIFICATION"];
           route.verificationGate = "structured-check";
           route.classifier = { state: "not_needed" };
           route.escalation = { state: "none", count: 0, limit: MAX_ESCALATIONS };
           route.previousRouteId = null;
+          route.stageKey = opaqueId(store.salt, "stage", `${context.contextKey}\0native-lifecycle-qualification`);
           route.scoringSnapshot.eligibleLearning = false;
           route.scoringSnapshot.exclusionCodes.push("NATIVE_LIFECYCLE_QUALIFICATION");
           contextPackage = buildContextPackage({
@@ -629,7 +448,7 @@ async function routeWithStore(input, options, store) {
           category: scored.category,
           codes: [normalizeHookReadinessFailure(readiness)],
           classifier: classifier.state,
-          escalation: escalation.status,
+          escalation,
         });
         store.commitRoute(context, fallback, null);
         return publicRoute(fallback);
@@ -656,7 +475,7 @@ async function routeWithStore(input, options, store) {
       return busyRoute(store, context, committed.activeRouteId, {
         category: scored.category,
         classifier: classifier.state,
-        escalation: escalation.status,
+        escalation,
       });
     }
     if (committed.fallback) {
@@ -665,7 +484,7 @@ async function routeWithStore(input, options, store) {
         category: scored.category,
         codes: [committed.fallback],
         classifier: classifier.state,
-        escalation: escalation.status,
+        escalation,
       });
       store.commitRoute(context, fallback, null);
       return publicRoute(fallback);

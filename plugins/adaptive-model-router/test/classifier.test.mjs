@@ -131,6 +131,7 @@ test("app-server classifier catalog comes from model/list", async () => {
   try {
     const models = await fixture.client.listModels();
     assert.deepEqual(models.map((entry) => entry.model), [
+      "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
@@ -344,7 +345,7 @@ test("classifier free-text reasons are rejected and cannot enter routing instruc
   }
 });
 
-test("classifier uses its own catalog and falls from Luna to Terra", async () => {
+test("classifier intersects its own catalog with the shared GPT-6 scope", async () => {
   const project = await temporaryProject();
   try {
     await withRouterEnvironment(project, async () => {
@@ -363,7 +364,7 @@ test("classifier uses its own catalog and falls from Luna to Terra", async () =>
           appServer: async (run) => run({
             listModels: async () => CATALOG.filter((entry) => !entry.slug.endsWith("-luna")),
             classify: async ({ model }) => {
-              assert.equal(model, "gpt-5.6-terra");
+              assert.equal(model, "gpt-6-astra");
               return {
                 complexityAdjustment: 0,
                 category: "implementation",

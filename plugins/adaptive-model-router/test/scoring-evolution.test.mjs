@@ -66,7 +66,7 @@ function finishNoChild(store, context, route, contextId, cwd, status = "passed",
   }, { store, cwd });
 }
 
-test("database v5 stores redacted immutable score snapshots and excludes overrides from learning", async () => {
+test("database v6 stores redacted immutable score snapshots and excludes overrides from learning", async () => {
   const project = await temporaryProject("adaptive scoring snapshots ");
   try {
     await withRouterEnvironment(project, async () => {
@@ -78,7 +78,7 @@ test("database v5 stores redacted immutable score snapshots and excludes overrid
       }), { catalog: CATALOG, cwd: project.root, store });
       const explicit = await routeStage(routeInput({
         contextId: "snapshot-explicit",
-        override: { model: "gpt-5.6-terra", effort: "medium" },
+        override: { model: "gpt-6-astra", effort: "medium" },
       }), { catalog: CATALOG, cwd: project.root, store });
       const automaticRow = store.db.prepare(`
         SELECT * FROM route_score_snapshots WHERE route_id = ?
@@ -86,10 +86,10 @@ test("database v5 stores redacted immutable score snapshots and excludes overrid
       const explicitRow = store.db.prepare(`
         SELECT * FROM route_score_snapshots WHERE route_id = ?
       `).get(explicit.routeId);
-      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 5);
-      assert.equal(automaticRow.eligible_learning, 1);
+      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 6);
+      assert.equal(automaticRow.eligible_learning, 0);
       assert.equal(explicitRow.eligible_learning, 0);
-      assert.deepEqual(JSON.parse(explicitRow.exclusion_codes_json), ["OVERRIDE_APPLIED"]);
+      assert.deepEqual(JSON.parse(explicitRow.exclusion_codes_json), ["MODEL_POLICY_OBSERVE_ONLY"]);
       assert.equal(JSON.stringify(automaticRow).includes(privateMarker), false);
       assert.equal(JSON.stringify(automaticRow).includes(project.root), false);
       const profile = store.ensureScoringProfile(store.context({ cwd: project.root, contextId: "snapshot-auto" }));
@@ -108,7 +108,7 @@ test("database v5 stores redacted immutable score snapshots and excludes overrid
       assert.equal(status.scoringProfile.profileId, profile.profileId);
       assert.equal(status.evidence.outcomes, 1);
       assert.equal(status.evidence.snapshotted, 1);
-      assert.equal(status.evidence.routeEligible, 1);
+      assert.equal(status.evidence.routeEligible, 0);
 
       const environmentRoute = await routeStage(routeInput({
         contextId: "snapshot-environment",
@@ -145,7 +145,7 @@ test("database v5 stores redacted immutable score snapshots and excludes overrid
         store.context({ cwd: project.root, contextId: "snapshot-auto" }),
       );
       assert.equal(afterEnvironment.evidence.outcomes, 2);
-      assert.equal(afterEnvironment.evidence.routeEligible, 1);
+      assert.equal(afterEnvironment.evidence.routeEligible, 0);
       store.close();
     });
   } finally {
@@ -194,7 +194,7 @@ test("shadow scoring is deterministic and creates no route, outcome, proposal, o
         scoringProfiles: 0,
         scoreSnapshots: 0,
       });
-      assert.deepEqual(result.preferred, { action: "delegate", family: "sol", effort: "max" });
+      assert.deepEqual(result.preferred, { action: "delegate", workLevel: "xhigh", model: "gpt-6-astra", effort: "xhigh" });
       const after = {
         projects: Number(store.db.prepare("SELECT count(*) AS count FROM projects").get().count),
         profiles: Number(store.db.prepare("SELECT count(*) AS count FROM scoring_profiles").get().count),
@@ -246,7 +246,7 @@ test("classifier-adjusted and escalated routes are quarantined from online learn
         FROM route_score_snapshots WHERE route_id = ?
       `).get(classified.routeId);
       assert.equal(classifiedSnapshot.eligible_learning, 0);
-      assert.ok(JSON.parse(classifiedSnapshot.exclusion_codes_json).includes("CLASSIFIER_ADJUSTED"));
+      assert.ok(JSON.parse(classifiedSnapshot.exclusion_codes_json).includes("MODEL_POLICY_OBSERVE_ONLY"));
 
       const first = await routeStage(routeInput({
         contextId: "escalation-quarantine",
@@ -274,7 +274,7 @@ test("classifier-adjusted and escalated routes are quarantined from online learn
         FROM route_score_snapshots WHERE route_id = ?
       `).get(escalated.routeId);
       assert.equal(escalatedSnapshot.eligible_learning, 0);
-      assert.ok(JSON.parse(escalatedSnapshot.exclusion_codes_json).includes("ESCALATED_ROUTE"));
+      assert.ok(JSON.parse(escalatedSnapshot.exclusion_codes_json).includes("MODEL_POLICY_OBSERVE_ONLY"));
       store.close();
     });
   } finally {
@@ -338,15 +338,14 @@ test("offline profiles are immutable and a hard risk-floor violation rolls back 
           exclusionCodes: [],
         },
       };
-      const ticket = createDelegationTicket();
-      assert.equal(store.commitRoute(context, unsafeRoute, null, {
-        ticket,
-        contextPackage: buildContextPackage(routeInput({ contextId })),
-        cwd: project.root,
-        disk: { probe: () => 16n * 1024n * 1024n * 1024n },
-      }).committed, true);
-      unsafeRoute.carrier = ticket.carrier;
-      const result = finishNoChild(store, context, unsafeRoute, contextId, project.root);
+      // Legacy safety logic remains testable on a seeded historical projection;
+      // the v6 admission boundary must reject this unbound legacy delegate.
+      assert.equal(store.commitRoute(context, unsafeRoute, null).committed, false);
+      const seeded = await routeStage(routeInput({ contextId }), { store, cwd: project.root, catalog: CATALOG });
+      finishNoChild(store, context, seeded, contextId, project.root);
+      store.db.prepare("UPDATE routes SET schema_version='5.0', decision_json=NULL, model='gpt-5.6-terra', family='terra', effort='low' WHERE route_id=?").run(seeded.routeId);
+      store.db.prepare("UPDATE route_score_snapshots SET signals_json=? WHERE route_id=?").run(JSON.stringify({risk: true}), seeded.routeId);
+      const result = { safety: store.enforceScoringSafety(context, store.findRoute(context, seeded.routeId)) };
       assert.equal(result.safety.rolledBack, true);
       assert.equal(store.ensureScoringProfile(context).profileId, baseline.profileId);
       const learning = store.learningStatus(context);

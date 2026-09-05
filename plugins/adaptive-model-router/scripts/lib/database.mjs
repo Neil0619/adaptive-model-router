@@ -27,6 +27,9 @@ import {
   unresolvedAttempt,
 } from "./delegation-gate.mjs";
 
+import { readModelPolicy, retainModelPolicy, modelPolicyStatus } from "./model-policy-store.mjs";
+import { targetAllowed } from "./model-policy.mjs";
+
 const GLOBAL_PROJECT = "__global__";
 const GLOBAL_CONTEXT = "__global__";
 const DEFAULT_HISTORY_LIMIT = 20;
@@ -43,7 +46,7 @@ const STORAGE_CONTRACT_SCHEMA = Object.freeze({
   routes: [
     "route_id", "project_id", "context_key", "schema_version", "action", "category", "model",
     "effort", "family", "root_model", "verification_gate", "reason_codes_json",
-    "classifier_state", "escalation_count", "previous_route_id", "created_at",
+    "classifier_state", "escalation_count", "previous_route_id", "created_at", "decision_json", "stage_key",
   ],
   outcomes: [
     "seq", "route_id", "project_id", "context_key", "category", "status", "gate",
@@ -574,6 +577,23 @@ export class RouterStore {
           GROUP BY r.project_id, r.context_key
         `).run(LEGACY_DELEGATION_BLOCK_PREFIX);
       }
+      if (current < 6) {
+        const hostColumns = this.db.prepare("PRAGMA table_info(host_model_state)").all();
+        if (!hostColumns.some((column) => column.name === "model_visible")) {
+          this.db.exec("ALTER TABLE host_model_state ADD COLUMN model_visible INTEGER NOT NULL DEFAULT 0 CHECK (model_visible IN (0, 1))");
+          this.db.exec("UPDATE host_model_state SET model_visible = CASE WHEN current_model IS NULL THEN 0 ELSE 1 END");
+        }
+        const columns = this.db.prepare("PRAGMA table_info(routes)").all().map((row) => row.name);
+        if (!columns.includes("decision_json")) this.db.exec("ALTER TABLE routes ADD COLUMN decision_json TEXT");
+        if (!columns.includes("stage_key")) this.db.exec("ALTER TABLE routes ADD COLUMN stage_key TEXT");
+        this.db.exec("CREATE INDEX IF NOT EXISTS routes_stage ON routes(project_id, context_key, stage_key)");
+        this.db.exec(`CREATE TRIGGER IF NOT EXISTS require_model_policy_decision BEFORE INSERT ON routes
+          WHEN NEW.action = 'delegate' AND (NEW.schema_version != '6.0' OR NEW.decision_json IS NULL)
+          BEGIN SELECT RAISE(ABORT, 'delegate route requires model policy decision'); END`);
+      }
+      const policy = readModelPolicy(this.db);
+      retainModelPolicy(this.db, policy);
+      this.db.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES(?,?)").run("model_policy:active", policy.digest);
       this.db.exec(`PRAGMA user_version = ${DATABASE_VERSION}`);
     });
   }
@@ -920,6 +940,15 @@ export class RouterStore {
     if (model != null && !normalizedModel) throw new Error("model has an invalid format");
     const keys = this.overrideKeys(context, scope);
     this.transaction(() => {
+      if (mode === "locked") {
+        const allowed = readModelPolicy(this.db).definition.allowedModels;
+        if (!allowed.some((entry) => (!normalizedModel || entry.model === normalizedModel)
+          && (!effort || entry.efforts.includes(effort)))) {
+          const error = new Error("MODEL_SCOPE_DENIED: lock is outside the active model policy");
+          error.code = "INVALID_INPUT";
+          throw error;
+        }
+      }
       this.db.prepare(`
         INSERT INTO overrides(scope, project_id, context_key, mode, model, effort, created_at)
         VALUES(?, ?, ?, ?, ?, ?, ?)
@@ -965,6 +994,10 @@ export class RouterStore {
   commitRoute(context, route, onceId = null, admission = null) {
     return this.transaction(() => {
       if (route.action === "delegate") {
+        const modelPolicy = readModelPolicy(this.db);
+        if (route.decision?.policyDigest !== modelPolicy.digest) return { committed: false, fallback: "MODEL_POLICY_CHANGED" };
+        if (!targetAllowed(modelPolicy, route.target)) return { committed: false, fallback: "MODEL_SCOPE_DENIED" };
+        retainModelPolicy(this.db, modelPolicy);
         const activeRouteId = this.activeDelegationRouteId(context);
         if (activeRouteId) {
           return { committed: false, retry: false, busy: true, activeRouteId };
@@ -1006,8 +1039,8 @@ export class RouterStore {
       this.db.prepare(`
         INSERT INTO routes(
           route_id, project_id, context_key, schema_version, action, category, model, effort, family,
-          root_model, verification_gate, reason_codes_json, classifier_state, escalation_count, previous_route_id, created_at
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          root_model, verification_gate, reason_codes_json, classifier_state, escalation_count, previous_route_id, created_at, decision_json, stage_key
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         route.routeId,
         context.projectId,
@@ -1025,6 +1058,8 @@ export class RouterStore {
         route.escalation.count,
         route.previousRouteId || null,
         nowIso(),
+        route.decision ? canonicalJson(route.decision) : null,
+        route.stageKey || null,
       );
       if (route.scoringSnapshot) {
         const snapshot = route.scoringSnapshot;
@@ -1119,6 +1154,7 @@ export class RouterStore {
         r.model,
         r.effort,
         r.root_model,
+        r.decision_json,
         r.verification_gate,
         r.reason_codes_json,
         r.classifier_state,
@@ -1179,6 +1215,7 @@ export class RouterStore {
         routeId: row.route_id,
         action: row.action,
         category: row.category,
+        ...(row.decision_json ? { decision: JSON.parse(row.decision_json) } : {}),
         ...(target ? { target } : {}),
         transition,
         reasonCodes: parseJson(row.reason_codes_json, []),
@@ -1789,6 +1826,7 @@ export class RouterStore {
       routeId: latest.routeId,
       action: latest.action,
       category: latest.category,
+      ...(latest.decision ? { decision: latest.decision } : {}),
       ...(latest.target ? { target: latest.target } : {}),
       transition: latest.transition,
       reasonCodes: latest.reasonCodes,
@@ -1861,6 +1899,7 @@ export class RouterStore {
           source: profile.source,
         };
       })(),
+      modelPolicy: modelPolicyStatus(this.db, context),
       latestRoute: latestStatus,
       pendingOutcomes,
       pendingProposals,

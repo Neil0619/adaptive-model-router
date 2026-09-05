@@ -64,21 +64,21 @@ test("storage contract accepts additive future schemas and rejects incompatible 
     initial.close();
     const future = new DatabaseSync(compatiblePath);
     future.exec("CREATE TABLE future_additive_feature(id TEXT PRIMARY KEY)");
-    future.exec("PRAGMA user_version = 6");
+    future.exec("PRAGMA user_version = 7");
     future.close();
 
     const compatible = new RouterStore({ path: compatiblePath });
     const context = compatible.context({ cwd: project.root, contextId: "forward" });
     const diagnosis = compatible.diagnose(context);
-    assert.equal(diagnosis.databaseVersion, 6);
-    assert.equal(diagnosis.supportedDatabaseVersion, 5);
-    assert.equal(diagnosis.storageContractVersion, 2);
+    assert.equal(diagnosis.databaseVersion, 7);
+    assert.equal(diagnosis.supportedDatabaseVersion, 6);
+    assert.equal(diagnosis.storageContractVersion, 3);
     assert.equal(diagnosis.databaseCompatibility, "forward_compatible");
     compatible.close();
 
     const incompatible = new DatabaseSync(incompatiblePath);
     incompatible.exec("CREATE TABLE unrelated(id TEXT PRIMARY KEY)");
-    incompatible.exec("PRAGMA user_version = 6");
+    incompatible.exec("PRAGMA user_version = 7");
     incompatible.close();
     assert.throws(
       () => new RouterStore({ path: incompatiblePath }),

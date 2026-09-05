@@ -12,6 +12,7 @@ export const EVIDENCE_SCHEMA = {
   additionalProperties: false,
   properties: {
     workProduct: { type: "boolean" },
+    exactOutputCheck: { type: "boolean" },
     requirementsSettled: { type: "boolean" },
     strongVerification: { type: "boolean" },
     highRisk: { type: "boolean" },
@@ -94,6 +95,7 @@ export const ROUTE_INPUT_SCHEMA = {
     phase: { type: "string", minLength: 1, maxLength: 128 },
     evidence: EVIDENCE_SCHEMA,
     contextId: { type: "string", minLength: 1, maxLength: 256 },
+    stageId: { type: "string", minLength: 1, maxLength: 128 },
     previousRouteId: { type: "string", minLength: 1, maxLength: 128 },
     override: ROUTE_OVERRIDE_SCHEMA,
     hostCapabilities: HOST_CAPABILITIES_SCHEMA,
@@ -137,9 +139,13 @@ export const ROUTE_OUTPUT_SCHEMA = {
   additionalProperties: false,
   required: ["schemaVersion", "routeId", "action", "category", "reasonCodes", "verificationGate", "classifier", "escalation", "rootTask", "taskMode"],
   properties: {
-    schemaVersion: { type: "string", enum: ["5.0"] },
+    schemaVersion: { type: "string", enum: ["6.0"] },
     routeId: { type: "string", minLength: 1 },
     blockingRouteId: { type: "string", minLength: 1 },
+    decision: { type: "object", additionalProperties: false, required: ["policyId", "policyDigest", "policyVersion", "workLevel", "rule"], properties: {
+      policyId: { type: "string" }, policyDigest: { type: "string" }, policyVersion: { type: "integer", enum: [1] },
+      workLevel: { type: "string", enum: ["low", "medium", "high", "xhigh", "max", "ultra"] }, rule: { type: "string" }
+    } },
     action: { type: "string", enum: ["delegate", "continue", "ask_user", "busy"] },
     category: { type: "string", enum: CATEGORIES },
     target: {

@@ -1,0 +1,265 @@
+{
+  "schema": 1,
+  "date": "2026-09-06",
+  "runtime": {
+    "shellProtocolVersion": 1,
+    "toolContractVersion": 7,
+    "storageContractVersion": 3,
+    "runtimeVersion": "0.4.0+codex.20260905170206",
+    "activeVersion": "0.4.0+codex.20260905170206",
+    "previousVersion": "0.4.0+codex.20260904120659",
+    "failedRuntimeCount": 0,
+    "databaseVersion": 6,
+    "hotReload": true,
+    "provisional": false
+  },
+  "sourceDigest": "e9044731dc17bd7a86e6ee93cbc721bbf683ce029ce598418c7891f66900447f",
+  "installedDigest": "e9044731dc17bd7a86e6ee93cbc721bbf683ce029ce598418c7891f66900447f",
+  "policy": {
+    "id": "gpt6-quality-first-v1",
+    "schemaVersion": 1,
+    "digest": "eeef1f9773b931b8651fea7c7804a1ed7170da8d14694a16e5aea3e2e67c3a78",
+    "parentDigest": null,
+    "allowedModels": [
+      {
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ],
+        "model": "gpt-6-astra"
+      }
+    ],
+    "targets": {
+      "high": {
+        "effort": "high",
+        "model": "gpt-6-astra"
+      },
+      "low": {
+        "effort": "low",
+        "model": "gpt-6-astra"
+      },
+      "max": {
+        "effort": "max",
+        "model": "gpt-6-astra"
+      },
+      "medium": {
+        "effort": "medium",
+        "model": "gpt-6-astra"
+      },
+      "ultra": {
+        "effort": "ultra",
+        "model": "gpt-6-astra"
+      },
+      "xhigh": {
+        "effort": "xhigh",
+        "model": "gpt-6-astra"
+      }
+    },
+    "legacyLearning": "observe-only",
+    "invalidLocks": 0,
+    "definition": {
+      "allowedModels": [
+        {
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ],
+          "model": "gpt-6-astra"
+        }
+      ],
+      "conditions": {
+        "defaultLevel": "high",
+        "low": {
+          "forbids": [
+            "risk",
+            "security",
+            "migration",
+            "publicContract",
+            "review",
+            "ambiguity",
+            "crossCutting",
+            "architectureTradeoff",
+            "implementation"
+          ],
+          "requires": [
+            "requirementsSettled",
+            "strongVerification",
+            "declaredMechanical",
+            "exactOutputCheck"
+          ]
+        },
+        "maxHardSignals": 3,
+        "maxRequiresAny": [
+          "highFailureCost",
+          "irreversible"
+        ],
+        "medium": {
+          "forbids": [
+            "risk",
+            "security",
+            "migration",
+            "publicContract",
+            "review",
+            "ambiguity",
+            "crossCutting",
+            "architectureTradeoff"
+          ],
+          "requires": [
+            "requirementsSettled",
+            "strongVerification"
+          ]
+        },
+        "riskFloorSignals": [
+          "risk",
+          "security",
+          "migration",
+          "publicContract",
+          "review",
+          "architectureTradeoff"
+        ],
+        "xhighCrossCuttingWith": [
+          "ambiguity",
+          "architectureTradeoff"
+        ],
+        "xhighHardSignals": 2
+      },
+      "escalation": {
+        "limit": 2,
+        "next": {
+          "high": "xhigh",
+          "low": "high",
+          "max": "ultra",
+          "medium": "high",
+          "xhigh": "max"
+        }
+      },
+      "fallbacks": {
+        "high": [
+          "xhigh"
+        ],
+        "low": [
+          "medium",
+          "high"
+        ],
+        "max": [],
+        "medium": [
+          "high"
+        ],
+        "ultra": [],
+        "xhigh": [
+          "max"
+        ]
+      },
+      "id": "gpt6-quality-first-v1",
+      "purposes": {
+        "classifier": "low",
+        "qualification": "low",
+        "smoke": "high"
+      },
+      "schemaVersion": 1,
+      "targets": {
+        "high": {
+          "effort": "high",
+          "model": "gpt-6-astra"
+        },
+        "low": {
+          "effort": "low",
+          "model": "gpt-6-astra"
+        },
+        "max": {
+          "effort": "max",
+          "model": "gpt-6-astra"
+        },
+        "medium": {
+          "effort": "medium",
+          "model": "gpt-6-astra"
+        },
+        "ultra": {
+          "effort": "ultra",
+          "model": "gpt-6-astra"
+        },
+        "xhigh": {
+          "effort": "xhigh",
+          "model": "gpt-6-astra"
+        }
+      }
+    }
+  },
+  "databaseHealth": "ok",
+  "autoActivation": {
+    "globalEnabled": true,
+    "effective": true
+  },
+  "hooks": [
+    {
+      "eventName": "preToolUse",
+      "enabled": true,
+      "trustStatus": "trusted",
+      "currentHash": "sha256:58222a3c8ea361d2fc23fcd5c4c2dfdb5f7a30a5481877019bb2f916a5a10d6e"
+    },
+    {
+      "eventName": "postToolUse",
+      "enabled": true,
+      "trustStatus": "trusted",
+      "currentHash": "sha256:536f7142e3337a9665609212c5869613f75dcee5d2f71e5b1d5d9f1d96f7c243"
+    },
+    {
+      "eventName": "sessionStart",
+      "enabled": true,
+      "trustStatus": "trusted",
+      "currentHash": "sha256:f4df68347e9e9a703ce55cbfdb285cad39004e2d0002f03fa0acaa553cd7c7d4"
+    },
+    {
+      "eventName": "userPromptSubmit",
+      "enabled": true,
+      "trustStatus": "trusted",
+      "currentHash": "sha256:a6107a2e117be5abe5bf82f11a2c07da6896f41156aa521bcfa02fb62a6e4eb4"
+    },
+    {
+      "eventName": "subagentStart",
+      "enabled": true,
+      "trustStatus": "trusted",
+      "currentHash": "sha256:b5579abc5c692ddf94b0337d1d7b229aa71a5a26de6e907ebfd7323d7f1807c3"
+    },
+    {
+      "eventName": "subagentStop",
+      "enabled": true,
+      "trustStatus": "trusted",
+      "currentHash": "sha256:b1d0748b7ffc6647a065fe488dd0d3d8c5d74510cd58561359b13bc78d2606c8"
+    },
+    {
+      "eventName": "stop",
+      "enabled": true,
+      "trustStatus": "trusted",
+      "currentHash": "sha256:b2bae719fb2e2fd78518726e96d79554506ae91bb52c14fc876b1e691f284347"
+    }
+  ],
+  "hookHashesUnchangedSinceTrust": true,
+  "legacy": {
+    "unresolvedBefore": 2,
+    "unresolvedAfter": 2,
+    "attemptsUnchanged": true,
+    "gateCount": 9,
+    "gatesUnchanged": true
+  },
+  "taskTools": {
+    "status": "ok",
+    "taskToolExposure": true,
+    "target": {
+      "effort": "high",
+      "model": "gpt-6-astra"
+    },
+    "verifiedTools": [
+      "diagnose_router",
+      "route_stage"
+    ]
+  }
+}

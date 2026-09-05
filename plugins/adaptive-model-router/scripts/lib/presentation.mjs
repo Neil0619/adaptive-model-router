@@ -2,6 +2,10 @@ function targetText(target) {
   return target ? `${target.model} (${target.effort})` : "none";
 }
 
+function decisionText(decision) {
+  return decision ? `${decision.policyId} / v${decision.policyVersion} · ${decision.workLevel} · ${decision.rule}` : "legacy scoring";
+}
+
 function rootText(rootTask, locale) {
   const observed = rootTask?.modelVisibility === "hook_observed" ? rootTask.model : null;
   if (locale === "zh") {
@@ -81,6 +85,7 @@ export function formatRouteStatus(status, { locale = "en" } = {}) {
       lines.push(`最近路由：${latest.createdAt} · ${latest.routeId}`);
       lines.push(`变化：${transitionText(latest.transition, "zh")}。`);
       lines.push(`原因：${latest.reasonCodes.join(", ")}。`);
+      lines.push(`策略与条件：${decisionText(latest.decision)}。`);
       lines.push(`结果：${outcomeText(latest.outcome, "zh", latest.reconciliation)}。`);
     }
     lines.push(`待记录结果：${status.pendingOutcomes}；Stop 自动收敛 unknown：${status.outcomeObservability?.stopHookUnknown ?? 0}；待审批策略：${status.pendingProposals}。`);
@@ -105,6 +110,7 @@ export function formatRouteStatus(status, { locale = "en" } = {}) {
     lines.push(`Latest route: ${latest.createdAt} · ${latest.routeId}`);
     lines.push(`Transition: ${transitionText(latest.transition, "en")}.`);
     lines.push(`Reasons: ${latest.reasonCodes.join(", ")}.`);
+    lines.push(`Policy and condition: ${decisionText(latest.decision)}.`);
     lines.push(`Outcome: ${outcomeText(latest.outcome, "en", latest.reconciliation)}.`);
   }
   lines.push(`Pending outcomes: ${status.pendingOutcomes}; Stop-auto-finalized unknown outcomes: ${status.outcomeObservability?.stopHookUnknown ?? 0}; pending policy proposals: ${status.pendingProposals}.`);
@@ -129,6 +135,7 @@ export function formatRouteHistory(history, { locale = "en" } = {}) {
         `结果 ${outcomeText(route.outcome, "zh", route.reconciliation)}`,
         `routeId ${route.routeId}`,
         `原因 ${route.reasonCodes.join(", ")}`,
+        decisionText(route.decision),
       ].join(" · "));
     }
     return lines.join("\n");
@@ -147,6 +154,7 @@ export function formatRouteHistory(history, { locale = "en" } = {}) {
       `outcome ${outcomeText(route.outcome, "en", route.reconciliation)}`,
       `routeId ${route.routeId}`,
       `reasons ${route.reasonCodes.join(", ")}`,
+      decisionText(route.decision),
     ].join(" · "));
   }
   return lines.join("\n");
