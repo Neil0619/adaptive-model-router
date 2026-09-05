@@ -3,9 +3,17 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   auditNativeLifecycleTranscript,
+  auditNativeLifecycle1533Transcript,
   auditNativeRecoveryTranscript,
   readNativeRecoveryTranscript,
 } from "./native-recovery-audit.mjs";
+
+const AUDITORS = Object.freeze({
+  "0.153.0-alpha.5": auditNativeRecoveryTranscript,
+  "0.153.0": auditNativeLifecycleTranscript,
+  "0.153.3": auditNativeLifecycle1533Transcript,
+});
+export const NATIVE_LIFECYCLE_CLI_VERSIONS = Object.freeze(Object.keys(AUDITORS));
 
 function requireFact(value) {
   if (!value) throw new Error("native no-op evidence is unproven");
@@ -51,8 +59,8 @@ export function auditNativeLifecycleNoop({ child, parentId, taskName, target, ma
     const finals = turn.items.filter((item) => item.type === "agentMessage" && item.phase === "final_answer");
     requireFact(finals.length === 1 && finals[0] === turn.items.at(-1) && finals[0].text === marker);
     const bytes = readTranscript(child.path);
-    const auditTranscript = child.cliVersion === "0.153.0-alpha.5"
-      ? auditNativeRecoveryTranscript : auditNativeLifecycleTranscript;
+    const auditTranscript = Object.hasOwn(AUDITORS, child.cliVersion) ? AUDITORS[child.cliVersion] : null;
+    requireFact(typeof auditTranscript === "function");
     const audit = auditTranscript(bytes, child, parentId);
     const repeated = readTranscript(child.path);
     requireFact(Buffer.isBuffer(repeated) && bytes.equals(repeated));

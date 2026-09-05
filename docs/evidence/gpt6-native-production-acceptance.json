@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "date": "2026-09-06",
+  "candidateVersion": "0.4.0+codex.20260905170206",
+  "cliVersion": "0.153.3",
+  "sourceDigest": "e9044731dc17bd7a86e6ee93cbc721bbf683ce029ce598418c7891f66900447f",
+  "installedDigest": "e9044731dc17bd7a86e6ee93cbc721bbf683ce029ce598418c7891f66900447f",
+  "kind": "production-mcp-native-acceptance",
+  "allowedModels": [
+    "gpt-6-astra"
+  ],
+  "events": [
+    {
+      "stage": "started",
+      "threadIdDigest": "46c54b956fb6e598c55a5a12c56911ed20ac7e009f1573725d99bbdcee8231ad"
+    },
+    {
+      "stage": "qualification",
+      "routeIdDigest": "c197f880dd157871056687122001d7b6d8d6834773d3fc8aca3ce6ce892503af",
+      "target": {
+        "model": "gpt-6-astra",
+        "effort": "low"
+      }
+    },
+    {
+      "stage": "verified",
+      "qualification": true,
+      "routeIdDigest": "c197f880dd157871056687122001d7b6d8d6834773d3fc8aca3ce6ce892503af",
+      "audit": {
+        "passed": true,
+        "rawAuditAdapter": "codex-0.153.3-no-work/1",
+        "rawAuditDigest": "acb0471fa03c17f168bbdb1c163a4b4f59b3602c7f259f53e8fb359755b09b61",
+        "sourceBytes": 84191
+      },
+      "gate": "available"
+    },
+    {
+      "stage": "ordinary-delegation",
+      "routeIdDigest": "d43dd3789a0796869991f91d693d11aad1482ce301cdb232a82c838437781933",
+      "target": {
+        "model": "gpt-6-astra",
+        "effort": "low"
+      }
+    },
+    {
+      "stage": "verified",
+      "qualification": false,
+      "routeIdDigest": "d43dd3789a0796869991f91d693d11aad1482ce301cdb232a82c838437781933",
+      "audit": {
+        "passed": true,
+        "rawAuditAdapter": "codex-0.153.3-no-work/1",
+        "rawAuditDigest": "cd2c290b09e17d1824c93a4b594bab1aba93b54152a2765b5a9de3ba79c892f2",
+        "sourceBytes": 84118
+      },
+      "gate": "available"
+    },
+    {
+      "stage": "summary",
+      "passed": true,
+      "children": 2,
+      "outcomes": 2,
+      "qualification": "passed",
+      "rootModel": "gpt-6-astra",
+      "rootEffort": "high"
+    },
+    {
+      "stage": "archived",
+      "threadIdDigest": "f40b57fe4110c56155bb1d5a917c2515855d6549ab23a12e8d3e79482d4251b1"
+    },
+    {
+      "stage": "archived",
+      "threadIdDigest": "3cfb9cdd7cb06d1e9f01640e478cdbd31fc2d455bf764698b64f3c7ce80e19cb"
+    },
+    {
+      "stage": "archived",
+      "threadIdDigest": "46c54b956fb6e598c55a5a12c56911ed20ac7e009f1573725d99bbdcee8231ad"
+    }
+  ]
+}

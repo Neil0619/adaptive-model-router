@@ -4,8 +4,29 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Route bounded work through GPT-6 only, with all six efforts available and
+  high as the default. Explicit task conditions select stable work levels;
+  diagnostic score bands and legacy learning offsets no longer select models.
+- Separate allowed model scope, task conditions, and target bindings in a
+  versioned policy with read-only preview, atomic activation, rollback, and
+  active-call protection. Adding candidates does not add scoring intervals.
+- Keep reasoning escalation within one logical stage and at most two automatic
+  enhancements. Environment, information, and tooling failures retain the
+  current target; explicit unavailable or out-of-scope targets fail visibly.
+- Apply the same model scope to routing, locks, optional classification, and
+  logged-in probes. Preserve legacy records and collect new outcomes without
+  applying legacy offsets. GPT-6-only smoke covers root slug changes offline.
+- Keep route identifiers in status/history and diagnostics while routine
+  notices show the stage, target, effort, and only directly observed service
+  tier information.
+
 ### Fixed
 
+- Normalize explicit targets without mutating immutable policy objects.
+- Support the separately audited native macOS CLI `0.153.3` lifecycle stream;
+  unknown builds and legacy recovery receipts retain their existing boundaries.
 - Restore trusted task routing context inside the same turn after Codex
   compaction through `SessionStart(source=compact)`. Stable identity now accepts
   only non-empty host `session_id`; missing identity is diagnosed with a

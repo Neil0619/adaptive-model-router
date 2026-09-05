@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "date": "2026-09-06",
+  "kind": "diagnostic-native-build-source-review",
+  "productionAdmission": false,
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cliVersion": "0.153.3",
+    "executableDigest": "e57b3081ef7a33014e9afa1f7cd44f472d2d72b4a2084bdc8bc16cd261159302",
+    "executablePathDigest": "654b11f7f414643ab9b5e9ab9a43b8d43b5a33d6afc6e551f9fb73c7efefeb08"
+  },
+  "childIdDigest": "b3fd85184335b4ea2b6b4a63badb43692ca8288605b0997e55bda7128d371bf5",
+  "target": {
+    "model": "gpt-6-astra",
+    "effort": "low"
+  },
+  "records": {
+    "session_meta": 1,
+    "event_msg": 4,
+    "response_item": 7,
+    "world_state": 1,
+    "turn_context": 1,
+    "inter_agent_communication_metadata": 1,
+    "token_usage_record": 1
+  },
+  "events": {
+    "task_started": 1,
+    "item_completed": 1,
+    "token_count": 1,
+    "task_complete": 1
+  },
+  "responseTypes": {
+    "message": 6,
+    "agent_message": 1
+  },
+  "projectedItemTypes": [
+    "agentMessage"
+  ],
+  "audit": {
+    "passed": true,
+    "rawAuditAdapter": "codex-0.153.3-no-work/1",
+    "rawAuditDigest": "7dac5c389a211e1bccd289ee0033199c231fce18c26c63ac6ece18ab859a4019",
+    "sourceBytes": 84084
+  }
+}

@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "runtimeVersion": "0.4.0+codex.20260904131336",
+  "runtimeVersion": "0.4.0+codex.20260905170206",
   "shellProtocolVersion": 1,
-  "toolContractVersion": 6,
-  "storageContractVersion": 2,
-  "databaseVersion": 5,
+  "toolContractVersion": 7,
+  "storageContractVersion": 3,
+  "databaseVersion": 6,
   "entrypoints": {
     "hook": "scripts/hook.mjs",
     "service": "scripts/lib/service.mjs",

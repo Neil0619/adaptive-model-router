@@ -7,11 +7,7 @@ const operation = process.argv[2];
 const cwd = process.argv[3];
 const contextId = process.argv[4];
 const value = process.argv[5];
-const catalog = [
-  { slug: "gpt-5.6-sol", visibility: "list", priority: 1, supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] },
-  { slug: "gpt-5.6-terra", visibility: "list", priority: 2, supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] },
-  { slug: "gpt-5.6-luna", visibility: "list", priority: 3, supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] },
-];
+import { CATALOG as catalog, HOST_CAPABILITIES } from "./fixtures.mjs";
 
 if (operation === "migrate") {
   const store = new RouterStore();
@@ -26,6 +22,7 @@ if (operation === "migrate") {
     phase: "implementation",
     evidence: { workProduct: true, mechanical: true, requirementsSettled: true, batchSize: 50 },
     contextId,
+    hostCapabilities: HOST_CAPABILITIES,
   }, { catalog, cwd });
   let outcome = null;
   let dispatch = null;
@@ -77,6 +74,7 @@ if (operation === "migrate") {
     phase: "implementation",
     evidence: { workProduct: true, requirementsSettled: true, strongVerification: true },
     contextId,
+    hostCapabilities: HOST_CAPABILITIES,
   }, { catalog, cwd });
   process.stdout.write(`${JSON.stringify(route)}\n`);
 } else if (operation === "approve") {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { realpathSync } from "node:fs";
+import { cpSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RouterStore } from "../scripts/lib/database.mjs";
@@ -13,6 +13,20 @@ import { observeQualificationHook, readTaskQualification, qualificationReadiness
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+test("native source identity includes the model policy as well as executable code", async () => {
+  const project = await temporaryProject("router-source-policy-");
+  try {
+    const copied = resolve(project.root, "candidate");
+    cpSync(resolve(SOURCE_ROOT, "scripts"), resolve(copied, "scripts"), { recursive: true });
+    const source = readFileSync(resolve(SOURCE_ROOT, "model-policy.json"), "utf8");
+    writeFileSync(resolve(copied, "model-policy.json"), source);
+    assert.equal(runtimeSourceDigest(copied), runtimeSourceDigest());
+    const changed = JSON.parse(source); changed.id = "changed-bindings-candidate";
+    writeFileSync(resolve(copied, "model-policy.json"), JSON.stringify(changed));
+    assert.notEqual(runtimeSourceDigest(copied), runtimeSourceDigest());
+  } finally { await project.cleanup(); }
+});
 
 async function fixture(run) {
   const project = await temporaryProject("router-qualification-");
@@ -39,7 +53,7 @@ test("first eligible stage issues only a fixed no-tool qualification, without th
     const route = await routeStage(input, options);
     assert.equal(route.action, "delegate");
     assert.deepEqual(route.reasonCodes, ["HOST_LIFECYCLE_QUALIFICATION"]);
-    assert.deepEqual(route.target, { model: "gpt-5.6-sol", effort: "low" });
+    assert.deepEqual(route.target, { model: "gpt-6-astra", effort: "low" });
     assert.equal(route.verificationGate, "structured-check");
     const toolInput = { task_name: route.carrier.taskName, message: route.carrier.message,
       model: route.target.model, reasoning_effort: route.target.effort, fork_turns: "none" };
@@ -61,7 +75,7 @@ test("first eligible stage issues only a fixed no-tool qualification, without th
 
 test("qualification retains the ordinary one-child gate and never consumes a once override", async () => {
   await fixture(async ({ store, input, context, options }) => {
-    store.setOverride(context, { scope: "once", model: "gpt-5.6-terra", effort: "high" });
+    store.setOverride(context, { scope: "once", model: "gpt-6-astra", effort: "high" });
     const first = await routeStage(input, options);
     assert.equal(first.action, "delegate");
     const second = await routeStage(input, options);

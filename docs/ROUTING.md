@@ -43,99 +43,57 @@ cancels the pending change; another model change supersedes the old event.
 
 ## Decision order
 
-`route_stage`:
+The router keeps the existing manual-root, pending intent, delegation gate,
+Hook trust and outcome requirements. It reads one immutable model policy,
+classifies task evidence, then intersects the selected binding with the actual
+execution interface. Missing direct delegation capabilities keep work local.
+An explicit unavailable or out-of-scope target is rejected without substitution.
+A once override is consumed only by a committed delegate.
 
-1. validates the closed input and derives local HMAC project/context IDs;
-2. returns `continue` with a dedicated reason when root-model intent is pending
-   or the current task is manual-root;
-3. resolves request → once → session → project → optional global overrides;
-4. returns `continue` when routing is disabled;
-5. returns `continue` when the host cannot express model/effort delegation;
-6. without an override, continues for greetings, simple short questions, and
-   explicit no-work-product tasks;
-7. loads the visible known-model catalog and fails open to `continue` when none
-   is available;
-8. scores deterministically and uses the redacted auxiliary classifier only
-   for substantive borderline stages;
-9. applies risk floors, approved project policy, and monotonic escalation;
-10. verifies model/effort capabilities and atomically records the route. A once
-   override is consumed only with a committed `delegate`.
+## GPT-6 quality-first conditions
 
-An unavailable explicit model or effort returns `ask_user`; it is never
-silently replaced. Reasoning failures can strengthen automatically twice, then
-return `ask_user`.
+The default [model-policy.json](../plugins/adaptive-model-router/model-policy.json)
+allows only `gpt-6-astra` at low, medium, high, xhigh, max and ultra. High is the
+default; ordinary automatic selection concentrates on medium/high/xhigh.
 
-## Deterministic score
+| Work level | Entry condition |
+| --- | --- |
+| low | Settled, low-risk, mechanical work with strong verification and an exact output check; not code implementation |
+| medium | Settled and strongly verified, without risk, review, ambiguity, cross-module impact or architectural trade-offs |
+| high | Default, including normal design/review/risk work and insufficient downgrade evidence |
+| xhigh | Cross-module with ambiguity or architecture trade-offs, or two independent difficulty groups |
+| max | Three independent difficulty groups plus high failure cost or irreversibility; or an xhigh reasoning failure |
+| ultra | A max reasoning failure with remaining budget, or an explicit user choice |
 
-The base score is `40`.
+Higher conditions take priority over downgrades. The five independent groups
+are security-or-migration, explicit high-risk-or-high-failure-cost,
+cross-module-public-contract, architecture trade-offs, and irreversibility.
+Correlated tags count once. Downgrades require explicit `requirementsSettled`
+and `strongVerification`; low additionally requires `mechanical` and
+`exactOutputCheck`. Greetings and single mechanical steps stay in the root.
 
-The table below is scoring profile v2. Existing v1 profiles retain both new
-workflow weights as `0` until an explicitly confirmed re-anchor activates v2;
-historical v1 profiles and score snapshots are not rewritten.
+Use one stable `stageId` for a logical stage; omitted IDs use the phase within
+the current task. Until success, rewording, text length and score changes do
+not independently switch targets. Recorded failures are recovered even when
+the caller omits `previousRouteId`. Reasoning escalation follows
+`low/medium → high → xhigh → max → ultra`, at most twice per logical stage.
+Environment, information and tooling failures hold the target. Success resets
+classification for the next stage. Explicit overrides still obey scope,
+capability and risk floors; ultra cannot be used for overlapping writers.
 
-| Signal | Adjustment |
-| --- | ---: |
-| Ambiguity, architecture, or trade-offs | `+18` |
-| Active `grill-with-docs` skill | `+18` |
-| Active Plan mode | `+18` |
-| High-risk, production, public API, concurrency, and related risk | `+25` |
-| Security or migration | `+10` |
-| Cross-module or end-to-end change | `+15` |
-| Implementation/risk without strong verification | `+8` |
-| Review stage | `+10` |
-| Mechanical batch | `-28` |
-| Single mechanical task | `-20` |
-| Settled requirements | `-10` |
-| Settled requirements plus strong verification | another `-5` |
-| Non-risk exploration | `-8` |
-| Redacted task text longer than 2,000 characters | `+8` |
-| Approved category policy | `-15` through `+15` |
+Scores remain diagnostic. Legacy profiles, weights, score bands and approved
+offsets retain their historical interpretation; they do not select the new
+work level. New snapshots are observe-only and apply no legacy offset.
+The classifier defaults to `local-only`. An explicitly enabled auxiliary
+classifier uses its own live catalog and the same allowed scope; its adjustment
+changes only the diagnostic score.
 
-`grill-with-docs` and Plan mode are independent factual signals and therefore
-stack to `+36` when both are active. Text that merely mentions either workflow
-does not score. Neither signal counts toward the independent hard-signal gate
-for Sol Max.
-
-The clamped `0..100` default mapping expresses the preferred policy family:
-
-| Score | Family | Effort |
-| ---: | --- | --- |
-| `0..25` | Luna | low |
-| `26..45` | Terra | low |
-| `46..60` | Terra | medium |
-| `61..80` | Sol | medium |
-| `81..92` | Sol | high |
-| `93..97` | Sol | xhigh |
-| `98..100`, with at least two independent hard signals | Sol | max |
-
-Low-complexity, non-batch stages at `0..25` remain in the root unless an
-explicit override requests delegation. Implementation, review, and
-risk/security/migration stages do not use that shortcut. Hard rules keep
-non-risk mechanical batches on Luna low, keep delegated implementation off
-Luna, raise review to at least Sol medium, and raise
-risk/security/migration to at least Sol high.
-
-The Max gate counts independent dimensions, not correlated labels:
-security-or-migration, explicit high risk or high failure cost, a cross-cutting
-public contract, an architecture trade-off, and irreversibility. Static
-routing never starts at Ultra. Reasoning-only verification failures may
-increase effort twice in the exact order `high → xhigh → max → ultra`, after
-which the router asks the user. Environment, information, and tooling failures
-do not increase effort. An Ultra target with reported parallel-write risk asks
-the user instead of delegating.
-
-The final bounded target is the preferred family intersected with the current
-host's declared subagent capability. Root-model visibility is not delegation
-capability. On a host that exposes only Sol and Terra for bounded subagents, a
-Luna preference automatically becomes Terra with
-`MODEL_FAMILY_FALLBACK`. Explicit unavailable targets are never substituted.
-The auxiliary classifier has a third, independent catalog obtained from its
-ephemeral app-server's `model/list`.
-
-A substantive task is borderline when it is within 6 points of
-`25/45/60/80/92/97`, or has at most one matched signal with a score in `30..80`.
-The auxiliary classifier can adjust by only `-10/0/+10` and cannot cross the
-deterministic risk floor.
+Allowed candidates, conditions, bindings, fallback levels and escalation edges
+are configured independently. Adding five candidates or reordering a catalog
+does not redistribute traffic. Use `get_model_policy` / `preview_model_policy`
+for inspection and `activate_model_policy` / `rollback_model_policy` for explicit
+compare-and-swap changes. Active delegation or inference blocks activation.
+See the [complete configuration and acceptance specification](MODEL-POLICY-GPT6.zh-CN.md).
 
 ## Viewing the current model boundary
 

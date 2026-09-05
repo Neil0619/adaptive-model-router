@@ -10,7 +10,7 @@ specification.
   basic routing behavior.
 - [中文 README](../README.zh-CN.md)：产品定位、安装、升级和基本路由规则。
 - [Routing triggers and history](ROUTING.md) /
-  [中文说明](ROUTING.zh-CN.md): exact trigger path, score thresholds, visible
+  [中文说明](ROUTING.zh-CN.md): exact trigger path, task conditions, visible
   current-stage target, and route history.
 - [Tool reference](TOOLS.md): public MCP contracts, control scopes, outcomes,
   and the source-tree developer CLI.
@@ -23,6 +23,12 @@ specification.
 
 - [Architecture](ARCHITECTURE.md): component boundaries, route lifecycle,
   concurrency, and failure behavior.
+- [GPT-6 quality-first routing and configurable scope（中文规范）](MODEL-POLICY-GPT6.zh-CN.md):
+  GPT-6 only, default high, all six host-supported effort levels, shared model constraints,
+  escalation, versioned scope changes, migration, and implementation acceptance.
+  Installed and verified on native macOS; the
+  [installation record](evidence/gpt6-installation-validation.zh-CN.md) records
+  the evidence and the pending native Windows acceptance.
 - [Contributing](../CONTRIBUTING.md): development setup, invariants, and checks.
 - [Security policy](../SECURITY.md): vulnerability reporting and trust boundary.
 

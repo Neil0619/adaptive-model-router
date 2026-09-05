@@ -15,29 +15,11 @@ const previousLocal = process.env.ADAPTIVE_ROUTER_LOCAL_ONLY;
 process.env.ADAPTIVE_ROUTER_HOME = join(temporary, "state");
 process.env.ADAPTIVE_ROUTER_LOCAL_ONLY = "1";
 
-const catalog = [
-  { slug: "gpt-5.6-sol", visibility: "list", priority: 1, supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] },
-  { slug: "gpt-5.6-terra", visibility: "list", priority: 2, supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] },
-  { slug: "gpt-5.6-luna", visibility: "list", priority: 3, supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] },
-];
-
-const hostCapabilities = {
-  delegation: {
-    available: true,
-    invocation: "direct",
-    targets: catalog
-      .filter((entry) => !entry.slug.endsWith("-luna"))
-      .map((entry) => ({
-        model: entry.slug,
-        efforts: entry.supported_reasoning_levels,
-      })),
-  },
-};
-
-function family(model) {
-  return model?.endsWith("-sol") ? "sol" : model?.endsWith("-terra") ? "terra" : model?.endsWith("-luna") ? "luna" : null;
-}
-
+const catalog = [{ slug: "gpt-6-astra", visibility: "list", supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] }];
+const hostCapabilities = { delegation: { available: true, invocation: "direct",
+  targets: [{ model: "gpt-6-astra", efforts: catalog[0].supported_reasoning_levels }] } };
+function family(model) { return model === "gpt-6-astra" ? "astra" : null; }
+// Historical score-band compatibility is evaluated separately from the new policy.
 function expectedScoreBand(score, hardSignalCount) {
   if (score <= 25) return { family: "luna", effort: "low" };
   if (score <= 45) return { family: "terra", effort: "low" };
@@ -63,14 +45,15 @@ try {
       evidence: item.evidence,
       contextId: `eval-${item.id}`,
       hostCapabilities,
+      ...(item.override ? { override: item.override } : {}),
     }, { catalog, cwd: temporary });
-    const matches = result.action === item.action && (!item.family || family(result.target?.model) === item.family);
+    const matches = result.action === item.action && (!item.effort || (family(result.target?.model) === "astra" && result.target?.effort === item.effort));
     if (matches) agreements += 1;
-    else mismatches.push({ id: item.id, action: result.action, family: family(result.target?.model) });
+    else mismatches.push({ id: item.id, action: result.action, family: family(result.target?.model), effort: result.target?.effort });
     if (item.risk) {
       riskTotal += 1;
       const effort = ["high", "xhigh", "max", "ultra"].includes(result.target?.effort);
-      if (result.action === "delegate" && family(result.target?.model) === "sol" && effort) riskRecalled += 1;
+      if (result.action === "delegate" && family(result.target?.model) === "astra" && effort) riskRecalled += 1;
     }
   }
   let scoreBandAgreements = 0;
@@ -109,6 +92,8 @@ try {
   const positiveControlMisses = dataset.controls
     .filter((item) => item.changesState && parseControlPrompt(item.prompt) === null).length;
   const result = {
+    kind: "offline-policy-conformance",
+    measuresModelQuality: false,
     cases: totalCases,
     bilingualRouteCases: dataset.routes.length,
     scoreBandCases: scoreBandCases.length,
@@ -119,7 +104,7 @@ try {
     mismatches,
   };
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  if (riskRecall !== 1 || agreement < 0.85 || negativeControlMutations !== 0 || positiveControlMisses !== 0) process.exitCode = 1;
+  if (riskRecall !== 1 || agreement !== 1 || negativeControlMutations !== 0 || positiveControlMisses !== 0) process.exitCode = 1;
 } finally {
   if (previousHome == null) delete process.env.ADAPTIVE_ROUTER_HOME;
   else process.env.ADAPTIVE_ROUTER_HOME = previousHome;

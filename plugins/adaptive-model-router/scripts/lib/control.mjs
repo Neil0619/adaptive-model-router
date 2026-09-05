@@ -5,6 +5,8 @@ export const READ_ONLY_INSPECTION_TOOLS = Object.freeze([
   "get_route_history",
   "list_policy_proposals",
   "get_learning_status",
+  "get_model_policy",
+  "preview_model_policy",
   "diagnose_router",
   "shadow_route_stage",
 ]);

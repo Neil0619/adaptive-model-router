@@ -13,7 +13,10 @@ import { routeStage } from "./router.mjs";
 import { inspectLifecycleHookReadiness } from "./hook-readiness.mjs";
 import { prepareQualificationOutcome } from "./lifecycle-qualification.mjs";
 import { assertSchema } from "./schema.mjs";
-import { desiredRoute, scoreTask } from "./scorer.mjs";
+import { isTrivialTask, scoreTask } from "./scorer.mjs";
+
+import { MODEL_POLICY_SCHEMA, decideWorkLevel } from "./model-policy.mjs";
+import { readModelPolicy, modelPolicyStatus, previewModelPolicy, activateModelPolicy, rollbackModelPolicy } from "./model-policy-store.mjs";
 
 const CONTEXT = { type: "string", minLength: 1, maxLength: 256 };
 const PROPOSAL = { type: "string", minLength: 1, maxLength: 128 };
@@ -48,6 +51,17 @@ const SCORING_PROFILE_DEFINITION = {
 };
 
 export const TOOL_DEFINITIONS = [
+  { name: "get_model_policy", description: "Read the active global model scope and immutable policy definition without changing state.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["contextId"], properties: { contextId: CONTEXT } } },
+  { name: "preview_model_policy", description: "Validate and compare a candidate global model policy without writes or model calls.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["contextId", "definition"], properties: { contextId: CONTEXT, definition: MODEL_POLICY_SCHEMA } } },
+  { name: "activate_model_policy", description: "Explicitly activate one reviewed global model policy using the expected current digest; refuse while inference or delegation is active.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["contextId", "definition", "expectedDigest", "confirm"], properties: {
+      contextId: CONTEXT, definition: MODEL_POLICY_SCHEMA, expectedDigest: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      confirm: { type: "string", enum: ["ACTIVATE_MODEL_POLICY"] } } } },
+  { name: "rollback_model_policy", description: "Explicitly restore the immutable parent policy, including its scope, using the expected current digest; refuse while inference or delegation is active.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["contextId", "expectedDigest", "confirm"], properties: {
+      contextId: CONTEXT, expectedDigest: { type: "string", pattern: "^[a-f0-9]{64}$" }, confirm: { type: "string", enum: ["ROLLBACK_MODEL_POLICY"] } } } },
   {
     name: "route_stage",
     description: "Choose whether to continue locally, ask the user, report a busy Router gate, or delegate one bounded stage to an available model and effort.",
@@ -317,14 +331,10 @@ function shadowRoute(store, args, cwd) {
     policy,
     profile: definition,
   });
-  const preferred = desiredRoute(scored, args.evidence);
-  const lowRoot = scored.score <= definition.thresholds.rootMax
-    && Number(args.evidence.batchSize || 0) <= 1
-    && !scored.signals.implementation
-    && !scored.signals.review
-    && !scored.signals.risk
-    && !scored.signals.security
-    && !scored.signals.migration;
+  const modelPolicy = readModelPolicy(store.db);
+  const preferred = decideWorkLevel(scored, args.evidence, modelPolicy);
+  const lowRoot = isTrivialTask(args.goal, args.evidence)
+    || (preferred.rule === "EXACT_MECHANICAL" && Number(args.evidence.batchSize || 0) <= 1);
   const after = shadowStateCounts(store, context);
   return {
     shadow: true,
@@ -338,7 +348,9 @@ function shadowRoute(store, args, cwd) {
     hardSignalCount: scored.hardSignalCount,
     preferred: lowRoot
       ? { action: "continue" }
-      : { action: "delegate", family: preferred.family, effort: preferred.effort },
+      : { action: "delegate", workLevel: preferred.workLevel, ...modelPolicy.definition.targets[preferred.workLevel] },
+    decision: { policyId: modelPolicy.definition.id, policyDigest: modelPolicy.digest, rule: preferred.rule },
+    scoresAreDiagnostic: true,
     verificationGate: preferred.verificationGate,
   };
 }
@@ -347,6 +359,10 @@ export async function callRouterTool(name, args, { store, cwd = process.cwd(), r
   const definition = TOOLS.get(name);
   if (!definition) throw new Error(`unknown tool: ${name}`);
   assertSchema(definition.inputSchema, args, `${name} input`);
+  if (name === "get_model_policy") return { ...modelPolicyStatus(store.db, store.context({ cwd, contextId: args.contextId, create: false })), definition: readModelPolicy(store.db).definition };
+  if (name === "preview_model_policy") return previewModelPolicy(store.db, args.definition);
+  if (name === "activate_model_policy") return activateModelPolicy(store, args);
+  if (name === "rollback_model_policy") return rollbackModelPolicy(store, args);
   if (name === "route_stage") {
     const requestedRouteOptions = routeOptions || {};
     const enforcedRouteOptions = requestedRouteOptions.enforceLifecycleHooks !== false

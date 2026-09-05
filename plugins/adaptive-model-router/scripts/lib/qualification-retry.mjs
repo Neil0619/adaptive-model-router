@@ -1,3 +1,4 @@
+import { qualificationTargetMatches } from "./qualification-policy.mjs";
 import { realpathSync } from "node:fs";
 import { canonicalJson, payloadHash } from "./io.mjs";
 
@@ -41,7 +42,7 @@ function recoveredBasis(db, context, qualification) {
     || attempt.ticket_consumed !== 1 || attempt.post_observed !== 1 || attempt.stop_observed !== 0
     || attempt.agent_id !== null || attempt.no_child !== 0 || attempt.outcome_recorded !== 1
     || outcome?.status !== "failed" || outcome.failure_type !== "tooling" || outcome.gate !== "structured-check"
-    || route?.model !== "gpt-5.6-sol" || route.effort !== "low"
+    || !qualificationTargetMatches(db, qualification, route)
     || route.reason_codes_json !== '["HOST_LIFECYCLE_QUALIFICATION"]') return null;
   return payloadHash({ qualification, receipt, attempt, outcome, route });
 }

@@ -650,7 +650,7 @@ test("guarded Stop reentry never archives an attempt whose dispatch ticket was c
   }
 });
 
-test("v5 database rejects an ungated delegate insert from an older runtime", async () => {
+test("v6 database rejects an ungated delegate insert from an older runtime", async () => {
   const project = await temporaryProject("adaptive old writer ");
   try {
     await withRouterEnvironment(project, async () => {
@@ -676,7 +676,7 @@ test("v5 database rejects an ungated delegate insert from an older runtime", asy
           model, effort, family, root_model, verification_gate, reason_codes_json,
           classifier_state, escalation_count, previous_route_id, created_at
         FROM routes WHERE route_id = ?
-      `).run(route.routeId), /atomic gate admission/u);
+      `).run(route.routeId), /atomic gate admission|model policy decision/u);
       assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM routes").get().count), 1);
       store.close();
     });

@@ -207,7 +207,7 @@ function validate(evidence, schema, options = {}) {
 
   exactKeys(evidence.route, nestedKeys.route, "route");
   enumValue(evidence.route.action, ["delegate", "continue", "ask_user", "unavailable"], "route.action");
-  enumValue(evidence.route.targetFamily, ["sol", "terra", "luna", "none"], "route.targetFamily");
+  enumValue(evidence.route.targetFamily, ["sol", "terra", "luna", "astra", "none"], "route.targetFamily");
   enumValue(evidence.route.targetEffort, ["low", "medium", "high", "xhigh", "max", "ultra", "none"], "route.targetEffort");
   enumValue(evidence.route.verificationGate, ["light-checks", "targeted-tests", "structured-check", "full-checks", "unavailable"], "route.verificationGate");
   for (const key of ["pendingOutcomes", "stopHookUnknown"]) {
@@ -286,7 +286,7 @@ function validate(evidence, schema, options = {}) {
     evidence.candidate.pluginTreeSha256 !== "0".repeat(64) &&
     ![evidence.environment.osVersion, evidence.environment.codexVersion, evidence.environment.nodeVersion, evidence.environment.gitVersion].includes("unavailable") &&
     evidence.route.action === "delegate" &&
-    ["sol", "terra"].includes(evidence.route.targetFamily) &&
+    ["sol", "terra", "astra"].includes(evidence.route.targetFamily) &&
     evidence.route.targetEffort !== "none" &&
     evidence.route.verificationGate !== "unavailable" &&
     evidence.route.pendingOutcomes === 0 &&

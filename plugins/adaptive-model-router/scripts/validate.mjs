@@ -161,13 +161,13 @@ assert(windowsSmokeRunner.includes("compare-gate-content.mjs"), "Windows smoke r
 assert(windowsSmokeRunner.includes("$InstalledRouterLauncher"), "Windows smoke runner must resolve router state through the installed runtime launcher");
 assert(windowsSmokeRunner.includes("@($InstalledRouterLauncher, $InstalledRouterCli"), "Windows smoke runner must read the installed plugin data instead of the legacy Codex Home state root");
 assert(windowsSmokeRunner.includes("Write-SmokeFixture -Root $Project"), "Windows smoke runner must seed its deterministic fixture outside the managed read-only Codex session");
-assert(windowsSmokeRunner.includes("@('exec', '-s', 'read-only', 'resume'"), "Windows smoke runner must keep resumed turns in the managed read-only sandbox");
-assert(windowsSmokeRunner.includes("@('exec', '-s', 'read-only', '--json'"), "Windows smoke runner must start new turns in the managed read-only sandbox");
-assert(windowsSmokeRunner.includes("@('exec', '-s', 'read-only', '--json', '-C', $Project2"), "Windows smoke runner must keep the cross-project status probe read-only");
+assert(windowsSmokeRunner.includes("--dangerously-bypass-approvals-and-sandbox"), "disposable Windows smoke must avoid approval cancellation per AGENTS");
+assert(windowsSmokeRunner.includes("model_reasoning_effort="), "Windows smoke must explicitly bind the selected effort");
+assert(windowsSmokeRunner.includes("'model-target', '--purpose', 'smoke'"), "Windows smoke must resolve the shared allowed target");
 assert(windowsSmokeRunner.includes("the native runner performs the executable test immediately after this read-only review"), "Windows smoke runner must separate model review from host-side executable verification");
 assert(windowsSmokeRunner.includes("phase=review and evidence review=true"), "Windows smoke runner must route the managed task as a structured review");
 assert(windowsSmokeRunner.includes("read-only review did not preserve the structured-check contract"), "Windows smoke runner must bind the review outcome to the structured-check gate");
-assert(windowsSmokeRunner.includes("EXPLICIT_TARGET_UNAVAILABLE"), "Windows smoke runner must enforce the current unavailable bounded-target reason code");
+assert(windowsSmokeRunner.includes("MODEL_SCOPE_DENIED"), "Windows smoke runner must enforce the current unavailable bounded-target reason code");
 assert(!windowsSmokeRunner.includes("EXPLICIT_MODEL_UNAVAILABLE"), "Windows smoke runner must not assert the obsolete unavailable-model reason code");
 assert(windowsSmokeRunner.includes("Assert-StructuredReviewSummary"), "Windows smoke runner must validate both managed review checklists");
 assert(windowsSmokeRunner.includes("Read-CodexSessionTrace"), "Windows smoke runner must count collaboration lifecycle calls from the dedicated session trace");
@@ -185,11 +185,10 @@ assert(releaseChecklist.includes("smoke-contract: windows-artifact-authoritative
 assert(smokeEvidenceReadme.includes("smoke-contract: hook-trust-only-human-v1 selector-optional-v1"), "evidence contract must isolate Hook trust from optional selector evidence");
 assert(macosSmoke.includes("smoke-contract: post-trust-agent-owned-v1 selector-optional-v1"), "macOS smoke must use the same post-trust and selector semantics");
 assert(!macosSmoke.includes("human-only witness report"), "macOS smoke must not require a human selector report");
-assert(windowsSmokeRunner.includes("-Model 'gpt-5.6-terra' -ResumeSession"), "Windows smoke runner must automate a distinct host-model slug");
-assert(windowsSmokeRunner.includes("$secondPendingRoutes.Count -ne 1"), "Windows smoke runner must require exactly one second pending route");
-assert(windowsSmokeRunner.includes("$postKeepAutomatic.taskMode -ne 'automatic'"), "Windows smoke runner must verify keep-automatic mode");
+assert(windowsSmokeRunner.includes("HOST_MODEL_INTENT_OFFLINE_ONLY"), "single-model smoke must label offline slug coverage");
+assert(windowsSmokeRunner.includes("test/host-model.test.mjs"), "single-model smoke must exercise offline host-model intent");
+assert(!/-Model ['"]gpt-5/.test(windowsSmokeRunner), "Windows smoke cannot invoke a legacy root model");
 assert(windowsSmokeRunner.includes("[string]$finalStatus.rootTask.model -ne $InitialRootModel"), "Windows smoke runner must verify initial-model restoration");
-assert(!windowsSmokeRunner.includes("--dangerously-bypass-approvals-and-sandbox"), "Windows smoke runner must not bypass command approvals or the managed sandbox");
 assert(!windowsSmokeRunner.includes("--dangerously-bypass-hook-trust"), "Windows smoke runner must not bypass Hook trust");
 assert(windowsSmokeRunner.includes("invoke-command-shim.ps1"), "Windows smoke runner must use the command-shim adapter");
 assert(windowsCommandShim.includes("ValueFromRemainingArguments"), "Windows command shim must preserve argument boundaries");
@@ -199,6 +198,7 @@ assert(installManager.includes("hotUpgradeWithIntegrityCheck"), "installer must 
 assert(!/function hotUpgradeWithIntegrityCheck[\\s\\S]*?codex\(\["plugin", "add"/u.test(installManager), "compatible hot upgrade must not invoke Codex plugin re-registration");
 assert(installManager.includes('["mcp", "list", "--json"]'), "installer must verify Codex MCP registration");
 assert(installManager.includes("verifyInstalledToolContract"), "installer must verify the installed MCP tool contract");
+assert(taskToolVerifier.includes("resolveModelTarget"), "task-tool smoke must use the shared allowed target resolver");
 assert(taskToolVerifier.includes("--ephemeral"), "task-tool smoke must not persist its disposable Codex task");
 assert(taskToolVerifier.includes("--dangerously-bypass-approvals-and-sandbox"), "disposable task-tool smoke must avoid approval cancellation in its temporary project");
 assert(!taskToolVerifier.includes("--dangerously-bypass-hook-trust"), "task-tool smoke must preserve Hook trust as a host security boundary");
@@ -254,9 +254,11 @@ assert(routerMcp.default_tools_approval_mode === "prompt", "MCP must fail closed
 const autoApprovedTools = [
   "diagnose_router",
   "get_learning_status",
+  "get_model_policy",
   "get_route_history",
   "get_route_status",
   "list_policy_proposals",
+  "preview_model_policy",
   "record_outcome",
   "resolve_host_model_intent",
   "route_stage",
@@ -273,6 +275,10 @@ assert(!JSON.stringify(routerMcp).includes("PLUGIN_ROOT"), "MCP config must not 
 assert(skill.includes("`target.effort` value to the current Codex subagent `reasoning_effort` parameter"), "skill must map router effort to the Codex subagent parameter");
 assert(!skill.includes("using exactly `target.model` and `target.effort`"), "skill must not present router output fields as host parameter names");
 assert(skill.includes("root-task model is unchanged and host-managed"), "skill must require a visible root/stage model boundary");
+assert(skill.includes("omit `routeId` and `blockingRouteId` from routine conversation notices"), "routine notices must not require debug identifiers");
+assert(skill.includes("Keep the exact IDs internally"), "compact notices must preserve lifecycle correlation");
+assert(skill.includes("service_tier=unknown"), "unobserved child service tiers must remain explicit");
+assert(skill.includes("actually served"), "requested service tiers must not be presented as served tiers");
 assert(skill.includes("global automatic activation"), "skill must document opt-in automatic activation");
 assert(!skill.includes("can recommend one bounded subagent model"), "skill must not weaken delegate into a recommendation");
 assert(skill.includes("`delegate` is a required action, not a suggestion"), "skill must make delegate mandatory");

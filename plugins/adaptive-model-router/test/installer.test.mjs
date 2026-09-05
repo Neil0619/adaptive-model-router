@@ -58,7 +58,17 @@ if (args.join(" ") === "mcp list --json") {
   save();
   process.stdout.write(JSON.stringify(servers)); process.exit(0);
 }
-if (args[0] === "exec") {
+if (args[0] === "app-server") {
+  const { createInterface } = await import("node:readline");
+  createInterface({input:process.stdin}).on("line", line => {
+    const request = JSON.parse(line);
+    if (request.id == null) return;
+    const result = request.method === "model/list" ? {data:[{model:"gpt-6-astra",hidden:false,supportedReasoningEfforts:["low","medium","high","xhigh","max","ultra"].map(reasoningEffort=>({reasoningEffort}))}],nextCursor:null} : {};
+    process.stdout.write(JSON.stringify({id:request.id,result}) + String.fromCharCode(10));
+  });
+  await new Promise(resolve => process.stdin.once("end", resolve));
+  process.exit(0);
+} else if (args[0] === "exec") {
   state.execCalls = (state.execCalls || 0) + 1;
   if (state.rewriteCacheOnExec) {
     for (const root of state.rewriteCacheRoots || [state.pluginInstallRoot]) {
@@ -1466,7 +1476,7 @@ test("a failed hot-upgrade verification restores complete historical runtime tre
     );
     await writeFile(join(oldRoot, "compatibility.json"), JSON.stringify({
       schemaVersion: 1,
-      liveWorkflowContractVersion: 3,
+      liveWorkflowContractVersion: 4,
       stdioBridgeContractVersion: 1,
     }));
     await rm(join(oldRoot, "scripts", "stdio-tool.mjs"), { force: true });
@@ -1486,7 +1496,7 @@ test("a failed hot-upgrade verification restores complete historical runtime tre
     );
     assert.equal(
       JSON.parse(await readFile(join(oldRoot, "compatibility.json"), "utf8")).liveWorkflowContractVersion,
-      3,
+      4,
     );
     await assert.rejects(access(join(oldRoot, "scripts", "stdio-tool.mjs")), { code: "ENOENT" });
     await assert.rejects(access(join(oldRoot, "scripts", "lib", "plugin-data.mjs")), { code: "ENOENT" });

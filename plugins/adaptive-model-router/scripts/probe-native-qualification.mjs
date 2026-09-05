@@ -7,10 +7,12 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { AppServerClient, resolveCodexCommand } from "./lib/app-server.mjs";
+import { normalizeCatalog } from "./lib/catalog.mjs";
+import { resolveModelTarget } from "./lib/model-policy.mjs";
 import { RouterStore } from "./lib/database.mjs";
 import { evaluateLifecycleHookInventory } from "./lib/hook-readiness.mjs";
 import { auditNativeLifecycleNoop } from "./lib/native-lifecycle-audit.mjs";
-import { readTaskQualification } from "./lib/lifecycle-qualification.mjs";
+import { runtimeSourceDigest, readTaskQualification } from "./lib/lifecycle-qualification.mjs";
 
 if (process.platform !== "darwin" || process.argv.length !== 2) {
   process.stderr.write("Usage on native macOS: probe-native-qualification.mjs\n");
@@ -20,6 +22,8 @@ const scratch = mkdtempSync(join(tmpdir(), "router-native-qualification-"));
 process.env.ADAPTIVE_ROUTER_HOME = join(scratch, "state");
 const emit = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 const children = new Set();
+let rootTarget;
+let probeTarget;
 let rootId;
 let terminal = false;
 let store;
@@ -37,7 +41,7 @@ async function turn(prompt) {
   const waiter = client.createWaiter((entry) => entry.method === "turn/completed"
     && entry.params.threadId === rootId && !before.has(entry.params.turn.id), deadline);
   waiter.promise.catch(() => {});
-  await client.request("turn/start", { threadId: rootId, effort: "low", input: [{ type: "text", text: prompt }] }, deadline);
+  await client.request("turn/start", { threadId: rootId, effort: rootTarget.effort, input: [{ type: "text", text: prompt }] }, deadline);
   const result = await waiter.promise;
   terminal = true;
   if (result.params.turn.status !== "completed") throw new Error("native acceptance turn failed");
@@ -54,6 +58,10 @@ async function call(name, args) {
 
 try {
   await client.start();
+  const catalog = normalizeCatalog(await client.listModels());
+  rootTarget = resolveModelTarget({ catalog, purpose: "smoke" }).target;
+  probeTarget = resolveModelTarget({ catalog, purpose: "qualification" }).target;
+  if (!rootTarget || !probeTarget) throw new Error("allowed native smoke model is unavailable");
   const inventory = await client.listHooks(scratch);
   const entries = inventory.data.find((group) => group.cwd === scratch)?.hooks
     .filter((hook) => hook.pluginId === "adaptive-model-router@adaptive-model-router");
@@ -61,6 +69,7 @@ try {
   if (!pluginRoot || !evaluateLifecycleHookInventory(inventory, { cwd: scratch, pluginRoot }).ready) {
     throw new Error("trusted installed Hook set is unavailable");
   }
+  if (runtimeSourceDigest(pluginRoot) !== runtimeSourceDigest()) throw new Error("installed runtime differs from the GPT-6 candidate; no inference started");
   client.subscribe((entry) => {
     if (entry.method === "item/completed" && entry.params.threadId === rootId
       && entry.params.item?.type === "subAgentActivity" && entry.params.item.kind === "started") {
@@ -68,7 +77,7 @@ try {
     }
   });
   rootId = (await client.request("thread/start", {
-    model: "gpt-5.6-sol", cwd: scratch, approvalPolicy: "never", sandbox: "read-only", ephemeral: false,
+    model: rootTarget.model, cwd: scratch, approvalPolicy: "never", sandbox: "read-only", ephemeral: false,
     config: { "mcp_servers.router_acceptance": {
       command: process.execPath, args: [join(pluginRoot, "scripts/node-launcher.mjs"), join(pluginRoot, "scripts/mcp-server.mjs")],
       cwd: scratch, env: { ADAPTIVE_ROUTER_HOME: process.env.ADAPTIVE_ROUTER_HOME },
@@ -81,15 +90,17 @@ try {
   store = new RouterStore();
   const context = store.context({ cwd: scratch, contextId: rootId });
   const status = await call("get_route_status", { contextId: rootId });
-  if (status.rootTask?.model !== store.rootTask(context).model || status.rootTask.model !== "gpt-5.6-sol") {
+  if (status.rootTask?.model !== store.rootTask(context).model || status.rootTask.model !== rootTarget.model) {
     throw new Error("MCP and Hook context binding failed");
   }
   const marker = `NATIVE_ROUTER_NOOP_${randomBytes(12).toString("hex")}`;
-  const request = { contextId: rootId, phase: "production-native-acceptance",
+  // The transport is production MCP, but the work itself is an inert no-op.
+  // Putting "production" in the task evidence correctly invokes the risk floor.
+  const request = { contextId: rootId, phase: "native-acceptance-noop",
     goal: `Return exactly ${marker}. Do not call tools, read or write files, browse, change Router controls or spawn another child.`,
     evidence: { workProduct: true, requirementsSettled: true, strongVerification: true },
-    override: { model: "gpt-5.6-sol", effort: "low" },
-    hostCapabilities: { delegation: { available: true, invocation: "direct", targets: [{ model: "gpt-5.6-sol", efforts: ["low"] }] } },
+    override: probeTarget,
+    hostCapabilities: { delegation: { available: true, invocation: "direct", targets: [{ model: probeTarget.model, efforts: [probeTarget.effort] }] } },
   };
   for (let index = 0; index < 2; index++) {
     const route = await call("route_stage", request);
@@ -121,7 +132,7 @@ try {
   const count = store.db.prepare("SELECT count(*) AS n FROM outcomes").get().n;
   const qualified = readTaskQualification(store.db, context).state === "passed";
   if (children.size !== 2 || count !== 2 || !qualified) throw new Error("native acceptance final count mismatch");
-  emit({ stage: "summary", passed: true, children: children.size, outcomes: count, qualification: "passed", rootModel: "gpt-5.6-sol", rootEffort: "low" });
+  emit({ stage: "summary", passed: true, children: children.size, outcomes: count, qualification: "passed", rootModel: rootTarget.model, rootEffort: rootTarget.effort });
 } catch (error) {
   emit({ stage: "error", message: String(error.message).replace(/router_[a-f0-9]{32}/gu, "[carrier]") });
   process.exitCode = 1;

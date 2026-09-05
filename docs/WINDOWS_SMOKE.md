@@ -14,7 +14,7 @@ The canonical automated entry point is
 
 ```powershell
 .\scripts\windows-smoke.ps1 `
-  -CandidateRef 'codex/v040-hot-upgrade-release' `
+  -CandidateRef 'codex/fix-router-runtime-repair' `
   -ContinuityReceiptPath 'C:\path\to\redacted-continuity-receipt.json'
 ```
 
@@ -61,7 +61,7 @@ $env:CODEX_HOME = $SmokeCodexHome
 $env:ADAPTIVE_ROUTER_SMOKE_CODEX_HOME = $SmokeCodexHome
 $ContinuityReceipt = Join-Path $SmokeCodexHome 'redacted-continuity-receipt.json'
 .\scripts\windows-smoke.ps1 `
-  -CandidateRef 'codex/v040-hot-upgrade-release' `
+  -CandidateRef 'codex/fix-router-runtime-repair' `
   -ContinuityReceiptPath $ContinuityReceipt
 ```
 
@@ -105,12 +105,12 @@ The smoke passes only when all of the following succeed:
   root-only continuation;
 - bounded-subagent isolation: no recursive route, root-model intent event,
   control mutation, or child-owned outcome;
-- host capabilities containing only Sol/Terra never return Luna as the bounded
+- the GPT-6 scope never returns Luna as the bounded
   target; explicit Luna returns `ask_user` without starting a subagent;
 - root verification followed by one strict final outcome;
 - visible status/history that preserve the root-model versus bounded-target
   boundary and include the delegated route;
-- two host-model slug transitions that stay root-only while pending, including
+- offline host-model slug transitions that stay root-only while pending, including
   a distinct second event, keep-automatic, current-task manual-root behavior,
   and restoration of the initial model;
 - machine-verified route and execution metadata showing that the root-model
@@ -273,24 +273,19 @@ rejects the declared target and the documented tooling-failure flow runs.
 
 ## 6. Exercise host-model intent protection
 
-The runner establishes a `gpt-5.6-sol` baseline in its disposable session, then
-uses the host CLI's `-m` argument on resumed turns to select
-`gpt-5.6-terra`. Two ordinary review turns must remain root-only with
-`HOST_MODEL_INTENT_PENDING`, create no bounded work, and reuse one pending
-change ID. The runner then sends `router: auto session` and verifies that the
-pending event is resolved.
+For the GPT-6-only policy, root-model slug changes are covered by offline events:
 
-The runner next returns the disposable session to `gpt-5.6-sol`, creates a new
-pending event, sends `router: manual`, and proves that a substantive route
-returns `continue` with `MANUAL_ROOT_SELECTED` and no subagent. Finally it sends
-`router: auto session`, verifies automatic mode, and leaves no pending change.
-This Sol → Terra → Sol sequence is confined to the dedicated smoke session and
-does not alter the operator's normal Codex environment.
+```sh
+node --test test/host-model.test.mjs test/hook.test.mjs
+```
 
-The Hook cannot observe reasoning effort, so effort-only changes remain outside
-this contract. A visible `/model` selector exercise may be performed as an
-optional non-blocking host UX check, but it must never be required to establish
-the router's host-model-intent PASS result.
+Run these from the plugin directory. They cover baseline, pending,
+keep-automatic, manual-root and restoration without model inference. Label
+this coverage `HOST_MODEL_INTENT_OFFLINE_ONLY`; do not describe it as a live
+cross-model test. Every logged-in invocation must use the shared allowed
+scope and actual execution capabilities. Use `model-target --purpose smoke`
+to resolve its target; never call Sol to complete a slug-change branch.
+The root remains host-managed throughout.
 
 ## 7. Verify an ordinary prompt does not act as a control
 

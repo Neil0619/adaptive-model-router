@@ -5,6 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveCodexCommandSync, spawnSpec } from "./lib/codex-command.mjs";
 
+import { withAppServer } from "./lib/app-server.mjs";
+import { RouterStore } from "./lib/database.mjs";
+import { normalizeCatalog } from "./lib/catalog.mjs";
+import { readModelPolicy, withModelPolicyLease } from "./lib/model-policy-store.mjs";
+import { resolveModelTarget } from "./lib/model-policy.mjs";
+
 const REQUIRED_TOOLS = Object.freeze(["diagnose_router", "route_stage"]);
 const prompt = [
   "Use $adaptive-model-router for this read-only post-install smoke.",
@@ -46,45 +52,57 @@ function completedToolCalls(events, tool) {
 }
 
 const project = mkdtempSync(join(tmpdir(), "adaptive-router-task-tools-"));
+let store;
 try {
-  const codex = resolveCodexCommandSync();
-  const args = [
-    "exec",
-    "--ephemeral",
-    "--skip-git-repo-check",
-    "--dangerously-bypass-approvals-and-sandbox",
-    "--json",
-    prompt,
-  ];
-  const spec = spawnSpec(codex, args);
-  const result = spawnSync(spec.command, spec.args, {
-    cwd: project,
-    encoding: "utf8",
-    env: spec.env,
-    timeout: 120_000,
-    windowsHide: true,
-    windowsVerbatimArguments: spec.windowsVerbatimArguments,
-  });
-  if (result.error || result.status !== 0) {
-    throw new Error("Codex disposable task failed; trust the current plugin Hooks and retry");
-  }
-  const events = parseEvents(result.stdout || "");
-  const counts = Object.fromEntries(
-    REQUIRED_TOOLS.map((tool) => [tool, completedToolCalls(events, tool).length]),
-  );
-  if (REQUIRED_TOOLS.some((tool) => counts[tool] !== 1)) {
-    throw new Error(
-      "TASK_TOOL_EXPOSURE_MISSING: a new Codex CLI task did not complete exactly one diagnose_router and route_stage call",
+  store = new RouterStore();
+  const policy = readModelPolicy(store.db);
+  await withModelPolicyLease(store, policy, async () => {
+    const catalog = normalizeCatalog(await withAppServer((client) => client.listModels()));
+    const target = resolveModelTarget({ policy, catalog, purpose: "smoke" }).target;
+    if (!target) throw new Error("allowed task-tool smoke target unavailable");
+    const codex = resolveCodexCommandSync();
+    const args = [
+      "exec",
+      "--ephemeral",
+      "--model", target.model,
+      "-c", `model_reasoning_effort=${target.effort}`,
+      "--skip-git-repo-check",
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--json",
+      prompt,
+    ];
+    const spec = spawnSpec(codex, args);
+    const result = spawnSync(spec.command, spec.args, {
+      cwd: project,
+      encoding: "utf8",
+      env: spec.env,
+      timeout: 120_000,
+      windowsHide: true,
+      windowsVerbatimArguments: spec.windowsVerbatimArguments,
+    });
+    if (result.error || result.status !== 0) {
+      throw new Error("Codex disposable task failed; trust the current plugin Hooks and retry");
+    }
+    const events = parseEvents(result.stdout || "");
+    const counts = Object.fromEntries(
+      REQUIRED_TOOLS.map((tool) => [tool, completedToolCalls(events, tool).length]),
     );
-  }
-  process.stdout.write(`${JSON.stringify({
-    status: "ok",
-    taskToolExposure: true,
-    verifiedTools: REQUIRED_TOOLS,
-  })}\n`);
+    if (REQUIRED_TOOLS.some((tool) => counts[tool] !== 1)) {
+      throw new Error(
+        "TASK_TOOL_EXPOSURE_MISSING: a new Codex CLI task did not complete exactly one diagnose_router and route_stage call",
+      );
+    }
+    process.stdout.write(`${JSON.stringify({
+      status: "ok",
+      taskToolExposure: true,
+      target,
+      verifiedTools: REQUIRED_TOOLS,
+    })}\n`);
+  });
 } catch (error) {
   process.stderr.write(`adaptive-model-router task-tool smoke: ${error?.message || "verification failed"}\n`);
   process.exitCode = 7;
 } finally {
+  store?.close();
   rmSync(project, { recursive: true, force: true });
 }

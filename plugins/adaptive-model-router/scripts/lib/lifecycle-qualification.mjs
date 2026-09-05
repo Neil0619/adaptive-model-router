@@ -1,3 +1,4 @@
+import { qualificationTargetMatches } from "./qualification-policy.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -5,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { AppServerClient, resolveCodexCommand } from "./app-server.mjs";
 import { canonicalJson, payloadHash } from "./io.mjs";
-import { auditNativeLifecycleNoop } from "./native-lifecycle-audit.mjs";
+import { auditNativeLifecycleNoop, NATIVE_LIFECYCLE_CLI_VERSIONS } from "./native-lifecycle-audit.mjs";
 import { activeRequalification, consumeRequalification } from "./qualification-retry.mjs";
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -18,7 +19,10 @@ const key = (context) => `native_qualification:${context.projectId}:${context.co
 export function runtimeSourceDigest(root = MODULE_ROOT) {
   const entries = ["hook.mjs", ...readdirSync(join(root, "scripts", "lib"))
     .filter((name) => name.endsWith(".mjs")).map((name) => `lib/${name}`)].sort();
-  return payloadHash(entries.map((name) => [name, sha(readFileSync(join(root, "scripts", name)))]));
+  return payloadHash([
+    ...entries.map((name) => [name, sha(readFileSync(join(root, "scripts", name)))]),
+    ["model-policy.json", sha(readFileSync(join(root, "model-policy.json")))],
+  ]);
 }
 
 export async function nativeQualificationHost() {
@@ -26,8 +30,8 @@ export async function nativeQualificationHost() {
   const command = await resolveCodexCommand();
   const path = realpathSync(command.path);
   const result = spawnSync(path, ["--version"], { encoding: "utf8", timeout: 3_000, maxBuffer: 1024 });
-  const version = /^codex-cli (0\.153\.0(?:-alpha\.5)?)\s*$/u.exec(result.stdout || "")?.[1];
-  if (result.error || result.status !== 0 || !version) throw new Error("native qualification build is unproven");
+  const version = /^codex-cli (\S+)\s*$/u.exec(result.stdout || "")?.[1];
+  if (result.error || result.status !== 0 || !NATIVE_LIFECYCLE_CLI_VERSIONS.includes(version)) throw new Error("native qualification build is unproven");
   return { platform: process.platform, arch: process.arch, cliVersion: version,
     executableDigest: sha(readFileSync(path)), executablePathDigest: payloadHash(path) };
 }
@@ -47,7 +51,7 @@ export function lifecycleBinding(hooks, shellRoot, inventoryRoot, host, cwd) {
 
 function validBinding(binding) {
   return digest(binding?.digest) && digest(binding?.runtimeDigest) && digest(binding?.taskCwdDigest)
-    && ["0.153.0", "0.153.0-alpha.5"].includes(binding.cliVersion)
+    && NATIVE_LIFECYCLE_CLI_VERSIONS.includes(binding.cliVersion)
     && Array.isArray(binding.shellRoots) && binding.shellRoots.length > 0
     && binding.shellRoots.length <= 2 && binding.shellRoots.every(digest);
 }
@@ -132,6 +136,8 @@ async function nativeSnapshot(parentId, attempt) {
 }
 
 function verifySnapshot({ parent, child }, attempt, value, input, store, context, auditOptions) {
+  const persistedRoute = store.db.prepare("SELECT * FROM routes WHERE route_id=?").get(attempt.route_id);
+  requireFact(qualificationTargetMatches(store.db, value, persistedRoute));
   const cwd = nativeTaskWorkingDirectory(parent, { contextId: input.contextId, store, context });
   requireFact(payloadHash(cwd) === value.binding.taskCwdDigest);
   requireFact(child.cliVersion === value.binding.cliVersion && realpathSync(child.cwd) === cwd);

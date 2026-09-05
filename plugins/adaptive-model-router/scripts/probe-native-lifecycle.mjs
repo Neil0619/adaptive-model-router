@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { runtimeSourceDigest } from "./lib/lifecycle-qualification.mjs";
 // Diagnostic qualification only: fixed no-tool payloads, a disposable native
 // host, and a fresh Router store. This never writes production readiness proof.
 import { createHash, randomBytes } from "node:crypto";
@@ -7,6 +8,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { AppServerClient, resolveCodexCommand } from "./lib/app-server.mjs";
+import { normalizeCatalog } from "./lib/catalog.mjs";
+import { resolveModelTarget } from "./lib/model-policy.mjs";
 import { RouterStore } from "./lib/database.mjs";
 import { evaluateLifecycleHookInventory } from "./lib/hook-readiness.mjs";
 import { routeStage } from "./lib/router.mjs";
@@ -26,6 +29,8 @@ const redact = (value) => String(value)
   .replace(/router_[a-f0-9]{32}/gu, "[carrier]")
   .replace(/NATIVE_ROUTER_NOOP_[a-f0-9]+/gu, "[marker]");
 const emit = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
+let rootTarget;
+let probeTarget;
 let rootId;
 let childId;
 let store;
@@ -56,7 +61,7 @@ async function turn(prompt) {
   waiter.promise.catch(() => {});
   terminal = false;
   const started = await client.request("turn/start", {
-    threadId: rootId, effort: "low", input: [{ type: "text", text: prompt }],
+    threadId: rootId, effort: rootTarget.effort, input: [{ type: "text", text: prompt }],
   }, deadline);
   const completed = await waiter.promise;
   terminal = true;
@@ -66,6 +71,10 @@ async function turn(prompt) {
 
 try {
   await client.start(deadline);
+  const catalog = normalizeCatalog(await client.listModels());
+  rootTarget = resolveModelTarget({ catalog, purpose: "smoke" }).target;
+  probeTarget = resolveModelTarget({ catalog, purpose: "qualification" }).target;
+  if (!rootTarget || !probeTarget) throw new Error("allowed native smoke model is unavailable");
   const inventory = await client.listHooks(scratch, deadline);
   const hooks = inventory.data?.find((group) => group.cwd === scratch)?.hooks
     ?.filter((hook) => hook.pluginId === "adaptive-model-router@adaptive-model-router") || [];
@@ -92,8 +101,9 @@ try {
       childId = params.item.agentThreadId;
     }
   });
+  if (runtimeSourceDigest(pluginRoot) !== runtimeSourceDigest()) throw new Error("installed runtime differs from the GPT-6 candidate; no inference started");
   const started = await client.request("thread/start", {
-    model: "gpt-5.6-sol", cwd: scratch, approvalPolicy: "never", sandbox: "read-only", ephemeral: false,
+    model: rootTarget.model, cwd: scratch, approvalPolicy: "never", sandbox: "read-only", ephemeral: false,
     config: {
       "mcp_servers.router_smoke": {
         command: process.execPath,
@@ -111,7 +121,7 @@ try {
   if (mode === "deny") {
     await turn([
       "Call the direct native spawn_agent tool exactly once with this JSON argument object:",
-      JSON.stringify({ task_name: testTaskName, fork_turns: "none", model: "gpt-5.6-sol", reasoning_effort: "low",
+      JSON.stringify({ task_name: testTaskName, fork_turns: "none", model: probeTarget.model, reasoning_effort: probeTarget.effort,
         message: "Negative guard probe only. Do not use any tools, write files, call Router or spawn a child. Return GUARD_PROBE_NOOP immediately." }),
       "This correctly shaped reserved Router ticket is deliberately unissued and must be denied. Never retry or replace the direct call with functions.exec, shell or MCP. If an inert child is unexpectedly created, wait for only that exact child to finish. Then report only whether the guard denied the call. Do not print the task name.",
     ].join("\n"));
@@ -128,16 +138,16 @@ try {
     const status = inspected.structuredContent || JSON.parse(inspected.content.find((item) => item.type === "text").text);
     const localRoot = store.rootTask(store.context({ cwd: scratch, contextId: rootId }));
     emit({ stage: "mcp-state-binding", nativeRoot: status.rootTask, hookRoot: localRoot });
-    if (inspected.isError || status.rootTask?.model !== "gpt-5.6-sol"
+    if (inspected.isError || status.rootTask?.model !== rootTarget.model
       || localRoot.model !== status.rootTask.model) throw new Error("native MCP and Hook stores are not bound to the same isolated context");
     route = await routeStage({
       contextId: rootId, phase: "isolated-native-qualification",
       goal: `Return exactly ${marker}. Do not call tools, read or write files, browse, change Router controls or spawn another child.`,
       evidence: { workProduct: true, requirementsSettled: true, strongVerification: true },
-      override: { model: "gpt-5.6-sol", effort: "low" },
-      hostCapabilities: { delegation: { available: true, invocation: "direct", targets: [{ model: "gpt-5.6-sol", efforts: ["low"] }] } },
+      override: probeTarget,
+      hostCapabilities: { delegation: { available: true, invocation: "direct", targets: [{ model: probeTarget.model, efforts: [probeTarget.effort] }] } },
     }, { store, cwd: scratch, catalog: await client.listModels(deadline) });
-    if (route.action !== "delegate") throw new Error("isolated qualification route was not delegated");
+    if (route.action !== "delegate") throw new Error(`isolated qualification route was not delegated: ${route.action}/${route.reasonCodes.join(",")}`);
     emit({ stage: "isolated-route", routeId: route.routeId, target: route.target });
     await turn([
       "Execute this already-issued isolated qualification route exactly once. Do not call route_stage.",

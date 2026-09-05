@@ -172,8 +172,8 @@ Router Hook 与插件定义一致、已启用且受信任；同时还要求 sour
 `HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN`；四种情况都只允许根任务继续，不签发委派
 ticket。这个检查不会写 `config.toml`，也不会替用户确认 Hook 信任。
 
-对于已明确支持的 macOS 原生构建（`0.153.0`、`0.153.0-alpha.5`），尚无证明的任务
-可先收到 `delegate / HOST_LIFECYCLE_QUALIFICATION`：仅创建一个 Sol/low 子任务，
+对于已明确支持的 macOS 原生构建（`0.153.3`、`0.153.0`、`0.153.0-alpha.5`），尚无证明的任务
+可先收到 `delegate / HOST_LIFECYCLE_QUALIFICATION`：仅创建一个策略绑定的 GPT-6/low 子任务，
 不携带原任务内容、不调用工具，只返回固定标记。服务端核验四个生命周期事件和完整
 原始子任务记录后才接受通过结果。证明绑定当前任务、可执行文件、完整有序 Hook
 清单、实际 Hook 入口和运行时源码；失败或绑定变化后仍禁止普通委派，不会自动重试
@@ -187,10 +187,9 @@ ticket。这个检查不会写 `config.toml`，也不会替用户确认 Hook 信
 只在 `functions.exec` 内可见的 spawn 工具一律视为不可委派。`list_agents` 只列出
 已经存在的 Agent，空列表不代表 direct `spawn_agent` 不可用。同一任务一旦完成过
 可信 direct child 派发，后续 unavailable 声明若没有绑定“直接工具实际拒绝且明确
-未创建 child”的证据，就会被拒绝。旧调用方只会
-保守允许已知的 Sol、Terra。当策略偏好 Luna、但宿主没有公开 Luna 委派能力时，
-自动路由回退到 Terra 并返回 `MODEL_FAMILY_FALLBACK`；显式指定 Luna 则返回
-`ask_user`，不会静默换模型。
+未创建 child”的证据，就会被拒绝。缺少当前直接调用接口的能力信息时，不允许新委派。当前仅允许 GPT‑6 六档，
+默认 high；常规选择集中在 medium/high/xhigh。允许范围、任务条件和目标绑定
+分别配置，详见 [GPT‑6 规范](docs/MODEL-POLICY-GPT6.zh-CN.md)。
 
 每个委派都有 verification gate，并且最多记录一个严格最终 outcome。只有匹配的
 `PreToolUse` 派发握手消费 ticket 后，首次 outcome 写入才会被接受；只有 route 决定、
@@ -218,6 +217,12 @@ Hook 可以观察根模型 slug，但读不到 Max/High 等 reasoning effort；�
 `delegate` 中的 `target.model`/`target.effort` 只是当前 bounded stage 的
 subagent 目标。每次 `route_stage` 后，skill 会明确显示这条边界和本次动作。
 
+日常通知省略排查用的 route ID，委派阶段显示“阶段 · 模型 / effort / service_tier”。
+编号仍保留在路由记录、状态/历史查询和诊断中，不影响子任务关联或验收。
+当前接口未提供子任务服务档位时显示 `service_tier=unknown（宿主未提供）`；这不代表
+Fast 已关闭，也不会根据主任务 Fast 设置推测。仅观察到请求档位时会明确标注，
+不会当作实际服务档位；该展示不修改 Fast 设置。
+
 当前任务首次观察到的模型只作为基线，不询问。如果随后 slug 发生变化，本轮和未
 确认的后续轮次都只使用根模型继续，并询问“本任务手动”还是“保持自动”。仅从
 Sol High 改为 Sol Max 这类 effort 变化无法被 Hook 检测。
@@ -231,7 +236,7 @@ Sol High 改为 Sol Max 这类 effort 变化无法被 Hook 检测。
 
 英文等价命令为 `router: status` 和 `router: history 10`。历史包含 route 当时的
 根模型快照、写入时间、action、bounded 目标模型/effort、相对前一次委派是否变化、原因、route ID
-和 outcome，并且只限当前项目与任务。完整触发顺序、评分阈值以及“路由决定”和
+和 outcome，并且只限当前项目与任务。完整触发顺序、任务条件以及“路由决定”和
 “实际根模型切换”的区别参见[路由触发与历史](docs/ROUTING.zh-CN.md)。
 
 ## 本地学习与隐私
@@ -239,6 +244,9 @@ Sol High 改为 Sol Max 这类 effort 变化无法被 Hook 检测。
 学习数据按项目隔离，统一保存在单个 SQLite 数据库。Git worktree 通过 common dir 共享项目身份；submodule 独立。数据库只保存本机随机盐生成的 HMAC，不保存原始绝对路径。
 
 策略永不自动批准：
+
+GPT‑6 新策略只记录结果，旧 offset 不影响档位，也不从新路由产生在线偏移提案。
+以下规则保留用于历史学习数据：
 
 - 同类别至少 12 个合格结果、来自至少 4 个不同任务 context，且失败、纠正或
   reasoning retry 的结果不少于 4 个，提议 `+5`；
@@ -255,7 +263,7 @@ information、tooling failure 不参与在线锚定。每条委派会保存不�
 类别 offset。Shadow 评分不创建 route 或学习记录。只有违反风险底线时才自动回滚
 评分 profile。
 
-辅助分类器默认开启，但只接收不超过 2,000 字的脱敏摘要、阶段和布尔信号；不会收到任意 evidence、源码附件、路径或环境变量。超时、熔断和 local-only 模式都会确定性降级。
+辅助分类器默认关闭（local-only）；显式开启时，只接收不超过 2,000 字的脱敏摘要、阶段和布尔信号；不会收到任意 evidence、源码附件、路径或环境变量。超时、熔断和 local-only 模式都会确定性降级。
 
 ## 控制命令
 
@@ -266,7 +274,7 @@ information、tooling failure 不参与在线锚定。每条委派会保存不�
 路由器：全局关闭
 路由器：本任务手动
 路由器：本任务自动
-router: lock gpt-5.6-sol high session
+router: lock gpt-6-astra high session
 router: auto session
 router: off
 路由器：启用

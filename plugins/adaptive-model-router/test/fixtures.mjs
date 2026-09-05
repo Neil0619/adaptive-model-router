@@ -6,10 +6,13 @@ import { recordOutcome } from "../scripts/lib/learning.mjs";
 import { consumeDelegationTicket, observeAgentResult } from "../scripts/lib/delegation-gate.mjs";
 
 export const CATALOG = [
+  { slug: "gpt-6-astra", visibility: "list", priority: 0, supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] },
   { slug: "gpt-5.6-sol", visibility: "list", priority: 1, supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] },
   { slug: "gpt-5.6-terra", visibility: "list", priority: 2, supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] },
   { slug: "gpt-5.6-luna", visibility: "list", priority: 3, supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] },
 ];
+export const HOST_CAPABILITIES = { delegation: { available: true, invocation: "direct",
+  targets: [{ model: "gpt-6-astra", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] }] } };
 
 export async function temporaryProject(label = "adaptive-router-test-") {
   const root = await mkdtemp(join(tmpdir(), label));
@@ -28,6 +31,7 @@ export function routeInput(overrides = {}) {
     phase: "implementation",
     evidence: { workProduct: true, requirementsSettled: true, strongVerification: true },
     contextId: "test-context",
+    hostCapabilities: HOST_CAPABILITIES,
     ...overrides,
   };
 }

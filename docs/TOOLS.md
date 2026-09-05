@@ -38,6 +38,8 @@ Required input:
 
 Optional input:
 
+- `stageId`: stable logical-stage identity; omitted IDs use phase within this task.
+
 - `previousRouteId`: only the ID returned by an earlier delegated route, and
   only when continuing a retry or escalation.
 - `override`: a model, effort, or both for this call. An unavailable explicit
@@ -51,7 +53,7 @@ Optional input:
   present, this is the only source of bounded targets. Do not derive it from
   the root picker or model cache.
 
-Example for a host that currently exposes Sol and Terra:
+Example for a host that exposes GPT-6 at all six efforts:
 
 ```json
 {
@@ -61,11 +63,7 @@ Example for a host that currently exposes Sol and Terra:
       "invocation": "direct",
       "targets": [
         {
-          "model": "gpt-5.6-sol",
-          "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]
-        },
-        {
-          "model": "gpt-5.6-terra",
+          "model": "gpt-6-astra",
           "efforts": ["low", "medium", "high", "xhigh", "max", "ultra"]
         }
       ]
@@ -77,21 +75,22 @@ Example for a host that currently exposes Sol and Terra:
 Important evidence fields include `workProduct`, `requirementsSettled`,
 `strongVerification`, `highRisk`, `securitySensitive`, `migration`,
 `crossCutting`, `publicContract`, `architectureTradeoff`, `highFailureCost`,
-`irreversible`, `parallelWriteRisk`, `mechanical`, `ambiguous`,
+`irreversible`, `parallelWriteRisk`, `mechanical`, `exactOutputCheck`, `ambiguous`,
 `grillWithDocs`, `planMode`, `exploration`, `review`, `batchSize`,
 `hostCanDelegate`, `verificationFailed`, and enumerated `failureType`.
 Set `grillWithDocs` and `planMode` only from actual host/skill state; text
-mentions are not evidence. Each adds 18 points and they may stack.
+mentions are not evidence. Each adds 18 diagnostic points; neither changes the GPT-6 work level.
 `hostCanDelegate` is retained for older callers. Omit it when
 `hostCapabilities.delegation` is supplied; contradictory values are rejected.
 
 Output always contains:
 
-- `schemaVersion: "5.0"` and `routeId`;
+- `schemaVersion: "6.0"` and `routeId`;
 - `action`: `continue`, `delegate`, `ask_user`, or `busy`;
 - optional `target { model, effort }` only for `delegate`;
 - `category`, enumerated `reasonCodes`, and `verificationGate`;
-- classifier and escalation status.
+- classifier and escalation status;
+- `decision` when task conditions are evaluated: policyId, policyDigest, policyVersion, workLevel, rule.
 - `taskMode`: `automatic`, `pending_confirmation`, or `manual_root`;
 - `rootTask`, containing an optional hook-observed model slug, host-only effort
   visibility, and `changedByRouter: false`.
@@ -126,27 +125,19 @@ changed task/host/Hook/runtime binding cannot trigger a replacement self-test.
 There is no caller-supplied proof parameter, and qualification is excluded from
 learning.
 
-The root-visible catalog, bounded delegate catalog, and classifier catalog are
-independent. A Luna entry in the root picker does not authorize Luna as a
-subagent. When the policy prefers Luna but the delegate catalog does not
-contain it, automatic routing selects Terra and includes
-`MODEL_FAMILY_FALLBACK`. An explicit unavailable Luna target returns
-`ask_user / EXPLICIT_TARGET_UNAVAILABLE`.
+Root, delegate and classifier catalogs are independent. Only explicit direct
+interface capabilities authorize delegation; all Router calls also pass through
+the active policy's exact allowed model/effort scope. Missing automatic targets
+keep work local; explicit unavailable targets ask without substitution.
 
-If the host rejects a returned target before startup, the matching `PreToolUse`
-must already have consumed the route ticket and `PostToolUse` must explicitly
-prove that no child was created. Only then record that route as `failed` with
-`failureType: tooling`. An automatic route may then be retried
-once with `previousRouteId`; the rejected model is excluded. An explicit route
-asks the user instead. If the automatic retry is also rejected, record it and
-continue in the root. Do not treat a committed route as proof of startup.
-
-Automatic static routing never starts at Ultra. Sol Max requires a score of at
-least 98 and two independent hard-signal dimensions. Only a reasoning failure
-may increase effort, at most twice, in the order
-`high < xhigh < max < ultra`; environment, information, and tooling failures
-hold effort. `parallelWriteRisk: true` prevents an Ultra delegation and returns
-`ask_user`.
+Record a tooling failure only after the dispatch handshake and authoritative
+no-child evidence. Environment, information and tooling failures preserve the
+previous target. Reasoning failures follow `low/medium → high → xhigh → max → ultra`,
+at most twice per stage. Max requires three independent difficulty groups plus
+high failure cost/irreversibility, or xhigh reasoning failure. Ultra requires
+explicit choice or max reasoning failure with remaining budget; parallel writers
+are still rejected. The [quality-first specification](MODEL-POLICY-GPT6.zh-CN.md)
+details conditions, stable stage identity, scope and policy revisions.
 
 After every route, the skill emits a compact visible notice. It shows the
 hook-observed root slug when available, always marks it unchanged, and notes
@@ -199,6 +190,10 @@ hook never synthesizes an outcome.
 
 | Tool | Purpose | State change |
 | --- | --- | --- |
+| `get_model_policy` | Read active global policy, allowed scope, bindings and invalid locks visible in this context. | No |
+| `preview_model_policy` | Validate a complete `definition`, compare scope and show current/candidate digests and active calls. | No |
+| `activate_model_policy` | Atomically activate `definition` with `expectedDigest` and `confirm: ACTIVATE_MODEL_POLICY`; busy calls block. | Yes |
+| `rollback_model_policy` | Restore the immutable parent with `expectedDigest` and `confirm: ROLLBACK_MODEL_POLICY`; busy calls block. | Yes |
 | `get_route_status` | Return global auto activation, task mode, root boundary, pending host-model intent, and latest route/target/outcome. | No |
 | `get_route_history` | Return a timestamped current-project/context route timeline, optionally filtered by action. | No |
 | `diagnose_router` | Check database health, classifier circuit state, current redacted status, and legacy-state presence. | No |
@@ -218,7 +213,8 @@ hook never synthesizes an outcome.
 Policy proposals are never approved automatically. Rejection and rollback are
 also deliberate user actions; an agent must not infer them from routine work.
 
-Online proposals only use routes with a v3 score snapshot. Explicit overrides,
+GPT-6 snapshots are observe-only and never apply legacy offsets. Historical
+online proposals only use eligible legacy score snapshots. Explicit overrides,
 classifier adjustments, escalated/tooling-retry routes, unknown outcomes, and
 environment/information/tooling failures are excluded. A `+5` proposal needs
 12 eligible outcomes across 4 contexts and 4 affected outcomes. A `-5`
@@ -235,19 +231,19 @@ live prompts or outcomes.
 
 `shadow_route_stage` accepts the normal goal/phase/evidence fields plus an
 optional closed scoring definition. It returns only the category, numeric
-scores, hard-signal count, preferred action/family/effort, and verification
+scores, hard-signal count, preferred action/workLevel/model/effort, and verification
 gate. It also returns before/after numeric counts for current-context routes,
 outcomes, Stop observations, and score snapshots plus current-project
 proposals, cursors, policy revisions, and profiles; `sideEffects` is derived
 from those counts rather than asserted. It does not create even an initial
 project, profile, policy, route, outcome, proposal, or learning cursor. It
 deliberately does not accept
-`hostCapabilities`: the returned family/effort is a scoring preference, not a
+`hostCapabilities`: the returned workLevel/model/effort is a policy preference, not a
 live bounded target. Call it directly without a preceding `route_stage`. Use it
 before an explicitly confirmed offline re-anchor.
 
 An explicit direct request for `get_route_status`, `get_route_history`,
-`list_policy_proposals`, `get_learning_status`, `diagnose_router`, or
+`list_policy_proposals`, `get_learning_status`, `get_model_policy`, `preview_model_policy`, `diagnose_router`, or
 `shadow_route_stage` activates a short-lived, current-context guard. While it
 is active, an accidental `route_stage` call is rejected before project
 initialization, scoring, classification, or route persistence; repeated
@@ -282,8 +278,7 @@ The fixed priority is:
 3. session override;
 4. project override;
 5. optional global override;
-6. approved project policy;
-7. balanced default policy.
+6. active quality-first model policy. Legacy offsets do not choose the target.
 
 Only prompts beginning at the first character with `router:` or `路由器：` are
 hook control commands. Quotes, code blocks, negations, later-line prefixes, and

@@ -4,11 +4,13 @@ import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { auditNativeLifecycleNoop } from "../scripts/lib/native-lifecycle-audit.mjs";
+import { newTaskQualification } from "../scripts/lib/lifecycle-qualification.mjs";
+import { auditNativeLifecycleTranscript } from "../scripts/lib/native-recovery-audit.mjs";
 
 function fixture(cliVersion = "0.153.0") {
   const parentId = "probe-root";
   const taskName = `router_${"a".repeat(32)}`;
-  const target = { model: "gpt-5.6-sol", effort: "low" };
+  const target = { model: cliVersion === "0.153.3" ? "gpt-6-astra" : "gpt-5.6-sol", effort: "low" };
   const marker = `NATIVE_ROUTER_NOOP_${"a".repeat(24)}`;
   const child = {
     id: "probe-child", parentThreadId: parentId, forkedFromId: null,
@@ -48,6 +50,22 @@ test("native no-op probe keeps the separately pinned earlier-build adapter", () 
   assert.equal(result.rawAuditAdapter, "codex-0.153.0-alpha.5-no-work/1");
 });
 
+test("CLI 0.153.3 uses its reviewed adapter without rebinding old receipts or accepting adjacent builds", () => {
+  const { input, options } = fixture("0.153.3");
+  const result = auditNativeLifecycleNoop(input, options);
+  assert.equal(result.passed, true);
+  assert.equal(result.rawAuditAdapter, "codex-0.153.3-no-work/1");
+  assert.throws(() => auditNativeLifecycleTranscript(options.readTranscript(), input.child, input.parentId), /unproven/);
+  const binding = { digest: "a".repeat(64), runtimeDigest: "b".repeat(64), taskCwdDigest: "c".repeat(64),
+    shellRoots: ["d".repeat(64)], cliVersion: "0.153.3" };
+  assert.equal(newTaskQualification(binding, "test-route").state, "pending");
+  for (const cliVersion of ["0.153.2", "0.153.4", "0.153.3-alpha.1", "0.154.0", "toString", "__proto__"]) {
+    const other = fixture(cliVersion);
+    assert.equal(auditNativeLifecycleNoop(other.input, other.options).passed, false, cliVersion);
+    assert.equal(newTaskQualification({ ...binding, cliVersion }, "test-route"), null, cliVersion);
+  }
+});
+
 test("native no-op probe reads only stable regular native session files by default", () => {
   const scratch = realpathSync(mkdtempSync(join(tmpdir(), "router-noop-audit-")));
   const previous = process.env.CODEX_HOME;
@@ -74,19 +92,19 @@ test("native no-op probe reads only stable regular native session files by defau
 });
 
 test("native no-op probe rejects hidden actions even when the native projection looks inert", () => {
-  for (const payload of [
+  for (const cliVersion of ["0.153.0", "0.153.3"]) for (const payload of [
     { type: "custom_tool_call", name: "exec", namespace: "functions", call_id: "hidden" },
     { type: "function_call", name: "exec_command", call_id: "hidden" },
     { type: "future_native_action", id: "hidden" },
   ]) {
-    const { input, options, records } = fixture();
+    const { input, options, records } = fixture(cliVersion);
     records.splice(-2, 0, { type: "response_item", payload });
     assert.equal(auditNativeLifecycleNoop(input, options).passed, false, payload.type);
   }
 });
 
 test("native no-op probe rejects incomplete, mismatched, resumed and unknown-build children", () => {
-  for (const mutate of [
+  for (const cliVersion of ["0.153.0", "0.153.3"]) for (const mutate of [
     ({ child }) => { child.parentThreadId = "different-root"; },
     ({ child }) => { child.source.subAgent.thread_spawn.agent_path = "/root/other"; },
     ({ child }) => { child.source.subAgent.thread_spawn.depth = 2; },
@@ -99,14 +117,14 @@ test("native no-op probe rejects incomplete, mismatched, resumed and unknown-bui
     ({ child }) => { child.turns[0].error = { message: "error" }; },
     ({ child }) => { child.turns.push({ ...child.turns[0] }); },
   ]) {
-    const { input, options } = fixture();
+    const { input, options } = fixture(cliVersion);
     mutate(input);
     assert.equal(auditNativeLifecycleNoop(input, options).passed, false, String(mutate));
   }
 });
 
 test("native no-op probe rejects truncated, missing and changing raw source evidence", () => {
-  for (const mutate of [
+  for (const cliVersion of ["0.153.0", "0.153.3"]) for (const mutate of [
     (value) => { value.options.readTranscript = () => { throw new Error("unavailable /private"); }; },
     (value) => {
       const read = value.options.readTranscript;
@@ -120,7 +138,7 @@ test("native no-op probe rejects truncated, missing and changing raw source evid
       value.options.readTranscript = () => { value.records[0].timestamp = ++count; return read(); };
     },
   ]) {
-    const value = fixture();
+    const value = fixture(cliVersion);
     mutate(value);
     const result = auditNativeLifecycleNoop(value.input, value.options);
     assert.equal(result.passed, false, String(mutate));

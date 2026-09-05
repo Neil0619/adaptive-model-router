@@ -5,7 +5,9 @@ import {
   CLASSIFIER_TIMEOUT_MS,
   PROMPT_SUMMARY_LIMIT,
 } from "./constants.mjs";
-import { normalizeCatalog, selectAutomaticRoute } from "./catalog.mjs";
+import { normalizeCatalog } from "./catalog.mjs";
+import { resolveModelTarget } from "./model-policy.mjs";
+import { readModelPolicy, withModelPolicyLease } from "./model-policy-store.mjs";
 import { redactPromptSummary } from "./io.mjs";
 import { assertSchema } from "./schema.mjs";
 import { withAppServer } from "./app-server.mjs";
@@ -49,6 +51,7 @@ export async function classifyBorderline({
   timeoutMs = CLASSIFIER_TIMEOUT_MS,
   appServer = withAppServer,
   now = Date.now(),
+  modelPolicy = readModelPolicy(store.db),
 }) {
   if (
     settings.classifierMode !== "auxiliary" ||
@@ -66,10 +69,10 @@ export async function classifyBorderline({
   }
   const prompt = buildClassifierPrompt({ goal, phase, signals });
   try {
-    const result = await appServer(
+    const result = await withModelPolicyLease(store, modelPolicy, () => appServer(
       async (client, deadlineAt) => {
         const classifierCatalog = normalizeCatalog(await client.listModels(deadlineAt));
-        const target = selectAutomaticRoute(classifierCatalog, "luna", "low");
+        const target = resolveModelTarget({ policy: modelPolicy, catalog: classifierCatalog, purpose: "classifier" }).target;
         if (!target) throw new Error("classifier model unavailable");
         return client.classify({
           model: target.model,
@@ -79,7 +82,7 @@ export async function classifyBorderline({
         }, deadlineAt);
       },
       { timeoutMs },
-    );
+    ));
     assertSchema(CLASSIFIER_OUTPUT_SCHEMA, result, "classifier output");
     if (result.complexityAdjustment > 0 && !result.reasonCodes.includes("CLASSIFIER_COMPLEXITY_UP")) {
       throw new Error("classifier reason code does not match adjustment");
