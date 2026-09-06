@@ -16,7 +16,20 @@ if ($null -eq $node) {
     exit 2
 }
 
-$nodeVersionText = & $node.Source -p "process.versions.node"
+# Uninstall removes the Desktop node.cmd compatibility bridge. Resolve its
+# real executable before running the manager so cmd.exe never resumes a batch
+# file that the uninstall just deleted.
+$nodePathText = & $node.Source -p "process.execPath"
+if ($LASTEXITCODE -ne 0 -or -not [IO.Path]::IsPathRooted([string]$nodePathText)) {
+    Write-Error "Unable to resolve the installed Node.js executable."
+    exit 2
+}
+$nodePath = ([string]$nodePathText).Trim()
+if (-not (Test-Path -LiteralPath $nodePath -PathType Leaf)) {
+    Write-Error "The installed Node.js executable is unavailable."
+    exit 2
+}
+$nodeVersionText = & $nodePath -p "process.versions.node"
 try {
     $nodeVersion = [System.Version]$nodeVersionText.Trim()
 } catch {
@@ -70,5 +83,5 @@ if ($NonInteractive) { $managerArgs += "--non-interactive" }
 if ($VerifyTaskTools) { $managerArgs += "--verify-task-tools" }
 if ($Yes) { $managerArgs += "--yes" }
 
-& $node.Source $manager @managerArgs
+& $nodePath $manager @managerArgs
 exit $LASTEXITCODE

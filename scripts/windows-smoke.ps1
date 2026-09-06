@@ -49,6 +49,7 @@ $SessionId = $null
 $InitialRootModel = $null
 $SmokeModel = $null
 $SmokeEffort = $null
+$HostIntentModel = $null
 $InstalledRouterLauncher = $null
 $InstalledRouterCli = $null
 $CandidateCommit = ('0' * 40)
@@ -183,15 +184,20 @@ function Invoke-CodexTurn {
         [Parameter(Mandatory = $true)][string]$Prompt,
         [Parameter(Mandatory = $true)][string]$Model,
         [string]$ResumeSession,
-        [string]$WorkingProject = $Project
+        [string]$WorkingProject = $Project,
+        [string]$Effort = $SmokeEffort,
+        [switch]$HostModelControl
     )
-    if ($Model -ne $SmokeModel) { throw 'model escaped the shared smoke target binding' }
+    if ($HostModelControl) {
+        if (-not $ResumeSession -or $Model -notin @($InitialRootModel, $HostIntentModel)) { throw 'invalid native root-model control target' }
+    }
+    elseif ($Model -ne $SmokeModel -or $Effort -ne $SmokeEffort) { throw 'model escaped the shared smoke target binding' }
     $lastMessage = Join-Path $RawRoot (([guid]::NewGuid().ToString('N')) + '.last.txt')
     if ($ResumeSession) {
-        $arguments = @('exec', '--dangerously-bypass-approvals-and-sandbox', '-c', ('model_reasoning_effort=' + $SmokeEffort), 'resume', '--json', '-o', $lastMessage, '-m', $Model, $ResumeSession, $Prompt)
+        $arguments = @('exec', '--dangerously-bypass-approvals-and-sandbox', '-c', ('model_reasoning_effort=' + $Effort), 'resume', '--json', '-o', $lastMessage, '-m', $Model, $ResumeSession, $Prompt)
     }
     else {
-        $arguments = @('exec', '--dangerously-bypass-approvals-and-sandbox', '-c', ('model_reasoning_effort=' + $SmokeEffort), '--json', '-o', $lastMessage, '-C', $WorkingProject, '-m', $Model, $Prompt)
+        $arguments = @('exec', '--dangerously-bypass-approvals-and-sandbox', '-c', ('model_reasoning_effort=' + $Effort), '--json', '-o', $lastMessage, '-C', $WorkingProject, '-m', $Model, $Prompt)
     }
     $result = Invoke-Process -FilePath 'codex' -ArgumentList $arguments -WorkingDirectory $WorkingProject
     $events = [Collections.Generic.List[object]]::new()
@@ -379,6 +385,8 @@ function Assert-CandidateGateFiles {
     $pairs = @(
         @((Join-Path $PSScriptRoot 'windows-smoke.ps1'), (Join-Path $Source 'scripts\windows-smoke.ps1')),
         @((Join-Path $PSScriptRoot 'invoke-command-shim.ps1'), (Join-Path $Source 'scripts\invoke-command-shim.ps1')),
+        @((Join-Path $PSScriptRoot 'smoke-host-model-target.mjs'), (Join-Path $Source 'scripts\smoke-host-model-target.mjs')),
+        @((Join-Path $PSScriptRoot 'stop-windows-smoke-router-processes.ps1'), (Join-Path $Source 'scripts\stop-windows-smoke-router-processes.ps1')),
         @((Join-Path $PSScriptRoot 'validate-smoke-evidence.mjs'), (Join-Path $Source 'scripts\validate-smoke-evidence.mjs')),
         @((Join-Path $PSScriptRoot '..\docs\release-evidence\schema-v1.json'), (Join-Path $Source 'docs\release-evidence\schema-v1.json'))
     )
@@ -400,8 +408,84 @@ function Assert-InstalledCandidate {
 
 function Invoke-Wrapper {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    Stop-SmokeRouterProcesses
     $installer = Join-Path $Source 'install.ps1'
     return Invoke-Process -FilePath 'pwsh' -ArgumentList (@('-NoProfile', '-File', $installer) + $Arguments) -WorkingDirectory $Source
+}
+
+function Stop-SmokeRouterProcesses {
+    # Every disposable CLI turn has returned and its bounded result has been
+    # settled before lifecycle work. Stop only cache-bound Router Node processes;
+    # the persistent Desktop and coordinator remain alive.
+    Invoke-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', (Join-Path $Source 'scripts\stop-windows-smoke-router-processes.ps1'), '-CodexHome', $DedicatedCodexHome) -WorkingDirectory $Source | Out-Null
+}
+
+function Invoke-NativePluginLifecycle {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    Stop-SmokeRouterProcesses
+    Invoke-Process -FilePath 'codex' -ArgumentList $Arguments | Out-Null
+}
+
+function Read-NativeRootBinding {
+    $trace = @(Read-CodexSessionTrace -Context $SessionId)
+    $turns = @($trace | Where-Object { $_.type -eq 'turn_context' })
+    if ($turns.Count -eq 0) { throw 'native root-model evidence is missing' }
+    $payload = $turns[-1].payload
+    $effort = Get-NestedPropertyValue -InputObject $payload -Path @('effort')
+    if (-not $effort) { $effort = Get-NestedPropertyValue -InputObject $payload -Path @('collaboration_mode', 'settings', 'reasoning_effort') }
+    if (-not $effort) { throw 'native root reasoning effort is unavailable' }
+    return [pscustomobject]@{ Model = [string]$payload.model; Effort = [string]$effort }
+}
+
+function Invoke-HostModelIntentSmoke {
+    $initialBinding = Read-NativeRootBinding
+    if ($initialBinding.Model -ne $InitialRootModel) { throw 'initial native root model differs from the Hook baseline' }
+    $selection = Invoke-Process -FilePath 'node' -ArgumentList @((Join-Path $Source 'scripts\smoke-host-model-target.mjs'), "--initial-model=$InitialRootModel", ("--effort=" + $initialBinding.Effort)) -WorkingDirectory $Project
+    $selected = $selection.Stdout | ConvertFrom-Json
+    $HostIntentModel = [string]$selected.model
+    if (-not $HostIntentModel -or $HostIntentModel -eq $InitialRootModel -or $selected.source -ne 'native-model-list') { throw 'native host-model override capability is unavailable' }
+    $projections = [Collections.Generic.List[object]]::new()
+    try {
+        foreach ($case in @(
+            @{ Model = $HostIntentModel; Previous = $InitialRootModel; Decision = 'keep_automatic'; Mode = 'automatic'; Choice = '保持自动' },
+            @{ Model = $InitialRootModel; Previous = $HostIntentModel; Decision = 'manual_root'; Mode = 'manual_root'; Choice = '本任务手动' }
+        )) {
+            Invoke-CodexTurn -Prompt 'router: status' -Model $case.Model -Effort $initialBinding.Effort -ResumeSession $SessionId -HostModelControl | Out-Null
+            $native = Read-NativeRootBinding
+            $pending = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
+            if ($native.Model -ne $case.Model -or $native.Effort -ne $initialBinding.Effort -or $pending.rootTask.modelVisibility -ne 'hook_observed' -or $pending.rootTask.model -ne $case.Model -or $pending.rootTask.changedByRouter -ne $false) { throw 'native host override and trusted Hook disagree' }
+            if ($pending.taskMode -ne 'pending_confirmation' -or $pending.pendingHostModelChange.fromModel -ne $case.Previous -or $pending.pendingHostModelChange.toModel -ne $case.Model) { throw 'host-model change did not create the expected pending intent' }
+            $projections.Add($pending)
+            $before = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+            $pendingTurn = Invoke-CodexTurn -Prompt 'This is the native host-model intent smoke. Call route_stage exactly once for a review stage with goal "Observe pending host-model intent". Leave the pending intent unresolved. Do not create a subagent, change files, record an outcome, or ask a human to operate the host; the smoke orchestrator will provide the next explicit decision. Return only the redacted action and reason codes.' -Model $case.Model -Effort $initialBinding.Effort -ResumeSession $SessionId -HostModelControl
+            $after = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+            $routes = @(Get-NewRoutes -Before $before -After $after)
+            if ($routes.Count -ne 1 -or $routes[0].action -ne 'continue' -or @($routes[0].reasonCodes) -notcontains 'HOST_MODEL_INTENT_PENDING') { throw 'pending host intent did not prevent delegation' }
+            Assert-NoDelegatedWork -Turn $pendingTurn -Route $routes[0]
+            $decisionPrompt = "$($case.Choice). For this native smoke I explicitly select decision $($case.Decision) for the currently observed changeId $($pending.pendingHostModelChange.changeId). Call resolve_host_model_intent exactly once with that changeId and decision, using the trusted context. Do not call route_stage, create a subagent, change files, or record an outcome. Return only the redacted resolved state."
+            $resolvedTurn = Invoke-CodexTurn -Prompt $decisionPrompt -Model $case.Model -Effort $initialBinding.Effort -ResumeSession $SessionId -HostModelControl
+            if (@(Get-ToolCallItems -Events $resolvedTurn.Events -Tool 'resolve_host_model_intent').Count -ne 1) { throw 'host intent was not resolved through the native Router tool exactly once' }
+            $resolved = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
+            if ($resolved.taskMode -ne $case.Mode -or $null -ne $resolved.pendingHostModelChange -or $resolved.pendingOutcomes -ne 0) { throw 'explicit host-model decision did not settle as requested' }
+            $projections.Add($resolved)
+        }
+        $beforeManual = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+        $manualTurn = Invoke-CodexTurn -Prompt 'For the native host-model intent smoke, call route_stage exactly once for a review stage with goal "Observe manual root mode". Do not create a subagent, change files, or record an outcome. Return only the redacted action and reason codes.' -Model $InitialRootModel -Effort $initialBinding.Effort -ResumeSession $SessionId -HostModelControl
+        $manualHistory = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+        $manualRoutes = @(Get-NewRoutes -Before $beforeManual -After $manualHistory)
+        if ($manualRoutes.Count -ne 1 -or $manualRoutes[0].action -ne 'continue' -or @($manualRoutes[0].reasonCodes) -notcontains 'MANUAL_ROOT_SELECTED') { throw 'manual-root intent did not prevent delegation' }
+        Assert-NoDelegatedWork -Turn $manualTurn -Route $manualRoutes[0]
+        $projections.Add($manualHistory)
+    }
+    finally {
+        # The host orchestrator restores both settings, including after a failed check.
+        Invoke-CodexTurn -Prompt 'router: auto session' -Model $InitialRootModel -Effort $initialBinding.Effort -ResumeSession $SessionId -HostModelControl | Out-Null
+        $restored = Read-NativeRootBinding
+        $restoredStatus = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
+        if ($restored.Model -ne $initialBinding.Model -or $restored.Effort -ne $initialBinding.Effort -or $restoredStatus.rootTask.model -ne $initialBinding.Model -or $restoredStatus.taskMode -ne 'automatic' -or $null -ne $restoredStatus.pendingHostModelChange -or $restoredStatus.pendingOutcomes -ne 0) { throw 'native root-model cleanup did not restore the initial settled state' }
+        $projections.Add($restoredStatus)
+    }
+    Assert-PrivateProjection -Values @($projections)
 }
 
 function Write-SmokeFixture {
@@ -556,9 +640,11 @@ try {
     Invoke-Process -FilePath 'npm' -ArgumentList @('test') -WorkingDirectory $candidatePluginRoot | Out-Null
     Invoke-Process -FilePath 'npm' -ArgumentList @('run', 'validate') -WorkingDirectory $candidatePluginRoot | Out-Null
     Invoke-Process -FilePath 'npm' -ArgumentList @('run', 'eval') -WorkingDirectory $candidatePluginRoot | Out-Null
+    Invoke-Process -FilePath 'node' -ArgumentList @('--test', 'scripts/test/windows-smoke.test.mjs') -WorkingDirectory $Source | Out-Null
     Add-SmokeCheck -Id 'candidate-automated-gate' -Blocking $true -Status 'PASS'
 
     $manager = Join-Path $Source 'plugins\adaptive-model-router\scripts\manage-install.mjs'
+    Stop-SmokeRouterProcesses
     Invoke-Process -FilePath 'node' -ArgumentList @($manager, 'install', '--non-interactive', "--ref=$CandidateRef") -WorkingDirectory $Source | Out-Null
     Add-SmokeCheck -Id 'native-install' -Blocking $true -Status 'PASS'
     Assert-InstalledCandidate -ExpectedRef $CandidateRef -ExpectedCommit $CandidateCommit
@@ -717,9 +803,9 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     if ([string]::IsNullOrWhiteSpace([string]$shadowStatusAfter.scoringProfile.profileId) -or [int]$shadowStatusAfter.scoringProfile.profileVersion -lt 1) { throw 'active scoring profile identity/version is missing' }
     Add-SmokeCheck -Id 'learning-and-shadow' -Blocking $true -Status 'PASS'
 
-    # A GPT-6-only scope must never run a second model to fabricate slug coverage.
-    Invoke-Process -FilePath 'node' -ArgumentList @('--test', 'test/host-model.test.mjs', 'test/hook.test.mjs') -WorkingDirectory $candidatePluginRoot | Out-Null
-    Add-WarningCode -Code 'HOST_MODEL_INTENT_OFFLINE_ONLY'
+    # Only the native smoke orchestrator changes the root model. Bounded
+    # delegation remains on the shared GPT-6 target throughout the gate.
+    Invoke-HostModelIntentSmoke
     Add-SmokeCheck -Id 'host-model-intent' -Blocking $true -Status 'PASS'
 
     Invoke-CodexTurn -Prompt 'router: off' -Model $InitialRootModel -ResumeSession $SessionId | Out-Null
@@ -732,14 +818,14 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     Invoke-CodexTurn -Prompt 'router: auto session' -Model $InitialRootModel -ResumeSession $SessionId | Out-Null
     Add-SmokeCheck -Id 'negative-control' -Blocking $true -Status 'PASS'
 
-    Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'marketplace', 'upgrade', 'adaptive-model-router') | Out-Null
-    Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'add', 'adaptive-model-router@adaptive-model-router') | Out-Null
-    Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'remove', 'adaptive-model-router@adaptive-model-router') | Out-Null
-    Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'marketplace', 'remove', 'adaptive-model-router') | Out-Null
+    Invoke-NativePluginLifecycle -Arguments @('plugin', 'marketplace', 'upgrade', 'adaptive-model-router')
+    Invoke-NativePluginLifecycle -Arguments @('plugin', 'add', 'adaptive-model-router@adaptive-model-router')
+    Invoke-NativePluginLifecycle -Arguments @('plugin', 'remove', 'adaptive-model-router@adaptive-model-router')
+    Invoke-NativePluginLifecycle -Arguments @('plugin', 'marketplace', 'remove', 'adaptive-model-router')
     $wrapperInstall = Invoke-Wrapper -Arguments @('-PatchAgents', '-Ref', $CandidateRef)
     $wrapperUpgrade = Invoke-Wrapper -Arguments @('-Action', 'Upgrade', '-PatchAgents', '-VerifyTaskTools', '-Ref', $CandidateRef)
     foreach ($wrapperResult in @($wrapperInstall, $wrapperUpgrade)) {
-        if ($wrapperResult.Stdout -notmatch 'v0\.3\.x' -or $wrapperResult.Stdout -notmatch 'Compatible v0\.4\.x\+' -or $wrapperResult.Stdout -notmatch 'upgrades preserve this setting') {
+        if ($wrapperResult.Stdout -notmatch 'no replacement task is required' -or $wrapperResult.Stdout -notmatch 'Compatible v0\.4\.x\+' -or $wrapperResult.Stdout -notmatch 'upgrades preserve this setting') {
             throw 'wrapper lifecycle did not emit the required upgrade and persistence guidance'
         }
     }
