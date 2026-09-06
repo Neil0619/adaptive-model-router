@@ -9,6 +9,7 @@ import { consumeDelegationTicket, claimDelegationSubagent, observeAgentResult, o
 import { callRouterTool } from "../scripts/lib/service.mjs";
 import { recordOutcome } from "../scripts/lib/learning.mjs";
 import { payloadHash } from "../scripts/lib/io.mjs";
+import { authorizeRequalification } from "../scripts/lib/qualification-retry.mjs";
 import { observeQualificationHook, readTaskQualification, qualificationReadiness, runtimeSourceDigest } from "../scripts/lib/lifecycle-qualification.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
@@ -37,6 +38,7 @@ async function fixture(run) {
       const context = store.context({ cwd: project.root, contextId: input.contextId });
       store.observeHostModel(context, "gpt-5.6-sol");
       const binding = { digest: "a".repeat(64), runtimeDigest: runtimeSourceDigest(),
+        configurationDigest: "b".repeat(64),
         taskCwdDigest: payloadHash(realpathSync(project.root)),
         shellRoots: [payloadHash(SOURCE_ROOT)], cliVersion: "0.153.0" };
       const options = { store, cwd: project.root, catalog: CATALOG,
@@ -175,6 +177,53 @@ test("changed qualification bindings invalidate admission without silently re-qu
     assert.deepEqual(next.reasonCodes, ["HOST_HOOK_SET_MISMATCH"]);
     assert.equal(readTaskQualification(store.db, context).state, "passed");
     assert.equal(store.db.prepare("SELECT count(*) AS n FROM delegation_attempts").get().n, 1);
+  });
+});
+
+test("an explicit upgrade authorization permits one fresh no-tool audit and preserves the passed audit", async () => {
+  await fixture(async (value) => {
+    const { store, context, input, options, binding, outcome, serviceOptions, route } = await completedQualification(value);
+    await callRouterTool("record_outcome", outcome, serviceOptions);
+    const prior = readTaskQualification(store.db, context);
+    binding.digest = "c".repeat(64);
+    binding.configurationDigest = "d".repeat(64);
+    binding.cliVersion = "0.153.4";
+    const request = { contextId: input.contextId, routeId: route.routeId };
+    const authorizeOptions = { store, cwd: value.project.root, inspectBinding: async () => ({ binding }) };
+    const preview = await authorizeRequalification(request, authorizeOptions);
+    assert.equal(preview.status, "authorizable");
+    assert.equal((await routeStage(input, options)).action, "continue");
+    assert.equal((await authorizeRequalification({ ...request, apply: true, expectedEvidenceDigest: "0".repeat(64) }, authorizeOptions)).status, "unresolved");
+    assert.equal((await authorizeRequalification({ ...request, apply: true, expectedEvidenceDigest: preview.evidenceDigest }, authorizeOptions)).status, "authorized");
+    const renewed = await routeStage(input, options);
+    assert.deepEqual(renewed.reasonCodes, ["HOST_LIFECYCLE_QUALIFICATION"]);
+    assert.equal(renewed.action, "delegate");
+    assert.notEqual(renewed.routeId, route.routeId);
+    assert.equal(readTaskQualification(store.db, context).state, "pending");
+    assert.deepEqual(JSON.parse(store.db.prepare("SELECT value FROM meta WHERE key=?").get(`native_qualification_archive:${route.routeId}`).value), prior);
+    assert.equal(store.db.prepare("SELECT status FROM outcomes WHERE route_id=?").get(route.routeId).status, "passed");
+    assert.equal((await routeStage(input, options)).action, "busy");
+    assert.equal((await authorizeRequalification(request, authorizeOptions)).status, "consumed");
+    assert.equal(store.db.prepare("SELECT count(*) AS n FROM meta WHERE key LIKE 'native_lifecycle_diagnostic:%'").get().n, 0);
+  });
+});
+
+test("upgrade requalification rejects an unchanged binding, changed project, or unsettled prior audit", async () => {
+  for (const mutate of [
+    () => {},
+    ({ binding }) => { binding.digest = "c".repeat(64); }, // A different pinned shell alone is not an upgrade.
+    ({ binding }) => { binding.digest = "c".repeat(64); binding.taskCwdDigest = "d".repeat(64); },
+    ({ binding, store, route }) => { binding.configurationDigest = "d".repeat(64); store.db.prepare("UPDATE delegation_attempts SET ambiguous=1 WHERE route_id=?").run(route.routeId); },
+    ({ binding, store, route }) => { binding.configurationDigest = "d".repeat(64); store.db.prepare("UPDATE delegation_attempts SET finalized_at=NULL WHERE route_id=?").run(route.routeId); },
+    ({ binding, store, route }) => { binding.configurationDigest = "d".repeat(64); store.db.prepare("DELETE FROM outcomes WHERE route_id=?").run(route.routeId); },
+  ]) await fixture(async (value) => {
+    const completed = await completedQualification(value);
+    await callRouterTool("record_outcome", completed.outcome, completed.serviceOptions);
+    mutate(completed);
+    const result = await authorizeRequalification({ contextId: completed.input.contextId, routeId: completed.route.routeId }, {
+      store: completed.store, cwd: completed.project.root, inspectBinding: async () => ({ binding: completed.binding }),
+    });
+    assert.equal(result.status, "unresolved");
   });
 });
 

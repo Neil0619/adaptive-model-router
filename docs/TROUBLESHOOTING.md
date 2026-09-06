@@ -237,6 +237,19 @@ successful recovery alone does not repair that dispatch path.
 
 ### Explicitly authorize one diagnostic requalification
 
+The same explicit operator command also supports renewing an already passed
+qualification after a compatible runtime or Hook-cache upgrade on a supported
+native host, including Windows Codex 0.153.4. The old task must have a completed,
+unambiguous child and a passed source-verified outcome, the task directory must
+match, and the freshly inspected binding must have changed. Preview the current
+evidence digest, then approve that exact digest with
+`--approve-one-no-tool-requalification`. The next route runs only the fixed
+no-tool qualification; ordinary delegation remains blocked until its new audit
+passes. The old qualification is archived, and its route and outcome are kept.
+This successful-upgrade case does not enable diagnostic capture. Calling
+`route_stage` alone never renews a qualification, and failed or pending audits
+cannot use this path.
+
 Only after the operator approves another fixed no-tool self-test, use
 `scripts/authorize-requalification.mjs` from the affected project directory.
 It requires the exact `/3` recovery receipt and unchanged original failure:

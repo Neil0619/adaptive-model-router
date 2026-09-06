@@ -280,6 +280,21 @@ function Read-CodexSessionTrace {
     return @($entries)
 }
 
+function Get-McpTraceTool {
+    param([Parameter(Mandatory = $true)]$Entry)
+    if ((Get-NestedPropertyValue -InputObject $Entry -Path @('type')) -ne 'event_msg') { return $null }
+    $type = Get-NestedPropertyValue -InputObject $Entry -Path @('payload', 'type')
+    if ($type -eq 'mcp_tool_call_end') {
+        return Get-NestedPropertyValue -InputObject $Entry -Path @('payload', 'invocation', 'tool')
+    }
+    # Codex 0.153.4 persists the completed native item instead of the legacy
+    # mcp_tool_call_end event. Inspect that original item without rewriting it.
+    if ($type -eq 'item_completed' -and (Get-NestedPropertyValue -InputObject $Entry -Path @('payload', 'item', 'type')) -eq 'McpToolCall' -and (Get-NestedPropertyValue -InputObject $Entry -Path @('payload', 'item', 'status')) -eq 'completed') {
+        return Get-NestedPropertyValue -InputObject $Entry -Path @('payload', 'item', 'tool')
+    }
+    return $null
+}
+
 function Read-BoundedSubagentExecution {
     param(
         [Parameter(Mandatory = $true)][string]$ParentContext,
@@ -577,13 +592,25 @@ try {
     # intentionally unfinished live delegation.
     Add-SmokeCheck -Id 'hook-trust-and-global-on' -Blocking $true -Status 'PASS'
 
+    # A fresh task must prove the native no-tool lifecycle before ordinary
+    # work. Keep this qualification separate from the single review delegate.
+    $qualificationBefore = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+    $qualificationPrompt = @'
+Perform only the native lifecycle qualification required by the trusted Adaptive Model Router skill in this fresh task. Call route_stage exactly once with phase=review, evidence review=true, workProduct=true, requirementsSettled=true, strongVerification=true, and the actual direct bounded-subagent capabilities. The bounded goal is solely to validate the native no-tool lifecycle before a later review. If HOST_LIFECYCLE_QUALIFICATION is returned, follow its exact one-shot carrier with direct spawn_agent, the returned model/effort and fork_turns=none. Wait for that exact no-tool child to finish and call record_outcome once with the strict structured-check contract; the source-owned server audits the complete child transcript. Do not retry a failed qualification or route the later review in this turn. Do not modify files or run tests. Return only a redacted qualification status; never expose identifiers, carriers, prompts, paths or logs.
+'@
+    Invoke-CodexTurn -Prompt $qualificationPrompt -Model $SmokeModel -ResumeSession $SessionId | Out-Null
+    $qualificationHistory = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+    $qualificationRoutes = @(Get-NewRoutes -Before $qualificationBefore -After $qualificationHistory)
+    $qualifiedStatus = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
+    if ($qualificationRoutes.Count -ne 1 -or $qualificationRoutes[0].action -ne 'delegate' -or @($qualificationRoutes[0].reasonCodes) -notcontains 'HOST_LIFECYCLE_QUALIFICATION' -or $qualificationRoutes[0].outcome.status -ne 'passed' -or $qualificationRoutes[0].outcome.source -ne 'record_outcome' -or $qualifiedStatus.pendingOutcomes -ne 0 -or $qualifiedStatus.delegationGate.state -ne 'available') { throw 'native lifecycle qualification did not complete and release its gate' }
+
     Write-SmokeFixture -Root $Project
     $fixtureHashBefore = Get-SmokeFixtureHash -Root $Project
     $reviewHistoryBefore = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
     $sessionTraceBeforeCount = @(Read-CodexSessionTrace -Context $SessionId).Count
     $reviewStartedAt = [DateTime]::UtcNow
     $implementationPrompt = @'
-Review the existing dependency-free Node.js 24 line-normalization utility and tests in this temporary project without modifying files. Follow the trusted fixed-context automatic-router instruction injected for this turn. Call route_stage exactly once for a bounded review stage with phase=review and evidence review=true, workProduct=true, requirementsSettled=true, strongVerification=true, batchSize=2 plus the host's actual bounded-subagent capabilities. A GPT-6-only host must omit Luna. The root task and exactly one bounded subagent must independently inspect the existing source and tests against this fixed checklist: CRLF normalization, CR normalization, trailing spaces/tabs removal, exactly one final LF for non-empty input, empty input preservation, existing final newline handling, Chinese text preservation, and no runtime dependencies. When the route delegates, call the spawn_agent collaboration tool exactly once using target.model and target.effort; the subagent must return only its structured checklist and must not route recursively or own record_outcome. The root must complete its own checklist, call wait_agent until the subagent's final checklist is available, compare both results, and call record_outcome exactly once using the returned structured-check gate. Pass only when both reviews pass and agree. Do not run Node tests or any write command; the native runner performs the executable test immediately after this read-only review. Then call status, history, diagnose, and learning status. Return only one redacted JSON object with exactly rootReview, subagentReview, agreement, and testExecution. Each review must contain exactly verdict and checks; verdict must be passed, and checks must contain exactly the boolean keys crlf, cr, trailingWhitespace, nonEmptyFinalLf, emptyInput, existingFinalNewline, chineseText, dependencyFree. Set agreement to true and testExecution to deferred-to-native-runner. Never expose source, prompt text, environment values, secrets, paths, session/context identifiers, or raw logs.
+Review the existing dependency-free Node.js 24 line-normalization utility and tests in this temporary project without modifying files. Follow the trusted fixed-context automatic-router instruction injected for this turn. Call route_stage exactly once for a bounded review stage with phase=review and evidence review=true, workProduct=true, requirementsSettled=true, strongVerification=true, batchSize=2 plus the host's actual bounded-subagent capabilities. A GPT-6-only host must omit Luna. Use exactly this route_stage goal, without appending the reporting instructions: <bounded-review-goal>Review the existing dependency-free Node.js 24 normalizeLines utility and its tests without modifying files or executing tests. Check CRLF, CR, trailing spaces/tabs, exactly one final LF for non-empty input, empty input, existing final newlines, Chinese text, and runtime dependency absence. Return only JSON with verdict set to passed when every check passes and checks containing these eight boolean keys: crlf, cr, trailingWhitespace, nonEmptyFinalLf, emptyInput, existingFinalNewline, chineseText, dependencyFree. Work only on this review; do not call Router or create another agent.</bounded-review-goal>. The root task and exactly one bounded subagent must independently inspect the existing source and tests against this fixed checklist: CRLF normalization, CR normalization, trailing spaces/tabs removal, exactly one final LF for non-empty input, empty input preservation, existing final newline handling, Chinese text preservation, and no runtime dependencies. When the route delegates, call the spawn_agent collaboration tool exactly once using target.model and target.effort; the subagent must return only its structured checklist and must not route recursively or own record_outcome. The root must complete its own checklist, call wait_agent until the subagent's final checklist is available, compare both results, and call record_outcome exactly once using the returned structured-check gate. Pass only when both reviews pass and agree. Do not run Node tests or any write command; the native runner performs the executable test immediately after this read-only review. Then call status, history, diagnose, and learning status. Return only one redacted JSON object with exactly rootReview, subagentReview, agreement, and testExecution. Each review must contain exactly verdict and checks; verdict must be passed, and checks must contain exactly the boolean keys crlf, cr, trailingWhitespace, nonEmptyFinalLf, emptyInput, existingFinalNewline, chineseText, dependencyFree. Set agreement to true and testExecution to deferred-to-native-runner. Never expose source, prompt text, environment values, secrets, paths, session/context identifiers, or raw logs.
 '@
     $implementationTurn = Invoke-CodexTurn -Prompt $implementationPrompt -Model $SmokeModel -ResumeSession $SessionId
     $implementationTrace = @(Read-CodexSessionTrace -Context $SessionId | Select-Object -Skip $sessionTraceBeforeCount)
@@ -613,10 +640,10 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     $retryTotal = [int]$retryBreakdown.reasoning + [int]$retryBreakdown.environment + [int]$retryBreakdown.information + [int]$retryBreakdown.tooling
     if ($retryTotal -ne [int]$route.outcome.retries) { throw 'verified outcome retry breakdown does not sum to retries' }
     $outcomeCalls = @(Get-ToolCallItems -Events $implementationTurn.Events -Tool 'record_outcome')
-    $routeTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'mcp_tool_call_end' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'invocation', 'tool')) -eq 'route_stage' })
+    $routeTrace = @($implementationTrace | Where-Object { (Get-McpTraceTool -Entry $_) -eq 'route_stage' })
     $spawnTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'namespace')) -eq 'collaboration' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'name')) -eq 'spawn_agent' })
     $waitTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'namespace')) -eq 'collaboration' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'name')) -eq 'wait_agent' })
-    $recordTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'mcp_tool_call_end' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'invocation', 'tool')) -eq 'record_outcome' })
+    $recordTrace = @($implementationTrace | Where-Object { (Get-McpTraceTool -Entry $_) -eq 'record_outcome' })
     if ($routeTrace.Count -ne 1 -or $spawnTrace.Count -ne 1 -or $waitTrace.Count -ne 1 -or $recordTrace.Count -ne 1 -or $outcomeCalls.Count -ne 1) { throw 'managed review lifecycle call cardinality differs from one route, spawn, wait, and outcome' }
     $spawnCallId = [string](Get-NestedPropertyValue -InputObject $spawnTrace[0] -Path @('payload', 'call_id'))
     $waitCallId = [string](Get-NestedPropertyValue -InputObject $waitTrace[0] -Path @('payload', 'call_id'))
@@ -631,11 +658,11 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     for ($traceIndex = 0; $traceIndex -lt $implementationTrace.Count; $traceIndex += 1) {
         $entry = $implementationTrace[$traceIndex]
         $payloadType = Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'type')
-        $toolName = Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'invocation', 'tool')
-        if ($payloadType -eq 'mcp_tool_call_end' -and $toolName -eq 'route_stage') { $tracePositions.route = $traceIndex }
+        $toolName = Get-McpTraceTool -Entry $entry
+        if ($toolName -eq 'route_stage') { $tracePositions.route = $traceIndex }
         if ($payloadType -eq 'function_call' -and (Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'namespace')) -eq 'collaboration' -and (Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'name')) -eq 'spawn_agent') { $tracePositions.spawn = $traceIndex }
         if ($payloadType -eq 'function_call_output' -and (Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'call_id')) -eq $waitCallId) { $tracePositions.waited = $traceIndex }
-        if ($payloadType -eq 'mcp_tool_call_end' -and $toolName -eq 'record_outcome') { $tracePositions.outcome = $traceIndex }
+        if ($toolName -eq 'record_outcome') { $tracePositions.outcome = $traceIndex }
     }
     if (-not ($tracePositions['route'] -lt $tracePositions['spawn'] -and $tracePositions['spawn'] -lt $tracePositions['waited'] -and $tracePositions['waited'] -lt $tracePositions['outcome'])) { throw 'managed review lifecycle order is not route, spawn, wait completion, outcome' }
     $RouteEvidence.action = 'delegate'
@@ -751,11 +778,7 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
         $shadowStatusAfter,
         $shadowDoctorAfter,
         $shadowLearningAfter,
-        $pendingHistory,
-        $postKeepAutomatic,
-        $secondPendingStatus,
-        $secondPendingHistory,
-        $manualHistory,
+        $qualificationHistory,
         $disabledHistory,
         $secondStatus
     )
