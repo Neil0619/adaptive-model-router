@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   auditNativeLifecycleTranscript,
   auditNativeLifecycle1533Transcript,
+  auditNativeLifecycle1534Transcript,
   auditNativeRecoveryTranscript,
   readNativeRecoveryTranscript,
 } from "./native-recovery-audit.mjs";
@@ -12,8 +13,14 @@ const AUDITORS = Object.freeze({
   "0.153.0-alpha.5": auditNativeRecoveryTranscript,
   "0.153.0": auditNativeLifecycleTranscript,
   "0.153.3": auditNativeLifecycle1533Transcript,
+  "0.153.4": auditNativeLifecycle1534Transcript,
 });
 export const NATIVE_LIFECYCLE_CLI_VERSIONS = Object.freeze(Object.keys(AUDITORS));
+
+export function supportsNativeLifecycleHost(platform, cliVersion) {
+  if (platform === "win32") return cliVersion === "0.153.4";
+  return platform === "darwin" && ["0.153.0-alpha.5", "0.153.0", "0.153.3"].includes(cliVersion);
+}
 
 function requireFact(value) {
   if (!value) throw new Error("native no-op evidence is unproven");

@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "date": "2026-09-06",
+  "kind": "native-build-static-source-review",
+  "productionAdmission": false,
+  "nativeRoundTrip": "passed",
+  "nativeRoundTripEvidence": "windows-cli1534-native-validation.json",
+  "host": {
+    "platform": "win32",
+    "arch": "x64",
+    "cliVersion": "0.153.4",
+    "executableDigest": "a1cf6360ca71918d5466bc3a32d9f18b7044c9128756d1949e715d277b88c9b6"
+  },
+  "upstream": {
+    "repository": "https://github.com/openai/codex",
+    "baseTag": "rust-v0.153.3",
+    "baseCommit": "29d1e7f316229cd65c7e4a70476050c14962cf10",
+    "targetTag": "rust-v0.153.4",
+    "targetCommit": "3d2ee51ca2d5db578f328aa75e20aa22c0197c9a",
+    "changedAreas": [
+      "codex-rs/Cargo.toml: workspace version",
+      "codex-rs/models-manager/models.json: model catalog",
+      "codex-rs/tui: model selection snapshot"
+    ],
+    "unchangedReviewedAreas": [
+      "codex-rs/hooks",
+      "codex-rs/core/src/tools",
+      "codex-rs/core/src/rollout",
+      "codex-rs/protocol",
+      "codex-rs/core/src/session",
+      "codex-rs/app-server/src"
+    ]
+  },
+  "shellDispatch": {
+    "configurationSource": "codex-rs/core/src/session/mod.rs: build_hooks_config",
+    "executionSource": "codex-rs/hooks/src/engine/command_runner.rs: build_command",
+    "finding": "Hook commands run through the configured task shell; a quoted Node executable alone is not a PowerShell invocation.",
+    "installedCommandChecks": {
+      "cmd.exe": "PASS",
+      "Windows PowerShell 5.1": "PASS",
+      "PowerShell 7": "PASS"
+    }
+  },
+  "admissionBoundary": "Static source equivalence does not grant ordinary delegation. Every task still requires trusted current Hook hashes, all four native lifecycle observations, exact parent/child/model binding, and two stable reads of the complete no-tool child source stream."
+}
