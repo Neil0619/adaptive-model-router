@@ -65,6 +65,32 @@ ConvertTo-Json -InputObject @($failures) -Compress
   ]);
 });
 
+test("native child completion remains valid when a later mailbox wait times out", () => {
+  const result = run(`
+$events=@(
+  @{type='event_msg';payload=@{type='item_completed';item=@{type='SubAgentActivity';kind='started';agent_path='/root/review';agent_thread_id='child'}}},
+  @{type='event_msg';payload=@{type='item_completed';item=@{type='SubAgentActivity';kind='completed';agent_path='/root/review';agent_thread_id='child'}}},
+  @{type='response_item';payload=@{type='function_call_output';output='{"timed_out":true,"message":"Wait timed out."}'}}
+) | ConvertTo-Json -Depth 8 | ConvertFrom-Json -Depth 8
+Get-BoundedLifecyclePositions -Trace $events -AgentPath '/root/review' | ConvertTo-Json -Compress
+`);
+  assert.deepEqual(result, { Started: 0, Completed: 1 });
+});
+
+test("native child completion rejects another child, a missing stop, and reversed lifecycle events", () => {
+  const result = run(`
+function Event($kind,$id='child',$path='/root/review') { @{type='event_msg';payload=@{type='item_completed';item=@{type='SubAgentActivity';kind=$kind;agent_path=$path;agent_thread_id=$id}}} }
+$failures=@()
+$cases=@(@((Event 'started'),(Event 'completed' 'other-child')),@((Event 'started'),(Event 'completed' 'child' '/root/other')),@((Event 'completed'),(Event 'started')))
+foreach($case in $cases){
+  $events=ConvertTo-Json -InputObject $case -Depth 8 | ConvertFrom-Json -Depth 8
+  try { Get-BoundedLifecyclePositions -Trace $events -AgentPath '/root/review' | Out-Null } catch { $failures += $_.Exception.Message }
+}
+ConvertTo-Json -InputObject @($failures) -Compress
+`);
+  assert.deepEqual(result, Array(3).fill("native subagent start and completion do not identify one finished child"));
+});
+
 test("Windows lifecycle stops only Router processes in the marked Home cache", { skip: process.platform !== "win32" }, async () => {
   const root = mkdtempSync(join(tmpdir(), "adaptive-router-process-scope-"));
   const home = join(root, "dedicated");
