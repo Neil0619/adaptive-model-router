@@ -328,10 +328,43 @@ function Read-BoundedSubagentExecution {
         -not [string]::IsNullOrWhiteSpace([string](Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'effort')))
     })
     if ($turnContexts.Count -lt 1) { throw 'bounded-subagent execution trace lacks model and effort metadata' }
+    $completed = @($matches[0] | Where-Object {
+        (Get-NestedPropertyValue -InputObject $_ -Path @('type')) -eq 'event_msg' -and
+        (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'task_complete'
+    })
+    $messages = @($matches[0] | Where-Object {
+        (Get-NestedPropertyValue -InputObject $_ -Path @('type')) -eq 'response_item' -and
+        (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'message' -and
+        (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'role')) -eq 'assistant'
+    })
+    if ($completed.Count -eq 0 -or $messages.Count -eq 0) { throw 'bounded-subagent trace lacks a completed final response' }
+    $finalMessage = @((Get-NestedPropertyValue -InputObject $messages[-1] -Path @('payload', 'content')) | ForEach-Object {
+        [string](Get-NestedPropertyValue -InputObject $_ -Path @('text'))
+    }) -join ''
+    if ([string]::IsNullOrWhiteSpace($finalMessage)) { throw 'bounded-subagent final response is empty' }
     return [pscustomobject]@{
         Model = [string](Get-NestedPropertyValue -InputObject $turnContexts[-1] -Path @('payload', 'model'))
         Effort = [string](Get-NestedPropertyValue -InputObject $turnContexts[-1] -Path @('payload', 'effort'))
+        FinalMessage = $finalMessage
     }
+}
+
+function Get-BoundedLifecyclePositions {
+    param([Parameter(Mandatory=$true)][object[]]$Trace, [Parameter(Mandatory=$true)][string]$AgentPath)
+    $started = @(); $completed = @()
+    for ($index=0; $index -lt $Trace.Count; $index++) {
+        $entry=$Trace[$index]
+        if ((Get-NestedPropertyValue -InputObject $entry -Path @('type')) -ne 'event_msg' -or (Get-NestedPropertyValue -InputObject $entry -Path @('payload','type')) -ne 'item_completed') { continue }
+        $item=Get-NestedPropertyValue -InputObject $entry -Path @('payload','item')
+        if ((Get-NestedPropertyValue -InputObject $item -Path @('type')) -ne 'SubAgentActivity' -or (Get-NestedPropertyValue -InputObject $item -Path @('agent_path')) -ne $AgentPath) { continue }
+        $id=[string](Get-NestedPropertyValue -InputObject $item -Path @('agent_thread_id'))
+        if ([string]::IsNullOrWhiteSpace($id)) { throw 'native subagent lifecycle lacks child identity' }
+        $kind=Get-NestedPropertyValue -InputObject $item -Path @('kind')
+        if ($kind -eq 'started') { $started += [pscustomobject]@{Index=$index;Id=$id} }
+        if ($kind -eq 'completed') { $completed += [pscustomobject]@{Index=$index;Id=$id} }
+    }
+    if ($started.Count -ne 1 -or $completed.Count -ne 1 -or $started[0].Id -ne $completed[0].Id -or $started[0].Index -ge $completed[0].Index) { throw 'native subagent start and completion do not identify one finished child' }
+    return [pscustomobject]@{Started=$started[0].Index;Completed=$completed[0].Index}
 }
 
 function Get-NewRoutes {
@@ -739,7 +772,11 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     try { $spawnResult = (Get-NestedPropertyValue -InputObject $spawnOutput[0] -Path @('payload', 'output')) | ConvertFrom-Json -Depth 20 } catch { throw 'bounded-subagent spawn result is invalid' }
     try { $waitResult = (Get-NestedPropertyValue -InputObject $waitOutput[0] -Path @('payload', 'output')) | ConvertFrom-Json -Depth 20 } catch { throw 'bounded-subagent wait result is invalid' }
     $agentPath = [string](Get-NestedPropertyValue -InputObject $spawnResult -Path @('task_name'))
-    if ([string]::IsNullOrWhiteSpace($agentPath) -or (Get-NestedPropertyValue -InputObject $waitResult -Path @('timed_out')) -ne $false -or [string](Get-NestedPropertyValue -InputObject $waitResult -Path @('message')) -notmatch 'finished|completed|final') { throw 'bounded subagent was not observed to finish before outcome recording' }
+    if ([string]::IsNullOrWhiteSpace($agentPath)) { throw 'bounded-subagent spawn result lacks its path' }
+    # wait_agent observes new mailbox activity, so it may time out after the
+    # child's completion was already delivered. Bind completion to the actual
+    # native child event and independently read that child's final checklist.
+    $childLifecycle = Get-BoundedLifecyclePositions -Trace $implementationTrace -AgentPath $agentPath
     $tracePositions = [ordered]@{}
     for ($traceIndex = 0; $traceIndex -lt $implementationTrace.Count; $traceIndex += 1) {
         $entry = $implementationTrace[$traceIndex]
@@ -751,6 +788,7 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
         if ($toolName -eq 'record_outcome') { $tracePositions.outcome = $traceIndex }
     }
     if (-not ($tracePositions['route'] -lt $tracePositions['spawn'] -and $tracePositions['spawn'] -lt $tracePositions['waited'] -and $tracePositions['waited'] -lt $tracePositions['outcome'])) { throw 'managed review lifecycle order is not route, spawn, wait completion, outcome' }
+    if (-not ($tracePositions['spawn'] -lt $childLifecycle.Started -and $childLifecycle.Completed -lt $tracePositions['outcome'])) { throw 'native subagent completion did not precede outcome recording' }
     $RouteEvidence.action = 'delegate'
     $RouteEvidence.targetFamily = Get-ModelFamily -Model ([string]$route.target.model)
     $RouteEvidence.targetEffort = [string]$route.target.effort
@@ -762,6 +800,9 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     if ($RouteEvidence.targetFamily -notin @('astra')) { throw 'automatic bounded target escaped the GPT-6 capability set' }
     $subagentExecution = Read-BoundedSubagentExecution -ParentContext $SessionId -AgentPath $agentPath -StartedAfter $reviewStartedAt
     if ($subagentExecution.Model -ne [string]$route.target.model -or $subagentExecution.Effort -ne [string]$route.target.effort) { throw 'bounded-subagent execution did not use the routed target model and effort' }
+    $reportedSummary = $implementationTurn.LastMessage | ConvertFrom-Json -Depth 20
+    $observedSummary = [ordered]@{ rootReview=$reportedSummary.rootReview; subagentReview=($subagentExecution.FinalMessage | ConvertFrom-Json -Depth 20); agreement=$reportedSummary.agreement; testExecution=$reportedSummary.testExecution }
+    Assert-StructuredReviewSummary -Text ($observedSummary | ConvertTo-Json -Depth 20 -Compress)
     if ($route.rootTask.changedByRouter -ne $false -or [string]::IsNullOrWhiteSpace([string]$route.rootTask.model)) { throw 'history did not preserve the root versus bounded-target boundary' }
     if ($DiagnosticEvidence.databaseHealth -ne 'ok' -or $DiagnosticEvidence.classifierState -ne 'closed') { throw 'router diagnostics are not healthy' }
     Assert-PrivateProjection -Values @($status, $history, $doctor, $learningBeforeIntent)
