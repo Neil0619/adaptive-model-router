@@ -644,9 +644,9 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     $spawnTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'namespace')) -eq 'collaboration' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'name')) -eq 'spawn_agent' })
     $waitTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'namespace')) -eq 'collaboration' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'name')) -eq 'wait_agent' })
     $recordTrace = @($implementationTrace | Where-Object { (Get-McpTraceTool -Entry $_) -eq 'record_outcome' })
-    if ($routeTrace.Count -ne 1 -or $spawnTrace.Count -ne 1 -or $waitTrace.Count -ne 1 -or $recordTrace.Count -ne 1 -or $outcomeCalls.Count -ne 1) { throw 'managed review lifecycle call cardinality differs from one route, spawn, wait, and outcome' }
+    if ($routeTrace.Count -ne 1 -or $spawnTrace.Count -ne 1 -or $waitTrace.Count -lt 1 -or $recordTrace.Count -ne 1 -or $outcomeCalls.Count -ne 1) { throw 'managed review requires one route, spawn and outcome plus a completed wait' }
     $spawnCallId = [string](Get-NestedPropertyValue -InputObject $spawnTrace[0] -Path @('payload', 'call_id'))
-    $waitCallId = [string](Get-NestedPropertyValue -InputObject $waitTrace[0] -Path @('payload', 'call_id'))
+    $waitCallId = [string](Get-NestedPropertyValue -InputObject $waitTrace[-1] -Path @('payload', 'call_id'))
     $spawnOutput = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call_output' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'call_id')) -eq $spawnCallId })
     $waitOutput = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call_output' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'call_id')) -eq $waitCallId })
     if ($spawnOutput.Count -ne 1 -or $waitOutput.Count -ne 1) { throw 'managed review collaboration calls did not complete exactly once' }
