@@ -267,11 +267,12 @@ skill visibly reports that boundary and the selected action after every
 `route_stage` call.
 
 Routine notices omit debugging route IDs and show delegated stages as
-`stage · model / effort / service_tier`. Exact IDs remain in route records,
+`stage · model / effort`. Exact IDs remain in route records,
 status/history, and diagnostics for child correlation and verification.
-When the host does not expose the child's tier, the notice shows
-`service_tier=unknown`; this does not mean Fast is off and is not inferred from
-the parent's Fast setting. Requested-only tier evidence is labeled as such,
+When the host does not expose the child's tier, the notice omits `service_tier`.
+The field appears only with direct evidence for that child; an omitted tier does
+not mean Fast is off and is not inferred from the parent's Fast setting.
+Requested-only tier evidence is labeled as such,
 not presented as the actually served tier. Reporting never changes Fast.
 
 The first observed model in a task is a baseline. If the slug changes later,

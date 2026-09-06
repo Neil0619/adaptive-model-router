@@ -287,7 +287,8 @@ assert(!skill.includes("using exactly `target.model` and `target.effort`"), "ski
 assert(skill.includes("root-task model is unchanged and host-managed"), "skill must require a visible root/stage model boundary");
 assert(skill.includes("omit `routeId` and `blockingRouteId` from routine conversation notices"), "routine notices must not require debug identifiers");
 assert(skill.includes("Keep the exact IDs internally"), "compact notices must preserve lifecycle correlation");
-assert(skill.includes("service_tier=unknown"), "unobserved child service tiers must remain explicit");
+assert(skill.includes("omit the `service_tier` field from routine notices"), "routine notices must omit unobserved child service tiers");
+assert(!skill.includes("service_tier=unknown"), "routine notice examples must not display unknown service tiers");
 assert(skill.includes("actually served"), "requested service tiers must not be presented as served tiers");
 assert(skill.includes("global automatic activation"), "skill must document opt-in automatic activation");
 assert(!skill.includes("can recommend one bounded subagent model"), "skill must not weaken delegate into a recommendation");

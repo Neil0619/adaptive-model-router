@@ -547,8 +547,8 @@ distinction and score thresholds.
 Routine conversation notices intentionally omit route IDs. They remain in
 explicit status/history reports and internal route/outcome records; missing
 IDs in a normal notice do not mean that tracing was disabled. A delegated
-target includes `service_tier=unknown` when no direct, child-scoped host
-evidence is available. Do not interpret that as Standard mode or infer Fast
+target omits `service_tier` when no direct, child-scoped host
+evidence is available. Do not interpret that omission as Standard mode or infer Fast
 from the parent setting or a model's supported tiers. A requested tier alone
 does not verify the tier actually used to serve the request.
 

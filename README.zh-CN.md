@@ -217,10 +217,10 @@ Hook 可以观察根模型 slug，但读不到 Max/High 等 reasoning effort；�
 `delegate` 中的 `target.model`/`target.effort` 只是当前 bounded stage 的
 subagent 目标。每次 `route_stage` 后，skill 会明确显示这条边界和本次动作。
 
-日常通知省略排查用的 route ID，委派阶段显示“阶段 · 模型 / effort / service_tier”。
+日常通知省略排查用的 route ID，委派阶段显示“阶段 · 模型 / effort”。
 编号仍保留在路由记录、状态/历史查询和诊断中，不影响子任务关联或验收。
-当前接口未提供子任务服务档位时显示 `service_tier=unknown（宿主未提供）`；这不代表
-Fast 已关闭，也不会根据主任务 Fast 设置推测。仅观察到请求档位时会明确标注，
+当前接口未提供子任务服务档位时省略 `service_tier` 字段，仅有该子任务的直接证据时才展示。
+字段省略不代表 Fast 已关闭，也不会根据主任务 Fast 设置推测。仅观察到请求档位时会明确标注，
 不会当作实际服务档位；该展示不修改 Fast 设置。
 
 当前任务首次观察到的模型只作为基线，不询问。如果随后 slug 发生变化，本轮和未
