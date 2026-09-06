@@ -64,9 +64,9 @@ test("status is current-context only and clear_project_data requires confirmatio
   try {
     await withRouterEnvironment(project, async () => {
       const store = new RouterStore();
-      const routeA = await routeStage(routeInput({ contextId: "context-a", override: { model: "gpt-5.6-sol" } }), { catalog: CATALOG, cwd: project.root, store });
-      const routeB = await routeStage(routeInput({ contextId: "context-b", override: { model: "gpt-5.6-luna" } }), { catalog: CATALOG, cwd: project.root, store });
-      await routeStage(routeInput({ contextId: "other", override: { model: "gpt-5.6-terra" } }), { catalog: CATALOG, cwd: other, store });
+      const routeA = await routeStage(routeInput({ contextId: "context-a", override: { model: "gpt-6-astra" } }), { catalog: CATALOG, cwd: project.root, store });
+      const routeB = await routeStage(routeInput({ contextId: "context-b", override: { model: "gpt-6-astra" } }), { catalog: CATALOG, cwd: project.root, store });
+      await routeStage(routeInput({ contextId: "other", override: { model: "gpt-6-astra" } }), { catalog: CATALOG, cwd: other, store });
       store.observeHostModel(store.context({ cwd: project.root, contextId: "context-a" }), "gpt-5.6-sol", { detectChanges: false });
       store.observeHostModel(store.context({ cwd: other, contextId: "other" }), "gpt-5.6-terra", { detectChanges: false });
       const statusA = await callRouterTool("get_route_status", { contextId: "context-a" }, { store, cwd: project.root });

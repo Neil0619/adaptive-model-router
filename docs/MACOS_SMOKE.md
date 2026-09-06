@@ -25,11 +25,11 @@ Do not create or push the release tag from this smoke task.
   the required `spawn_agent` action, and creates no outcome; if the guarded Stop
   re-entry still finds the ticket unconsumed, it marks the lifecycle ambiguous
   and retains the gate until authoritative reconciliation.
-- A Sol/Terra-only bounded capability never returns Luna; an explicit Luna
+- A GPT-6-only policy never delegates outside its scope; an explicit Luna
   override asks the user without starting a subagent.
 - Route and execution metadata keep the root boundary unchanged while recording
   the bounded target separately. A visible selector check is optional UX only.
-- A changed model slug stays root-only while pending; keep-automatic resumes on
+- Offline changed-model events stay root-only while pending; keep-automatic resumes on
   the next stage, and current-task manual mode prevents delegation.
 - Status, history, diagnostics, Hook output, and SQLite contain no prompt,
   source, secret, or absolute project path.
@@ -178,28 +178,19 @@ feedback, fabricate an `unknown` outcome, or replace the final user-facing reply
 
 ## 4. Exercise both host-model decisions
 
-Use a dedicated persistent CLI session and host-managed `codex exec`/`resume`
-model arguments to automate the section 6 contract from the
-[Windows smoke runbook](WINDOWS_SMOKE.md):
+For the GPT-6-only policy, root-model slug changes are covered by offline events:
 
-1. Establish an initial model slug, then select a different slug on a resumed
-   turn, not only a different effort.
-2. Submit the ordinary review prompt and confirm `continue` with
-   `HOST_MODEL_INTENT_PENDING`, no subagent, and one stable change ID across an
-   unanswered reminder.
-3. Submit `router: auto session`; confirm automatic mode resumes from the next
-   substantive stage.
-4. Return to the initial slug, prove a distinct pending event, submit
-   `router: manual`, and confirm a substantive `route_stage` returns `continue`
-   with `MANUAL_ROOT_SELECTED` and no target.
-5. Submit `router: auto session`, then verify automatic mode, no pending change,
-   and the initial root-model slug.
+```sh
+node --test test/host-model.test.mjs test/hook.test.mjs
+```
 
-Record that effort-only changes are not visible to the Hook and require an
-explicit `router: manual` when they mean root-only intent.
-
-Also run the negative control in section 7 of the
-[Windows smoke runbook](WINDOWS_SMOKE.md).
+Run these from the plugin directory. They cover baseline, pending,
+keep-automatic, manual-root and restoration without model inference. Label
+this coverage `HOST_MODEL_INTENT_OFFLINE_ONLY`; do not describe it as a live
+cross-model test. Every logged-in invocation must use the shared allowed
+scope and actual execution capabilities. Use `model-target --purpose smoke`
+to resolve its target; never call Sol to complete a slug-change branch.
+The root remains host-managed throughout.
 
 ## 5. Exercise scoring-evolution visibility
 
@@ -209,7 +200,7 @@ In the same temporary project:
    active scoring profile is versioned, and no prompt or path is returned.
 2. Record the current counts of routes, outcomes, proposals, and learning
    cursors. Call `shadow_route_stage` for one risk review stage using the
-   active definition. Confirm `shadow: true`, `sideEffects: false`, a Sol-high
+   active definition. Confirm `shadow: true`, `sideEffects: false`, a GPT-6 high
    or stronger preference, and unchanged counts.
 3. Confirm the completed delegated route's outcome includes a four-field
    `retryBreakdown` whose sum equals `retries`.

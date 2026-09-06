@@ -1,7 +1,7 @@
 export const ROUTER_VERSION = "0.4.0";
-export const SCHEMA_VERSION = "5.0";
-export const DATABASE_VERSION = 5;
-export const STORAGE_CONTRACT_VERSION = 2;
+export const SCHEMA_VERSION = "6.0";
+export const DATABASE_VERSION = 6;
+export const STORAGE_CONTRACT_VERSION = 3;
 export const MIN_NODE = [24, 15, 0];
 export const MAX_ESCALATIONS = 2;
 export const CLASSIFIER_TIMEOUT_MS = 8_000;
@@ -41,6 +41,9 @@ export const FAILURE_TYPES = ["reasoning", "environment", "information", "toolin
 export const VERIFICATION_GATES = ["none", "task-specific", "targeted-tests", "structured-check", "full-checks"];
 
 export const REASON_CODES = [
+  "MODEL_SCOPE_DENIED", "RISK_TARGET_CONFLICT", "NO_ALLOWED_TARGET",
+  "MODEL_POLICY_CHANGED", "MODEL_STAGE_POLICY_CHANGED", "MODEL_STAGE_HELD",
+  "QUALITY_DEFAULT", "CRITICAL_CONDITIONS", "COMPLEX_CONDITIONS", "SETTLED_VERIFIED", "EXACT_MECHANICAL",
   "TRIVIAL_CONTINUE",
   "NO_WORK_PRODUCT",
   "LOW_COMPLEXITY_CONTINUE",
@@ -99,7 +102,7 @@ export const REASON_CODES = [
 export const DEFAULT_SETTINGS = Object.freeze({
   enabled: true,
   autoActivate: false,
-  classifierMode: "auxiliary",
+  classifierMode: "local-only",
   allowGlobalOverride: false,
 });
 

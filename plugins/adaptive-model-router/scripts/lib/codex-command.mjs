@@ -1,22 +1,18 @@
-import { execFile, spawnSync } from "node:child_process";
 import { access, constants as fsConstants } from "node:fs/promises";
 import { accessSync } from "node:fs";
 import { delimiter, dirname, resolve, win32 } from "node:path";
-import { promisify } from "node:util";
 
-const execFileAsync = promisify(execFile);
 const MAC_BINARIES = [
   "/Applications/Codex.app/Contents/Resources/codex",
   "/Applications/ChatGPT.app/Contents/Resources/codex",
 ];
-const WINDOWS_BINARIES = ["codex.cmd", "codex.exe", "codex.bat"];
+// Prefer the native executable (including Desktop's bundled CLI) over an npm
+// shim that may run an older host with different Hook and transcript contracts.
+// An explicit CODEX_BIN still takes precedence.
+const WINDOWS_BINARIES = ["codex.exe", "codex.cmd", "codex.bat"];
 
 function windowsKind(path) {
   return /\.(?:cmd|bat)$/i.test(path) ? "cmd" : "direct";
-}
-
-function firstOutputLine(stdout) {
-  return String(stdout).split(/\r?\n/u).map((line) => line.trim()).find(Boolean);
 }
 
 function pathCandidates(env, name) {
@@ -51,12 +47,10 @@ export async function resolveCodexCommand({ platform = process.platform, env = p
   }
   if (platform === "win32") {
     for (const name of WINDOWS_BINARIES) {
-      try {
-        const { stdout } = await execFileAsync("where.exe", [name], { env, windowsHide: true, timeout: 2_000 });
-        const candidate = firstOutputLine(stdout);
-        if (candidate) return { path: candidate, kind: windowsKind(candidate) };
-      } catch {
-        // Try the next directly runnable Windows command.
+      // where.exe uses the console code page, which corrupts Unicode paths
+      // when decoded as UTF-8. Inspect PATH entries through the filesystem.
+      for (const path of pathCandidates(env, name)) {
+        if (await executable(path)) return { path, kind: windowsKind(path) };
       }
     }
     return { path: "codex.exe", kind: "direct" };
@@ -72,15 +66,9 @@ export function resolveCodexCommandSync({ platform = process.platform, env = pro
   }
   if (platform === "win32") {
     for (const name of WINDOWS_BINARIES) {
-      const result = spawnSync("where.exe", [name], {
-        encoding: "utf8",
-        env,
-        timeout: 2_000,
-        windowsHide: true,
-      });
-      if (result.status !== 0) continue;
-      const candidate = firstOutputLine(result.stdout);
-      if (candidate) return { path: candidate, kind: windowsKind(candidate) };
+      for (const path of pathCandidates(env, name)) {
+        if (executableSync(path)) return { path, kind: windowsKind(path) };
+      }
     }
     return { path: "codex.exe", kind: "direct" };
   }

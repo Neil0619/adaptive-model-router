@@ -237,6 +237,19 @@ successful recovery alone does not repair that dispatch path.
 
 ### Explicitly authorize one diagnostic requalification
 
+The same explicit operator command also supports renewing an already passed
+qualification after a compatible runtime or Hook-cache upgrade on a supported
+native host, including Windows Codex 0.153.4. The old task must have a completed,
+unambiguous child and a passed source-verified outcome, the task directory must
+match, and the freshly inspected binding must have changed. Preview the current
+evidence digest, then approve that exact digest with
+`--approve-one-no-tool-requalification`. The next route runs only the fixed
+no-tool qualification; ordinary delegation remains blocked until its new audit
+passes. The old qualification is archived, and its route and outcome are kept.
+This successful-upgrade case does not enable diagnostic capture. Calling
+`route_stage` alone never renews a qualification, and failed or pending audits
+cannot use this path.
+
 Only after the operator approves another fixed no-tool self-test, use
 `scripts/authorize-requalification.mjs` from the affected project directory.
 It requires the exact `/3` recovery receipt and unchanged original failure:
@@ -530,6 +543,14 @@ The selector always describes the root task and never changes to show a bounded
 subagent. History rows separately label their root-model snapshot and bounded
 stage target. See [Routing triggers and history](ROUTING.md) for the exact
 distinction and score thresholds.
+
+Routine conversation notices intentionally omit route IDs. They remain in
+explicit status/history reports and internal route/outcome records; missing
+IDs in a normal notice do not mean that tracing was disabled. A delegated
+target omits `service_tier` when no direct, child-scoped host
+evidence is available. Do not interpret that omission as Standard mode or infer Fast
+from the parent setting or a model's supported tiers. A requested tier alone
+does not verify the tier actually used to serve the request.
 
 ## A model change reminder keeps appearing
 

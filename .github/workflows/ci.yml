@@ -30,6 +30,9 @@ jobs:
           check-latest: true
       - name: Test
         run: npm test
+      - name: Run Windows smoke regression tests
+        if: runner.os == 'Windows'
+        run: node --test ../../scripts/test/windows-smoke.test.mjs
       - name: Validate syntax, contracts, manifest, and marketplace
         run: npm run validate
       - name: Run bilingual routing benchmark

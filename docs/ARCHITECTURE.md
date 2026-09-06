@@ -60,7 +60,8 @@ flowchart LR
   installed MCP contract, invokes the same MCP `tools/call`, returns the raw
   structured result, and exits. It uses the trusted Hook's fixed context ID and
   the same stable plugin data directory as Hooks and native MCP.
-- `scripts/lib/router.mjs` applies deterministic scoring, override priority, catalog capability checks, and monotonic escalation.
+- `scripts/lib/router.mjs` applies task conditions, override priority, catalog capability checks, and bounded reasoning escalation.
+- `scripts/lib/model-policy.mjs` compiles the versioned scope, conditions and target bindings; `model-policy-store.mjs` owns read-only preview, atomic activation, rollback and in-flight inference leases.
 - `scripts/lib/scorer.mjs` evaluates an immutable scoring-profile definition;
   approved project category offsets remain a separate bounded layer.
 - `scripts/lib/app-server.mjs` owns one short-lived classifier app-server
@@ -110,19 +111,19 @@ flowchart LR
    resolving `manual_root` lasts only for the current task/context.
 5. Resolve overrides in this order: request, once, session, project, optional global.
 6. Continue immediately for trivial/no-output work unless an override explicitly requests delegation.
-7. Load the root-visible catalog only for observation and conservative
-   compatibility. Build the bounded delegate catalog from the current
-   `hostCapabilities.delegation`; when absent, permit only known Sol/Terra
-   entries from the visible catalog. Never infer Luna delegation from root
-   visibility. An active delegation gate is checked before any later
-   unavailable capability declaration. An empty `list_agents` result is not a
-   capability signal, and a context with a proven direct child cannot downgrade
-   without an actual no-child tooling rejection.
-8. Score locally. Only substantive borderline stages may call the auxiliary
-   classifier. Its independent ephemeral app-server calls `model/list` and
-   chooses Luna, then Terra, then Sol from that classifier-only catalog.
-9. Apply risk floors and any monotonic failure escalation.
-10. Insert the route. A once override is claimed and deleted in the same transaction as a real `delegate` insert. The row snapshots the currently observed root-model slug separately from the bounded target.
+7. Build the bounded catalog only from the actual direct interface capabilities.
+   Missing capabilities do not imply any available subagent. Check an active
+   gate before accepting a later unavailable declaration; proven direct child
+   capability cannot be downgraded without an authoritative tooling rejection.
+8. Classify explicit task conditions using the immutable model-policy snapshot.
+   Scores and legacy offsets remain diagnostic. Default classification is local;
+   optional auxiliary calls intersect their independent live catalog with the
+   same scope and hold a policy lease until completion.
+9. Apply risk floors and recorded stage escalation. Model candidates do not add
+   task categories. Select a configured binding or its permitted fallback.
+10. Atomically recheck the active policy digest, allowed target and delegation
+    admission. Consume once only on a committed delegate. Persist the policy ID,
+    digest, work level, condition and hashed stage identity with the route.
 11. Trusted Hook inventory is necessary but not sufficient for delegation. A
     source-owned native capability proof must first establish that the exact
     host Agent path dispatches the full lifecycle. Supported macOS hosts may
@@ -320,29 +321,27 @@ one real already-open Desktop task crosses the upgrade and completes
 `route_stage → delegate → record_outcome` with the same context, unchanged
 root model, one bounded target, and one final outcome.
 
-Storage contract 1 permits only forward-compatible, additive database
-migrations: existing tables and columns remain, and additions must not make old
-writes invalid. A v0.4 shell may read a newer `user_version` only after checking
-its required table/column shape; otherwise it stops instead of guessing.
+The GPT-6 migration uses database 6, storage contract 3, tool contract 7 and
+live workflow contract 4. Old rows and scoring profiles are preserved, while a
+new delegate requires a policy decision. This is an incompatible contract
+transition, not a compatible hot swap for an old shell.
 
-## Scoring evolution
+## Model policy and scoring evolution
 
-Online learning remains deliberately narrow: it proposes only category offsets
-within `[-15, 15]`. Routes with overrides, classifier adjustments, escalation,
-tooling retry, or unknown/non-reasoning outcomes are quarantined. Evidence must
-span distinct task contexts so one repeated session cannot anchor policy.
+`model-policy.json` contains allowed scope, conditions, six work-level bindings,
+fallbacks, escalation edges and inference-purpose bindings. `model-policy.mjs`
+validates/compiles an immutable definition and selects against an execution
+interface. `model-policy-store.mjs` retains definitions by digest and activates
+or rolls back with a compare-and-swap transaction. Outstanding delegations and
+inference leases block activation. New defaults are pinned on database migration.
+Policy previews do not mutate the database or make model calls.
 
-Offline re-anchoring installs a higher-version profile only after explicit
-confirmation. The profile is immutable, links to its predecessor, preserves
-approved category offsets, marks pending proposals stale, and advances their
-evidence cursors. Shadow scoring runs the same deterministic scorer but writes
-no route, outcome, proposal, or cursor.
-
-After a final outcome, the database checks the persisted boolean snapshot
-against the non-negotiable risk floor. A risk/security/migration stage below
-Sol high is a hard invariant violation and rolls an active offline profile back
-to its parent. Ordinary failures, agreement drift, or weak statistical signals
-never trigger automatic rollback.
+Legacy scores, offsets, proposal windows and immutable profiles retain their
+meaning. New GPT-6 decisions apply zero old offset and their snapshots are
+observe-only. An enabled auxiliary classifier adjusts diagnostics only. The
+legacy safety rollback applies only to legacy outcomes. New conditions enforce
+the risk floor before delegation. See [the policy specification](MODEL-POLICY-GPT6.zh-CN.md)
+and [routing conditions](ROUTING.md) for the exact rules and evaluation limits.
 
 ## Concurrency
 
@@ -357,12 +356,11 @@ transaction that creates its immutable child revision.
 
 ## Failure behavior
 
-- Missing catalog or unavailable host delegation: continue with the current root model.
-- A preferred automatic family missing from the delegate catalog falls forward
-  to the next capable family; explicit unavailable targets ask the user.
-- A host tooling rejection excludes the failed automatic target for one retry.
-  Explicit routes never substitute, and a second automatic rejection continues
-  in the root.
+- Missing capabilities or unavailable host delegation: continue with the current root model; an explicit target instead returns a visible refusal.
+- An unavailable automatic target can use only configured fallbacks that satisfy
+  the risk and exceptional-level conditions. Explicit unavailable targets ask the user.
+- Tooling, environment and information failures preserve the stage target.
+  They never count as reasoning enhancements; unavailable held targets ask the user.
 - Pending host-model intent or current-task manual mode: continue with the root
   model and never create a bounded subagent.
 - Explicit unavailable target: ask the user; never silently substitute.

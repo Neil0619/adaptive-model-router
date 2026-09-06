@@ -21,17 +21,17 @@ test("history shows timestamped model transitions, outcomes, filters, and the ro
       store.observeHostModel(context, "gpt-5.6-sol", { detectChanges: false });
       const first = await routeStage(routeInput({
         contextId,
-        override: { model: "gpt-5.6-terra", effort: "medium" },
+        override: { model: "gpt-6-astra", effort: "medium" },
       }), { catalog: CATALOG, cwd: project.root, store });
       completeNoChildRoute(first, { store, cwd: project.root, contextId });
       const same = await routeStage(routeInput({
         contextId,
-        override: { model: "gpt-5.6-terra", effort: "medium" },
+        override: { model: "gpt-6-astra", effort: "medium" },
       }), { catalog: CATALOG, cwd: project.root, store });
       completeNoChildRoute(same, { store, cwd: project.root, contextId });
       const changed = await routeStage(routeInput({
         contextId,
-        override: { model: "gpt-5.6-sol", effort: "high" },
+        override: { model: "gpt-6-astra", effort: "high" },
       }), { catalog: CATALOG, cwd: project.root, store });
       completeNoChildRoute(changed, {
         store,
@@ -43,10 +43,11 @@ test("history shows timestamped model transitions, outcomes, filters, and the ro
       const continued = await routeStage(routeInput({
         contextId,
         evidence: { workProduct: true, hostCanDelegate: false },
+        hostCapabilities: { delegation: { available: false, invocation: "unavailable", targets: [] } },
       }), { catalog: CATALOG, cwd: project.root, store });
       await routeStage(routeInput({
         contextId: "other-context",
-        override: { model: "gpt-5.6-luna", effort: "low" },
+        override: { model: "gpt-6-astra", effort: "low" },
       }), { catalog: CATALOG, cwd: project.root, store });
 
       const history = await callRouterTool("get_route_history", {
@@ -69,8 +70,8 @@ test("history shows timestamped model transitions, outcomes, filters, and the ro
       ]);
       assert.equal(history.routes[0].transition.state, "not_delegated");
       assert.equal(history.routes[1].transition.state, "target_changed");
-      assert.deepEqual(history.routes[1].transition.from, { model: "gpt-5.6-terra", effort: "medium" });
-      assert.deepEqual(history.routes[1].transition.to, { model: "gpt-5.6-sol", effort: "high" });
+      assert.deepEqual(history.routes[1].transition.from, { model: "gpt-6-astra", effort: "medium" });
+      assert.deepEqual(history.routes[1].transition.to, { model: "gpt-6-astra", effort: "high" });
       assert.equal(history.routes[1].outcome.status, "failed");
       assert.equal(history.routes[1].outcome.source, "record_outcome");
       assert.equal(history.routes[1].outcome.userCorrection, false);

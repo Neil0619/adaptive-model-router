@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { realpathSync } from "node:fs";
+import { cpSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RouterStore } from "../scripts/lib/database.mjs";
@@ -9,10 +9,25 @@ import { consumeDelegationTicket, claimDelegationSubagent, observeAgentResult, o
 import { callRouterTool } from "../scripts/lib/service.mjs";
 import { recordOutcome } from "../scripts/lib/learning.mjs";
 import { payloadHash } from "../scripts/lib/io.mjs";
+import { authorizeRequalification } from "../scripts/lib/qualification-retry.mjs";
 import { observeQualificationHook, readTaskQualification, qualificationReadiness, runtimeSourceDigest } from "../scripts/lib/lifecycle-qualification.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+
+test("native source identity includes the model policy as well as executable code", async () => {
+  const project = await temporaryProject("router-source-policy-");
+  try {
+    const copied = resolve(project.root, "candidate");
+    cpSync(resolve(SOURCE_ROOT, "scripts"), resolve(copied, "scripts"), { recursive: true });
+    const source = readFileSync(resolve(SOURCE_ROOT, "model-policy.json"), "utf8");
+    writeFileSync(resolve(copied, "model-policy.json"), source);
+    assert.equal(runtimeSourceDigest(copied), runtimeSourceDigest());
+    const changed = JSON.parse(source); changed.id = "changed-bindings-candidate";
+    writeFileSync(resolve(copied, "model-policy.json"), JSON.stringify(changed));
+    assert.notEqual(runtimeSourceDigest(copied), runtimeSourceDigest());
+  } finally { await project.cleanup(); }
+});
 
 async function fixture(run) {
   const project = await temporaryProject("router-qualification-");
@@ -23,6 +38,7 @@ async function fixture(run) {
       const context = store.context({ cwd: project.root, contextId: input.contextId });
       store.observeHostModel(context, "gpt-5.6-sol");
       const binding = { digest: "a".repeat(64), runtimeDigest: runtimeSourceDigest(),
+        configurationDigest: "b".repeat(64),
         taskCwdDigest: payloadHash(realpathSync(project.root)),
         shellRoots: [payloadHash(SOURCE_ROOT)], cliVersion: "0.153.0" };
       const options = { store, cwd: project.root, catalog: CATALOG,
@@ -39,7 +55,7 @@ test("first eligible stage issues only a fixed no-tool qualification, without th
     const route = await routeStage(input, options);
     assert.equal(route.action, "delegate");
     assert.deepEqual(route.reasonCodes, ["HOST_LIFECYCLE_QUALIFICATION"]);
-    assert.deepEqual(route.target, { model: "gpt-5.6-sol", effort: "low" });
+    assert.deepEqual(route.target, { model: "gpt-6-astra", effort: "low" });
     assert.equal(route.verificationGate, "structured-check");
     const toolInput = { task_name: route.carrier.taskName, message: route.carrier.message,
       model: route.target.model, reasoning_effort: route.target.effort, fork_turns: "none" };
@@ -61,7 +77,7 @@ test("first eligible stage issues only a fixed no-tool qualification, without th
 
 test("qualification retains the ordinary one-child gate and never consumes a once override", async () => {
   await fixture(async ({ store, input, context, options }) => {
-    store.setOverride(context, { scope: "once", model: "gpt-5.6-terra", effort: "high" });
+    store.setOverride(context, { scope: "once", model: "gpt-6-astra", effort: "high" });
     const first = await routeStage(input, options);
     assert.equal(first.action, "delegate");
     const second = await routeStage(input, options);
@@ -161,6 +177,53 @@ test("changed qualification bindings invalidate admission without silently re-qu
     assert.deepEqual(next.reasonCodes, ["HOST_HOOK_SET_MISMATCH"]);
     assert.equal(readTaskQualification(store.db, context).state, "passed");
     assert.equal(store.db.prepare("SELECT count(*) AS n FROM delegation_attempts").get().n, 1);
+  });
+});
+
+test("an explicit upgrade authorization permits one fresh no-tool audit and preserves the passed audit", async () => {
+  await fixture(async (value) => {
+    const { store, context, input, options, binding, outcome, serviceOptions, route } = await completedQualification(value);
+    await callRouterTool("record_outcome", outcome, serviceOptions);
+    const prior = readTaskQualification(store.db, context);
+    binding.digest = "c".repeat(64);
+    binding.configurationDigest = "d".repeat(64);
+    binding.cliVersion = "0.153.4";
+    const request = { contextId: input.contextId, routeId: route.routeId };
+    const authorizeOptions = { store, cwd: value.project.root, inspectBinding: async () => ({ binding }) };
+    const preview = await authorizeRequalification(request, authorizeOptions);
+    assert.equal(preview.status, "authorizable");
+    assert.equal((await routeStage(input, options)).action, "continue");
+    assert.equal((await authorizeRequalification({ ...request, apply: true, expectedEvidenceDigest: "0".repeat(64) }, authorizeOptions)).status, "unresolved");
+    assert.equal((await authorizeRequalification({ ...request, apply: true, expectedEvidenceDigest: preview.evidenceDigest }, authorizeOptions)).status, "authorized");
+    const renewed = await routeStage(input, options);
+    assert.deepEqual(renewed.reasonCodes, ["HOST_LIFECYCLE_QUALIFICATION"]);
+    assert.equal(renewed.action, "delegate");
+    assert.notEqual(renewed.routeId, route.routeId);
+    assert.equal(readTaskQualification(store.db, context).state, "pending");
+    assert.deepEqual(JSON.parse(store.db.prepare("SELECT value FROM meta WHERE key=?").get(`native_qualification_archive:${route.routeId}`).value), prior);
+    assert.equal(store.db.prepare("SELECT status FROM outcomes WHERE route_id=?").get(route.routeId).status, "passed");
+    assert.equal((await routeStage(input, options)).action, "busy");
+    assert.equal((await authorizeRequalification(request, authorizeOptions)).status, "consumed");
+    assert.equal(store.db.prepare("SELECT count(*) AS n FROM meta WHERE key LIKE 'native_lifecycle_diagnostic:%'").get().n, 0);
+  });
+});
+
+test("upgrade requalification rejects an unchanged binding, changed project, or unsettled prior audit", async () => {
+  for (const mutate of [
+    () => {},
+    ({ binding }) => { binding.digest = "c".repeat(64); }, // A different pinned shell alone is not an upgrade.
+    ({ binding }) => { binding.digest = "c".repeat(64); binding.taskCwdDigest = "d".repeat(64); },
+    ({ binding, store, route }) => { binding.configurationDigest = "d".repeat(64); store.db.prepare("UPDATE delegation_attempts SET ambiguous=1 WHERE route_id=?").run(route.routeId); },
+    ({ binding, store, route }) => { binding.configurationDigest = "d".repeat(64); store.db.prepare("UPDATE delegation_attempts SET finalized_at=NULL WHERE route_id=?").run(route.routeId); },
+    ({ binding, store, route }) => { binding.configurationDigest = "d".repeat(64); store.db.prepare("DELETE FROM outcomes WHERE route_id=?").run(route.routeId); },
+  ]) await fixture(async (value) => {
+    const completed = await completedQualification(value);
+    await callRouterTool("record_outcome", completed.outcome, completed.serviceOptions);
+    mutate(completed);
+    const result = await authorizeRequalification({ contextId: completed.input.contextId, routeId: completed.route.routeId }, {
+      store: completed.store, cwd: completed.project.root, inspectBinding: async () => ({ binding: completed.binding }),
+    });
+    assert.equal(result.status, "unresolved");
   });
 });
 

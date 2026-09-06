@@ -7,6 +7,7 @@
         "./scripts/mcp-server.mjs"
       ],
       "cwd": ".",
+      "env_vars": ["CODEX_HOME", "CODEX_BIN"],
       "default_tools_approval_mode": "prompt",
       "tools": {
         "route_stage": { "approval_mode": "approve" },
@@ -17,7 +18,9 @@
         "get_learning_status": { "approval_mode": "approve" },
         "shadow_route_stage": { "approval_mode": "approve" },
         "resolve_host_model_intent": { "approval_mode": "approve" },
-        "diagnose_router": { "approval_mode": "approve" }
+        "diagnose_router": { "approval_mode": "approve" },
+        "get_model_policy": { "approval_mode": "approve" },
+        "preview_model_policy": { "approval_mode": "approve" }
       }
     }
   }

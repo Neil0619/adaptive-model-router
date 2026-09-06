@@ -1,3 +1,4 @@
+import { qualificationTargetMatches } from "./qualification-policy.mjs";
 import { realpathSync } from "node:fs";
 import { payloadHash, parseJson } from "./io.mjs";
 import { readTaskQualification } from "./lifecycle-qualification.mjs";
@@ -35,7 +36,7 @@ export function failedQualificationRecoverySubject(db, context, attempt, cwd) {
         return observation?.runtimeDigest === qualification.binding.runtimeDigest
           && qualification.binding.shellRoots.includes(observation.shellRoot);
       })
-      || route?.action !== "delegate" || route.model !== "gpt-5.6-sol" || route.effort !== "low"
+      || route?.action !== "delegate" || !qualificationTargetMatches(db, qualification, route)
       || attempt.model !== route.model || attempt.effort !== route.effort
       || route.verification_gate !== "structured-check"
       || parseJson(route.reason_codes_json, []).join(",") !== "HOST_LIFECYCLE_QUALIFICATION"

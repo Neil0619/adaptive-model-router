@@ -1,0 +1,298 @@
+{
+  "schemaVersion": 1,
+  "policyId": "gpt6-quality-first-v1",
+  "policyDigest": "0f150eabd6e8bfcd784289b0202d71a5cc0ddefbee09dba1ee708a20ae19835d",
+  "startedAt": "2026-09-05T14:57:54.044Z",
+  "kind": "bounded-pilot",
+  "productionCalibration": false,
+  "limitations": [
+    "Three bounded samples; insufficient for optimizing production thresholds.",
+    "Configured model is not proof of the model actually served.",
+    "Missing usage is null, never zero."
+  ],
+  "results": [
+    {
+      "sample": "normalization-implementation",
+      "requested": {
+        "model": "gpt-6-astra",
+        "effort": "medium"
+      },
+      "configuredModel": "gpt-6-astra",
+      "servedModel": null,
+      "firstPass": true,
+      "passed": true,
+      "corrections": 0,
+      "elapsedMs": 11267,
+      "usage": {
+        "inputTokens": 22357,
+        "cachedInputTokens": 0,
+        "outputTokens": 67,
+        "reasoningOutputTokens": 0,
+        "totalTokens": 22424
+      }
+    },
+    {
+      "sample": "normalization-implementation",
+      "requested": {
+        "model": "gpt-6-astra",
+        "effort": "high"
+      },
+      "configuredModel": "gpt-6-astra",
+      "servedModel": null,
+      "firstPass": true,
+      "passed": true,
+      "corrections": 0,
+      "elapsedMs": 22184,
+      "usage": {
+        "inputTokens": 22549,
+        "cachedInputTokens": 0,
+        "outputTokens": 282,
+        "reasoningOutputTokens": 200,
+        "totalTokens": 22831
+      }
+    },
+    {
+      "sample": "normalization-implementation",
+      "requested": {
+        "model": "gpt-6-astra",
+        "effort": "xhigh"
+      },
+      "configuredModel": "gpt-6-astra",
+      "servedModel": null,
+      "firstPass": true,
+      "passed": true,
+      "corrections": 0,
+      "elapsedMs": 29408,
+      "usage": {
+        "inputTokens": 22549,
+        "cachedInputTokens": 0,
+        "outputTokens": 366,
+        "reasoningOutputTokens": 284,
+        "totalTokens": 22915
+      }
+    },
+    {
+      "sample": "atomic-activation-review",
+      "requested": {
+        "model": "gpt-6-astra",
+        "effort": "high"
+      },
+      "configuredModel": "gpt-6-astra",
+      "servedModel": null,
+      "firstPass": true,
+      "passed": true,
+      "corrections": 0,
+      "elapsedMs": 10061,
+      "usage": {
+        "inputTokens": 22581,
+        "cachedInputTokens": 0,
+        "outputTokens": 42,
+        "reasoningOutputTokens": 19,
+        "totalTokens": 22623
+      }
+    },
+    {
+      "sample": "atomic-activation-review",
+      "requested": {
+        "model": "gpt-6-astra",
+        "effort": "xhigh"
+      },
+      "configuredModel": "gpt-6-astra",
+      "servedModel": null,
+      "firstPass": true,
+      "passed": true,
+      "corrections": 0,
+      "elapsedMs": 10278,
+      "usage": {
+        "inputTokens": 22581,
+        "cachedInputTokens": 0,
+        "outputTokens": 91,
+        "reasoningOutputTokens": 68,
+        "totalTokens": 22672
+      }
+    },
+    {
+      "sample": "atomic-activation-review",
+      "requested": {
+        "model": "gpt-6-astra",
+        "effort": "medium"
+      },
+      "configuredModel": "gpt-6-astra",
+      "servedModel": null,
+      "firstPass": true,
+      "passed": true,
+      "corrections": 0,
+      "elapsedMs": 9113,
+      "usage": {
+        "inputTokens": 22581,
+        "cachedInputTokens": 7424,
+        "outputTokens": 41,
+        "reasoningOutputTokens": 18,
+        "totalTokens": 22622
+      }
+    },
+    {
+      "sample": "routing-condition-analysis",
+      "requested": {
+        "model": "gpt-6-astra",
+        "effort": "xhigh"
+      },
+      "configuredModel": "gpt-6-astra",
+      "servedModel": null,
+      "firstPass": true,
+      "passed": true,
+      "corrections": 0,
+      "elapsedMs": 21530,
+      "usage": {
+        "inputTokens": 22647,
+        "cachedInputTokens": 18560,
+        "outputTokens": 182,
+        "reasoningOutputTokens": 151,
+        "totalTokens": 22829
+      }
+    },
+    {
+      "sample": "routing-condition-analysis",
+      "requested": {
+        "model": "gpt-6-astra",
+        "effort": "medium"
+      },
+      "configuredModel": "gpt-6-astra",
+      "servedModel": null,
+      "firstPass": true,
+      "passed": true,
+      "corrections": 0,
+      "elapsedMs": 18661,
+      "usage": {
+        "inputTokens": 22647,
+        "cachedInputTokens": 0,
+        "outputTokens": 90,
+        "reasoningOutputTokens": 59,
+        "totalTokens": 22737
+      }
+    },
+    {
+      "sample": "routing-condition-analysis",
+      "requested": {
+        "model": "gpt-6-astra",
+        "effort": "high"
+      },
+      "configuredModel": "gpt-6-astra",
+      "servedModel": null,
+      "firstPass": true,
+      "passed": true,
+      "corrections": 0,
+      "elapsedMs": 11438,
+      "usage": {
+        "inputTokens": 22647,
+        "cachedInputTokens": 0,
+        "outputTokens": 116,
+        "reasoningOutputTokens": 85,
+        "totalTokens": 22763
+      }
+    }
+  ],
+  "completedAt": "2026-09-05T15:00:18.121Z",
+  "summary": [
+    {
+      "effort": "medium",
+      "samples": 3,
+      "firstPassRate": 1,
+      "corrections": 0,
+      "elapsedMs": 39041
+    },
+    {
+      "effort": "high",
+      "samples": 3,
+      "firstPassRate": 1,
+      "corrections": 0,
+      "elapsedMs": 43683
+    },
+    {
+      "effort": "xhigh",
+      "samples": 3,
+      "firstPassRate": 1,
+      "corrections": 0,
+      "elapsedMs": 61216
+    }
+  ],
+  "policyDefinitionAtRun": {
+    "schemaVersion": 1,
+    "id": "gpt6-quality-first-v1",
+    "allowedModels": [
+      {
+        "model": "gpt-6-astra",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+          "ultra"
+        ]
+      }
+    ],
+    "targets": {
+      "low": {
+        "model": "gpt-6-astra",
+        "effort": "low"
+      },
+      "medium": {
+        "model": "gpt-6-astra",
+        "effort": "medium"
+      },
+      "high": {
+        "model": "gpt-6-astra",
+        "effort": "high"
+      },
+      "xhigh": {
+        "model": "gpt-6-astra",
+        "effort": "xhigh"
+      },
+      "max": {
+        "model": "gpt-6-astra",
+        "effort": "max"
+      },
+      "ultra": {
+        "model": "gpt-6-astra",
+        "effort": "ultra"
+      }
+    },
+    "conditions": {
+      "xhighHardSignals": 2,
+      "maxHardSignals": 3
+    },
+    "fallbacks": {
+      "low": [
+        "medium",
+        "high"
+      ],
+      "medium": [
+        "high"
+      ],
+      "high": [
+        "xhigh"
+      ],
+      "xhigh": [
+        "max"
+      ],
+      "max": [],
+      "ultra": []
+    },
+    "escalation": {
+      "limit": 2,
+      "next": {
+        "low": "high",
+        "medium": "high",
+        "high": "xhigh",
+        "xhigh": "max",
+        "max": "ultra"
+      }
+    },
+    "purposes": {
+      "classifier": "low",
+      "qualification": "low",
+      "smoke": "high"
+    }
+  }
+}

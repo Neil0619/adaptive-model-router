@@ -44,8 +44,7 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
             available: true,
             invocation: "direct",
             targets: [
-              { model: "gpt-5.6-sol", efforts: ["low", "medium", "high"] },
-              { model: "gpt-5.6-terra", efforts: ["low", "medium", "high"] },
+              { model: "gpt-6-astra", efforts: ["low", "medium", "high"] },
             ],
           },
         },
@@ -65,6 +64,7 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
     assert.equal(responses[1].result.serverInfo.version, runtimeVersion);
     const tools = responses[2].result.tools;
     assert.deepEqual(tools.map((tool) => tool.name), [
+      "get_model_policy", "preview_model_policy", "activate_model_policy", "rollback_model_policy",
       "route_stage",
       "record_outcome",
       "get_route_status",

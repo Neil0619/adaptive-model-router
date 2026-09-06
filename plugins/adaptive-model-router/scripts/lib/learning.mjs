@@ -126,9 +126,9 @@ export function recordOutcome(input, options = {}) {
     validateOutcomeSemantics(input, route);
     const result = store.insertOutcome(context, route, input, options.qualificationProof);
     const qualification = parseJson(route.reason_codes_json, []).includes("HOST_LIFECYCLE_QUALIFICATION");
-    const safety = result.recorded && !qualification ? store.enforceScoringSafety(context, route) : null;
+    const safety = result.recorded && !qualification && !route.decision_json ? store.enforceScoringSafety(context, route) : null;
     let proposal = null;
-    if (result.recorded && !qualification && input.status !== "unknown") proposal = maybeGenerateProposal(store, context, route.category);
+    if (result.recorded && !qualification && !route.decision_json && input.status !== "unknown") proposal = maybeGenerateProposal(store, context, route.category);
     return { ...result, proposal, safety };
   } finally {
     ownedStore?.close();

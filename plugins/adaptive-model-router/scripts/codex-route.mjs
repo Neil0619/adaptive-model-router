@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { sanitizedError } from "./lib/io.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
+import { readFile } from "node:fs/promises";
 
 function parseArgs(values) {
   const parsed = { _: [] };
@@ -32,6 +33,11 @@ Usage:
   node scripts/codex-route.mjs status [--context ID]
   node scripts/codex-route.mjs history [--context ID] [--limit 20] [--action all|delegate|continue|ask_user]
   node scripts/codex-route.mjs catalog
+  node scripts/codex-route.mjs model-policy [--context ID]
+  node scripts/codex-route.mjs model-target --purpose smoke|qualification
+  node scripts/codex-route.mjs model-preview POLICY.json [--context ID]
+  node scripts/codex-route.mjs model-activate POLICY.json --expected DIGEST --confirm ACTIVATE_MODEL_POLICY [--context ID]
+  node scripts/codex-route.mjs model-rollback --expected DIGEST --confirm ROLLBACK_MODEL_POLICY [--context ID]
   node scripts/codex-route.mjs proposals [--context ID]
   node scripts/codex-route.mjs learning [--context ID]
   node scripts/codex-route.mjs approve PROPOSAL_ID [--context ID]
@@ -71,6 +77,31 @@ async function main() {
       }, { store }));
     }
     if (command === "catalog") return print(await getModelCatalog({ store }));
+    if (command === "model-policy") return print(await callRouterTool("get_model_policy", { contextId }, { store }));
+    if (command === "model-target") {
+      if (!["smoke", "qualification"].includes(args.purpose)) throw new Error("model-target requires --purpose smoke|qualification");
+      const { withAppServer } = await import("./lib/app-server.mjs");
+      const { normalizeCatalog } = await import("./lib/catalog.mjs");
+      const { resolveModelTarget } = await import("./lib/model-policy.mjs");
+      const { readModelPolicy } = await import("./lib/model-policy-store.mjs");
+      const catalog = normalizeCatalog(await withAppServer((client) => client.listModels()));
+      const selected = resolveModelTarget({ policy: readModelPolicy(store.db), catalog, purpose: args.purpose });
+      if (!selected.target) throw new Error(selected.reason);
+      return print(selected.target);
+    }
+    if (["model-preview", "model-activate", "model-rollback"].includes(command)) {
+      const toolArgs = { contextId };
+      if (command !== "model-rollback") {
+        if (!args._[1]) throw new Error(`${command} requires a policy file`);
+        toolArgs.definition = JSON.parse(await readFile(args._[1], "utf8"));
+      }
+      if (command !== "model-preview") {
+        toolArgs.expectedDigest = args.expected;
+        toolArgs.confirm = args.confirm;
+      }
+      const name = { "model-preview": "preview_model_policy", "model-activate": "activate_model_policy", "model-rollback": "rollback_model_policy" }[command];
+      return print(await callRouterTool(name, toolArgs, { store }));
+    }
     if (command === "proposals") return print(await callRouterTool("list_policy_proposals", { contextId }, { store }));
     if (command === "learning") return print(await callRouterTool("get_learning_status", { contextId }, { store }));
     if (command === "approve" || command === "reject" || command === "rebase") {

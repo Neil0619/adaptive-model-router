@@ -202,9 +202,9 @@ round-trip proof returns `HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN`. All four continue
 root-only and issue no delegation ticket. The check never writes `config.toml`
 or accepts hook trust for the user.
 
-On the explicitly supported native macOS builds (`0.153.0` and
+On the explicitly supported native macOS builds (`0.153.3`, `0.153.0`, and
 `0.153.0-alpha.5`), a task without prior proof can first receive
-`delegate / HOST_LIFECYCLE_QUALIFICATION`: exactly one Sol/low child returning a
+`delegate / HOST_LIFECYCLE_QUALIFICATION`: exactly one policy-bound GPT-6/low child returning a
 fixed marker without tools or original task content. The server independently
 checks all four lifecycle events and the complete raw child transcript before
 accepting its outcome. Proof is task-scoped and bound to the executable, ordered
@@ -213,7 +213,7 @@ binding keeps ordinary delegation disabled and never silently retries the
 self-test. Qualification neither consumes a once override nor enters learning;
 after success, route the original stage again normally.
 
-Priority is: request override, once override, session override, project override, optional global override, approved project policy, then the balanced default. Unknown or hidden models are never chosen automatically. Explicit unavailable targets are never silently substituted.
+Priority is: request override, once override, session override, project override, optional global override, then the quality-first model policy (default GPT-6/high). Unknown or hidden models are never chosen automatically. Explicit unavailable targets are never silently substituted.
 
 Root visibility, bounded delegation, and auxiliary classification use separate
 capability catalogs. A model shown in the Codex picker is not automatically a
@@ -224,11 +224,11 @@ a spawn tool visible only inside `functions.exec` is treated as unavailable.
 evidence that direct `spawn_agent` is unavailable. After this task has completed
 a direct Router child dispatch, a later unavailable claim is rejected unless it
 is tied to an actual direct-tool rejection that proves no child was created.
-Older callers conservatively permit
-only known Sol and Terra targets. When the policy prefers Luna but the host
-does not expose Luna for bounded delegation, automatic routing falls back to
-Terra and reports `MODEL_FAMILY_FALLBACK`. An explicit Luna target instead
-returns `ask_user`.
+Missing direct interface capabilities permit no new delegation. Current routing
+uses only GPT-6 at six allowed efforts, with high as the default. Conditions,
+allowed models and target bindings are defined in [model-policy.json](plugins/adaptive-model-router/model-policy.json).
+See [the GPT-6 specification](docs/MODEL-POLICY-GPT6.zh-CN.md) for preview, activation,
+rollback and the evidence needed to select a lower or higher effort.
 
 Every delegated route has a verification gate and one strict final outcome.
 The first outcome write is accepted only after the matching `PreToolUse`
@@ -266,6 +266,15 @@ not its reasoning effort; the router never switches either. A `delegate` route's
 skill visibly reports that boundary and the selected action after every
 `route_stage` call.
 
+Routine notices omit debugging route IDs and show delegated stages as
+`stage · model / effort`. Exact IDs remain in route records,
+status/history, and diagnostics for child correlation and verification.
+When the host does not expose the child's tier, the notice omits `service_tier`.
+The field appears only with direct evidence for that child; an omitted tier does
+not mean Fast is off and is not inferred from the parent's Fast setting.
+Requested-only tier evidence is labeled as such,
+not presented as the actually served tier. Reporting never changes Fast.
+
 The first observed model in a task is a baseline. If the slug changes later,
 the current and subsequent unresolved turns continue root-only. Codex asks
 whether to keep the task manual or resume automatic routing. A reasoning-only
@@ -281,15 +290,16 @@ router: history 10
 Chinese equivalents are `路由器：状态` and `路由器：历史 10`. History includes the
 route-time root-model snapshot, commit time, action, bounded model/effort,
 transition from the previous delegation, reasons, route ID, and outcome,
-scoped to the current project and task. See [routing triggers and history](docs/ROUTING.md) for the exact score
-thresholds and the distinction between a route decision and a root-model
+scoped to the current project and task. See [routing triggers and history](docs/ROUTING.md) for the task conditions and the distinction between a route decision and a root-model
 switch.
 
 ## Local learning
 
 Learning data is isolated per project in one SQLite database. Git worktrees share a project identity through their Git common directory; submodules remain separate. Raw project paths are never stored.
 
-Policy changes are proposals only:
+The GPT-6 decision policy is observe-only: legacy offsets do not affect its
+work levels and new routes do not generate offset proposals. The following
+legacy proposal rules remain available for historical records:
 
 - `+5` after at least 12 eligible category outcomes across at least 4 task
   contexts, with at least 4 failed, corrected, or reasoning-retried outcomes;
@@ -318,7 +328,7 @@ router: global on
 router: global off
 router: manual
 router: auto session
-router: lock gpt-5.6-sol high session
+router: lock gpt-6-astra high session
 router: off
 路由器：启用
 ```

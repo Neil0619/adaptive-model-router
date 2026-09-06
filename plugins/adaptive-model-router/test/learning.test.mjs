@@ -8,6 +8,7 @@ import { consumeDelegationTicket, observeAgentResult } from "../scripts/lib/dele
 import {
   approvePolicyProposal,
   listPolicyProposals,
+  maybeGenerateProposal,
   recordOutcome,
   rebasePolicyProposal,
   rejectPolicyProposal,
@@ -48,6 +49,8 @@ function outcomeFor(route, contextId, overrides = {}) {
 
 let lifecycleSequence = 0;
 function recordCompletedOutcome(store, cwd, route, contextId, overrides = {}) {
+  // Proposal tests operate on a seeded historical projection. No legacy model is invoked.
+  const historical = /^(plus-|minus-|decision-|rebase-)/.test(contextId);
   const sequence = ++lifecycleSequence;
   const context = store.context({ cwd, contextId });
   const toolInput = {
@@ -69,7 +72,14 @@ function recordCompletedOutcome(store, cwd, route, contextId, overrides = {}) {
     toolInput,
     toolResponse: { no_agent_created: true },
   }));
-  return recordOutcome(outcomeFor(route, contextId, overrides), { store, cwd });
+  const result = recordOutcome(outcomeFor(route, contextId, overrides), { store, cwd });
+  if (historical) {
+    // Reconstruct the pre-v6 on-disk record after the fixture's gate is closed.
+    store.db.prepare("UPDATE routes SET schema_version='5.0', decision_json=NULL, stage_key=NULL, model='gpt-5.6-terra', family='terra' WHERE route_id=?").run(route.routeId);
+    store.db.prepare("UPDATE route_score_snapshots SET eligible_learning=1, exclusion_codes_json='[]', desired_family='terra' WHERE route_id=?").run(route.routeId);
+    maybeGenerateProposal(store, context, route.category);
+  }
+  return result;
 }
 
 test("record_outcome rejects permissive strings and inconsistent failure fields", async () => {

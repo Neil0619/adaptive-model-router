@@ -19,7 +19,7 @@ test("root-model intent is first-observation safe, exactly resolved, and task sc
       assert.equal(baseline.taskMode, "automatic");
 
       const first = await routeStage(routeInput({ contextId }), { catalog: CATALOG, cwd: project.root, store });
-      assert.equal(first.schemaVersion, "5.0");
+      assert.equal(first.schemaVersion, "6.0");
       assert.equal(first.taskMode, "automatic");
       assert.deepEqual(first.rootTask, {
         modelVisibility: "hook_observed",
@@ -168,7 +168,7 @@ test("missing or invalid current hook models display host-managed without losing
   }
 });
 
-test("database v1 migrates transactionally through v5 without losing routes, outcomes, or policy", async () => {
+test("database v1 migrates transactionally through v6 without losing routes, outcomes, or policy", async () => {
   const project = await temporaryProject("adaptive migration v1 ");
   try {
     await withRouterEnvironment(project, async () => {
@@ -198,12 +198,16 @@ test("database v1 migrates transactionally through v5 without losing routes, out
         DROP TABLE host_model_state;
         DROP TABLE host_model_changes;
         ALTER TABLE routes DROP COLUMN root_model;
+        DROP TRIGGER require_model_policy_decision;
+        DROP INDEX routes_stage;
+        ALTER TABLE routes DROP COLUMN decision_json;
+        ALTER TABLE routes DROP COLUMN stage_key;
         PRAGMA user_version = 1;
       `);
       old.close();
 
       store = new RouterStore({ path: database });
-      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 5);
+      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 6);
       assert.equal(store.db.prepare("SELECT count(*) AS count FROM routes").get().count, 1);
       assert.equal(store.db.prepare("SELECT count(*) AS count FROM outcomes").get().count, 1);
       assert.equal(store.db.prepare("SELECT active_revision_id FROM project_policy").get().active_revision_id, revisionId);

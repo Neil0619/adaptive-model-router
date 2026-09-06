@@ -93,8 +93,11 @@ stage-local suppression does not change the global or session Router setting.
 
 1. Call `route_stage` with:
    - a concise stage `goal`;
-   - the current `phase`;
-   - strictly factual boolean/integer `evidence`;
+   - the current `phase` and one stable `stageId` across all retries of the same logical stage;
+     omit `previousRouteId` after success and reclassify the next stage;
+   - strictly factual boolean/integer `evidence`; explicitly provide
+     `requirementsSettled` and `strongVerification` only when established;
+     `exactOutputCheck` means deterministic output acceptance, not merely a plan to test;
      set `grillWithDocs: true` only when the `grill-with-docs` skill is actually
      active for the current stage, and set `planMode: true` only when the host
      has actually placed the current task in Plan mode. Mere mentions do not
@@ -118,7 +121,8 @@ stage-local suppression does not change the global or session Router setting.
    - `ask_user`: explain the reason code and obtain the missing decision.
    - `busy`: another Router-managed delegation still owns this task context.
      Do not create an Agent, do not call `record_outcome` for the busy
-     decision, and do not retry `route_stage`. Report `blockingRouteId` and
+     decision, and do not retry `route_stage`. Explain the pending delegation,
+     retain `blockingRouteId` internally, and
      continue root-only until that exact delegation has a safely correlated
      child terminal event and recorded outcome.
    - `delegate`: create exactly one bounded subagent by calling the direct native `spawn_agent` tool outside `functions.exec`, passing `target.model` to the host's `model` parameter and `target.effort` to the host's `reasoning_effort` parameter. Make the `route_stage` `goal` and `phase` the complete bounded task capsule. The route also returns a one-shot `carrier`: pass `carrier.taskName` as the exact `task_name`, pass `carrier.message` as the exact `message`, and pass `fork_turns: "none"`. Codex encrypts the direct tool's message parameter; the trusted `PreToolUse` hook consumes and validates the ticket in the non-encrypted task name, verifies the target model, effort, and existing no-history mode, and deliberately emits no `updatedInput`, preserving the host-owned ciphertext. The trusted `SubagentStart` hook then correlates the child through host-written thread-spawn metadata and injects the bounded Router context package only into that exact child. Never route the carrier through a code-mode nested tool, omit, modify, reuse, or log the task-name ticket, or add caller text to the activation message.
@@ -137,16 +141,19 @@ stage-local suppression does not change the global or session Router setting.
 3. Immediately after every successful `route_stage` call, show one compact route notice in commentary:
    - always say that the root-task model is unchanged and host-managed;
    - when `rootTask.modelVisibility` is `hook_observed`, show `rootTask.model`; its reasoning effort remains visible only in the Codex composer;
-   - for `delegate`, show `target.model`, `target.effort`, and `routeId`;
-   - for `continue` or `ask_user`, show the action, reason codes, and `routeId`;
-   - for `busy`, show the reason codes, non-recordable decision `routeId`, and
-     `blockingRouteId`;
+   - use a readable stage label; for `delegate`, show `target.model` / `target.effort`, adding `service_tier` only when directly observed for that child;
+   - for `continue` or `ask_user`, show the action and a concise explanation of the reason; make any required user action explicit;
+   - for `busy`, explain that an earlier delegation still owns the gate and the root is continuing; do not imply that a replacement child was launched;
+   - omit `routeId` and `blockingRouteId` from routine conversation notices. Keep the exact IDs internally for lifecycle calls, outcomes, history, and diagnostics. Show them only for an explicit inspection, troubleshooting request, or a necessary user action that names an exact route; hiding them is not deleting or changing the recorded evidence;
+   - omit the `service_tier` field from routine notices unless already available, direct host evidence identifies that exact child's tier. Current route output does not attest a child's service tier. Neither the parent task's Fast setting, the selected model/effort, a supported service-tiers list, nor an assumed inheritance/default is proof. An omitted tier does not mean Fast is off;
+   - distinguish an observed **requested** tier from an **actually served** tier; label requested-only evidence accordingly. This is display-only: do not change Fast, invent a `service_tier` spawn parameter, scan unrelated logs, or launch a probe just to populate the notice;
    - never label a bounded subagent target as the current root-task model.
    - never call a `delegate` result a recommendation or claim that a conditional
      no-proactive-subagent policy prevented the required launch.
    Prefer the stable shape
-   `Router · automatic · root=<observed-or-host-managed> (unchanged) · stage=<action/target> · route=<routeId>`
-   and localize labels to the user's language.
+   `Router · root=<observed-or-host-managed> (unchanged) · <stage> · <model> / <effort>`
+   for delegated stages, and localize labels to the user's language. For example:
+   `Router · 主任务仍为 gpt-5.6-sol（思考档位由界面控制）· 最终差异审查 · gpt-6-astra / high`.
 4. When delegation is unavailable in the current host, fail open by continuing with the current model. Do not claim that the root task model changed.
 5. Keep the delegated scope concrete and bounded. The root owns orchestration, integration, user communication, and verification. Never create overlapping writers.
 6. Run the returned `verificationGate` at the root. Call `record_outcome` once
@@ -174,7 +181,18 @@ Map the router's `target.effort` value to the current Codex subagent `reasoning_
 
 ## Failures and escalation
 
-On a verification failure, route the next attempt with the prior `routeId`, `verificationFailed: true`, and an enumerated `failureType`. Reasoning failures escalate monotonically at most twice in the exact effort order `high < xhigh < max < ultra`. Static routing never starts at Ultra, and Max requires the hard-signal gate. Environment, missing-information, and tooling failures do not justify a stronger effort. After the automatic limit, ask the user instead of silently changing targets. If an Ultra stage would create parallel writers, pass `parallelWriteRisk: true` and respect the returned `ask_user`.
+On a verification failure, route the next attempt with the prior `routeId`, `verificationFailed: true`, and an enumerated `failureType`. Reasoning failures escalate monotonically at most twice in the exact effort order `low/medium → high → xhigh → max → ultra`. Default routing uses only GPT-6, normally medium/high/xhigh, and defaults to high.
+Check higher conditions before considering a downgrade. Low needs settled,
+mechanical, low-risk work with strong verification and an exact output check;
+medium needs settled, strongly verified work without review, risk, ambiguity,
+cross-module impact or architecture trade-offs. Xhigh needs cross-module work
+plus ambiguity/architecture trade-offs, or two independent difficulty groups.
+Max needs three groups plus high failure cost/irreversibility, or an xhigh
+reasoning failure. Groups are security-or-migration, high-risk-or-high-failure-cost,
+cross-module-public-contract, architecture trade-offs and irreversibility.
+Correlated labels count once. Ultra requires explicit choice or max reasoning
+failure with remaining budget. Text length, old score offsets, active Plan/grill
+and diagnostic classifier adjustments do not independently select effort. Environment, missing-information, and tooling failures do not justify a stronger effort. After the automatic limit, ask the user instead of silently changing targets. If an Ultra stage would create parallel writers, pass `parallelWriteRisk: true` and respect the returned `ask_user`.
 
 If the host explicitly proves that no Agent was created, record the delegated
 route as `failed` with `failureType: tooling`; a safely correlated
@@ -186,10 +204,11 @@ known `busy` gate. Continue root-only and report the concrete Router/host
 failure. A route decision or generic tool error is not proof that no subagent
 started.
 
-Root, delegate, and classifier model availability are separate. Luna may be
-visible as a root model or usable by the classifier's independent ephemeral
-app-server without being available to the current host's bounded subagent
-tool. Only `hostCapabilities.delegation.targets` authorizes a bounded target.
+Root, delegate and classifier capabilities are independent and all Router calls
+intersect the active model policy's exact allowed scope. Only direct
+`hostCapabilities.delegation.targets` authorizes a bounded target. Missing
+capabilities do not imply any allowed subagent. Explicit targets outside scope,
+unavailable efforts and risk-floor conflicts must not be silently substituted.
 
 ## Controls and learning
 
@@ -209,18 +228,30 @@ The global automatic activation setting is opt-in. `router: global on` / `路由
 
 The hook may observe the active root-model slug, but never its reasoning effort. The first observation in a task is a baseline. If a later slug changes, the hook places the task in `pending_confirmation`: keep working in the root, never spawn a subagent, and remind the user to choose manual-root or keep-automatic. A `route_stage` call at a substantive boundary returns `continue` with `HOST_MODEL_INTENT_PENDING`; respect it. Continue root-only on later turns until the user explicitly answers. Then call `resolve_host_model_intent` with the pending `changeId`; never infer a decision from silence or unrelated text. `manual_root` lasts only for the current task and likewise forces `MANUAL_ROOT_SELECTED` plus `continue`.
 
-Learning is project-local. A proposal never changes policy until the user explicitly calls `approve_policy_proposal`. Rejection advances the evidence window; rollback walks backward through immutable revisions. `get_learning_status` is read-only. `shadow_route_stage` must remain free of route/outcome/proposal/cursor writes. Rebase and offline scoring-profile re-anchor require an explicit user instruction; re-anchor also requires the exact confirmation. Do not approve, reject, rebase, re-anchor, roll back, import legacy settings, or clear project data without an explicit user instruction. The only automatic learning mutation beyond proposal creation is a hard risk-floor rollback.
+The default policy is stored in `model-policy.json`: allowed scope, conditions,
+bindings, fallbacks and escalation are independent. `get_model_policy` and
+`preview_model_policy` are read-only; do not route or delegate their inspection.
+Activate a reviewed definition with its expected active digest, or explicitly
+roll back to its parent, only within the user's requested scope. Active calls
+block changes; never clear a gate or inference lease to force activation.
+Candidate count and catalog order must not create new task categories.
+The two-enhancement limit applies to automatic retries. A current explicit user
+target can select ultra after that budget is exhausted, subject to scope,
+capabilities and the risk floor; it neither spends nor resets the budget.
+
+GPT-6 outcomes are observe-only. Old scores, offsets and histories keep their
+meaning but do not choose GPT-6 effort. Legacy learning is project-local. A proposal never changes policy until the user explicitly calls `approve_policy_proposal`. Rejection advances the evidence window; rollback walks backward through immutable revisions. `get_learning_status` is read-only. `shadow_route_stage` must remain free of route/outcome/proposal/cursor writes. Rebase and offline scoring-profile re-anchor require an explicit user instruction; re-anchor also requires the exact confirmation. Do not approve, reject, rebase, re-anchor, roll back, import legacy settings, or clear project data without an explicit user instruction. New decisions do not generate legacy proposals or trigger legacy score rollbacks.
 
 Read-only router inspection is not a substantive stage boundary. When the user
 requests `get_route_status`, `get_route_history`, `list_policy_proposals`,
-`get_learning_status`, `diagnose_router`, or `shadow_route_stage`, call only
+`get_learning_status`, `get_model_policy`, `preview_model_policy`, `diagnose_router`, or `shadow_route_stage`, call only
 the requested inspection tool and do not call `route_stage` merely to precede
 it. In particular, call `shadow_route_stage` directly, do not create a
 subagent or outcome for its preference, and do not pass `hostCapabilities`;
-shadow scoring returns a preferred family/effort rather than a live bounded
+shadow scoring returns a preferred workLevel/model/effort rather than a live bounded
 target.
 
-The auxiliary classifier receives only a redacted short summary, phase, and boolean signals. If it is disabled, local-only, timed out, or circuit-broken, use the deterministic route.
+The classifier defaults to local-only. When explicitly enabled, the auxiliary classifier receives only a redacted short summary, phase, and boolean signals. If it is disabled, local-only, timed out, or circuit-broken, use the deterministic route.
 
 Use `get_route_status` when the user asks which model is in use. Explain that the
 router never changes the root-task model. It can show the hook-observed root-model

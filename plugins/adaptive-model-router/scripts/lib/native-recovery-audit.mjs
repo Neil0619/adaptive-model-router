@@ -3,6 +3,8 @@ import { closeSync, openSync, readSync } from "node:fs";
 
 export const RECOVERY_AUDIT_ADAPTER = "codex-0.153.0-alpha.5-no-work/1";
 export const LIFECYCLE_AUDIT_ADAPTER = "codex-0.153.0-no-work/1";
+export const LIFECYCLE_1533_AUDIT_ADAPTER = "codex-0.153.3-no-work/1";
+export const LIFECYCLE_1534_AUDIT_ADAPTER = "codex-0.153.4-no-work/1";
 const MAX_BYTES = 2 * 1024 * 1024;
 const RECORD_TYPES = new Set(["session_meta", "event_msg", "response_item", "world_state",
   "turn_context", "inter_agent_communication_metadata", "token_usage_record"]);
@@ -41,6 +43,18 @@ export function auditNativeRecoveryTranscript(bytes, child, parentId) {
 // rebind historical recovery receipts to this adapter or accept a version range.
 export function auditNativeLifecycleTranscript(bytes, child, parentId) {
   return auditNoWorkTranscript(bytes, child, parentId, "0.153.0", LIFECYCLE_AUDIT_ADAPTER);
+}
+
+// Reviewed against the 0.153.3 native GPT-6 no-op source stream. It has the
+// same bounded record/action vocabulary; keep its build and receipt separate.
+export function auditNativeLifecycle1533Transcript(bytes, child, parentId) {
+  return auditNoWorkTranscript(bytes, child, parentId, "0.153.3", LIFECYCLE_1533_AUDIT_ADAPTER);
+}
+
+// The native Windows 0.153.4 host retains the reviewed 0.153.3 record/action
+// vocabulary. Keep its receipt separately pinned; unknown actions fail closed.
+export function auditNativeLifecycle1534Transcript(bytes, child, parentId) {
+  return auditNoWorkTranscript(bytes, child, parentId, "0.153.4", LIFECYCLE_1534_AUDIT_ADAPTER);
 }
 
 function auditNoWorkTranscript(bytes, child, parentId, version, adapter) {

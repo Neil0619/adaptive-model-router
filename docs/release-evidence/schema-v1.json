@@ -71,7 +71,7 @@
       "required": ["action", "targetFamily", "targetEffort", "verificationGate", "pendingOutcomes", "stopHookUnknown"],
       "properties": {
         "action": { "enum": ["delegate", "continue", "ask_user", "unavailable"] },
-        "targetFamily": { "enum": ["sol", "terra", "luna", "none"] },
+        "targetFamily": { "enum": ["sol", "terra", "luna", "astra", "none"] },
         "targetEffort": { "enum": ["low", "medium", "high", "xhigh", "max", "ultra", "none"] },
         "verificationGate": { "enum": ["light-checks", "targeted-tests", "structured-check", "full-checks", "unavailable"] },
         "pendingOutcomes": { "type": "integer", "minimum": 0 },

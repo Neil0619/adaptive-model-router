@@ -4,8 +4,6 @@ import { join } from "node:path";
 import { EFFORT_ORDER, FAMILY_MAP, FAMILY_ORDER } from "./constants.mjs";
 import { normalizeModelSlug } from "./model-slug.mjs";
 
-const CONSERVATIVE_DELEGATE_MODELS = new Set(["gpt-5.6-sol", "gpt-5.6-terra"]);
-
 function effortValue(effort) {
   const index = EFFORT_ORDER.indexOf(effort);
   return index < 0 ? Number.POSITIVE_INFINITY : index;
@@ -31,7 +29,7 @@ export function normalizeCatalog(models = []) {
         visibility: entry.visibility || (entry.hidden === true ? "hide" : "list"),
         priority: Number.isFinite(Number(entry.priority)) ? Number(entry.priority) : Number.MAX_SAFE_INTEGER,
         defaultReasoningEffort: EFFORT_ORDER.includes(defaultEffort) ? defaultEffort : "medium",
-        supportedReasoningEfforts: [...new Set(supported.length ? supported : ["low", "medium", "high"])]
+        supportedReasoningEfforts: [...new Set(supported)]
           .sort((left, right) => effortValue(left) - effortValue(right)),
       };
     })
@@ -102,21 +100,8 @@ export function selectDelegateCatalog(rootCatalog, capabilities = null) {
       };
     }).sort((left, right) => left.priority - right.priority || left.model.localeCompare(right.model));
   }
-  return rootCatalog.flatMap((entry) => {
-    const allowedEfforts = CONSERVATIVE_DELEGATE_MODELS.has(entry.model) || CONSERVATIVE_DELEGATE_MODELS.has(entry.id)
-      ? new Set(EFFORT_ORDER)
-      : null;
-    if (!allowedEfforts) return [];
-    const supportedReasoningEfforts = entry.supportedReasoningEfforts.filter((effort) => allowedEfforts.has(effort));
-    if (!supportedReasoningEfforts.length) return [];
-    return [{
-      ...entry,
-      defaultReasoningEffort: supportedReasoningEfforts.includes(entry.defaultReasoningEffort)
-        ? entry.defaultReasoningEffort
-        : supportedReasoningEfforts[0],
-      supportedReasoningEfforts,
-    }];
-  });
+  // A root-visible directory is not evidence of bounded delegation support.
+  return [];
 }
 
 export function selectExplicitRoute(catalog, model, requestedEffort, { effortWasExplicit = false, minimumEffort = null } = {}) {

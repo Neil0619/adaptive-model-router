@@ -171,6 +171,40 @@ test("a substantive route lifecycle with trailing reports is not isolated as ins
   }
 });
 
+test("explicit skill use receives trusted context without enabling automatic routing", async () => {
+  const project = await temporaryProject("adaptive explicit skill Unicode 显式 ");
+  try {
+    const base = { cwd: project.root, session_id: "explicit-session", model: "gpt-6-astra" };
+    for (const reset of [null, "router: global off"]) {
+      if (reset) assert.equal(runHook("prompt", { ...base, prompt: reset }, project.home).status, 0);
+      const explicit = runHook("prompt", {
+        ...base,
+        prompt: "Use $adaptive-model-router for this read-only post-install smoke. "
+          + "Call diagnose_router exactly once, then call route_stage with workProduct=false.",
+      }, project.home);
+      assert.equal(explicit.status, 0, explicit.stderr);
+      assert.ok(explicit.stdout, "explicit skill use must receive the trusted task identity");
+      const context = JSON.parse(explicit.stdout).hookSpecificOutput.additionalContext;
+      assert.match(context, /Use "explicit-session" as the contextId/);
+      assert.doesNotMatch(context, /global automatic activation is enabled|Read-only router inspection is active/);
+      await withRouterEnvironment(project, async () => {
+        const store = new RouterStore();
+        try {
+          const identity = store.context({ cwd: project.root, contextId: base.session_id });
+          assert.equal(store.getSettings(identity).autoActivate, false);
+          assert.equal(store.inspectionGuardActive(identity), false);
+          assert.equal(store.db.prepare("SELECT count(*) AS n FROM routes").get().n, 0);
+        } finally { store.close(); }
+      });
+    }
+    for (const prompt of ["Implement a parser.", "Use $adaptive-model-router-extra."]) {
+      const ordinary = runHook("prompt", { ...base, prompt }, project.home);
+      assert.equal(ordinary.status, 0, ordinary.stderr);
+      assert.equal(ordinary.stdout, "");
+    }
+  } finally { await project.cleanup(); }
+});
+
 test("global automatic activation is opt-in, crosses projects, and detects later root-model changes", async () => {
   const project = await temporaryProject("adaptive auto Unicode 自动 ");
   try {
@@ -327,6 +361,65 @@ test("global automatic activation is opt-in, crosses projects, and detects later
   }
 });
 
+test("routine notices hide trace IDs and unobserved child service tiers without losing history", async () => {
+  const project = await temporaryProject("adaptive compact notice Unicode 展示 ");
+  try {
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      try {
+        const contextId = "notice-session";
+        const context = store.context({ cwd: project.root, contextId });
+        store.configure(context, { autoActivate: true }, "global");
+        store.observeHostModel(context, "gpt-5.6-sol", { detectChanges: false });
+        const route = await routeStage(routeInput({
+          contextId,
+          override: { model: "gpt-6-astra", effort: "high" },
+        }), { catalog: CATALOG, cwd: project.root, store });
+        completeNoChildRoute(route, { store, cwd: project.root, contextId });
+        const before = store.routeHistory(context);
+
+        for (const parentTier of [undefined, "fast", "priority", "default"]) {
+          const result = runHook("prompt", {
+            cwd: project.root,
+            session_id: contextId,
+            model: "gpt-5.6-sol",
+            service_tier: parentTier,
+            prompt: "Review the final diff.",
+          }, project.home);
+          assert.equal(result.status, 0, result.stderr);
+          const instructions = JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
+          assert.match(instructions, /omit routeId and blockingRouteId from routine conversation notices/i);
+          assert.match(instructions, /stage label.*target\.model.*target\.effort.*service_tier/);
+          assert.match(instructions, /adding service_tier only when directly observed for that child/i);
+          assert.match(instructions, /omit the service_tier field from routine notices unless.*direct host evidence identifies that exact child's tier/i);
+          assert.doesNotMatch(instructions, /service_tier=unknown|host has not provided the child's tier|宿主未提供/i);
+          assert.match(instructions, /Never infer.*parent.*Fast.*supported.*tiers/i);
+          assert.match(instructions, /requested.*actually served/i);
+          assert.match(instructions, /Keep the exact IDs internally.*history.*diagnostics/i);
+          assert.doesNotMatch(instructions, /show the unchanged root model, action or bounded target, effort, and routeId/);
+          assert.doesNotMatch(instructions, /continue root-only and report blockingRouteId/);
+          assert.ok(!instructions.includes(route.routeId));
+          assert.deepEqual(store.routeHistory(context), before);
+        }
+
+        for (const prompt of ["路由器：状态", "路由器：历史 10"]) {
+          const result = runHook("prompt", {
+            cwd: project.root, session_id: contextId, model: "gpt-5.6-sol", prompt,
+          }, project.home);
+          assert.equal(result.status, 0, result.stderr);
+          const report = JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
+          assert.ok(report.includes(route.routeId), "explicit inspection retains the trace identifier");
+        }
+        assert.deepEqual(store.routeHistory(context), before);
+      } finally {
+        store.close();
+      }
+    });
+  } finally {
+    await project.cleanup();
+  }
+});
+
 test("SessionStart compact restores trusted routing context without replaying prompt controls", async () => {
   const project = await temporaryProject("adaptive compact restore ");
   try {
@@ -418,7 +511,7 @@ test("bounded subagent hooks never recurse into routing or mutate root-task stat
 
     const delegated = await withRouterEnvironment(project, () => routeStage(routeInput({
       contextId: root.session_id,
-      override: { model: "gpt-5.6-terra", effort: "low" },
+      override: { model: "gpt-6-astra", effort: "low" },
     }), { catalog: CATALOG, cwd: project.root }));
     assert.equal(delegated.action, "delegate");
     const dispatched = runHook("pre-tool-use", {
@@ -450,7 +543,7 @@ test("bounded subagent hooks never recurse into routing or mutate root-task stat
       cwd: project.root,
       session_id: root.session_id,
       agent_id: "agent-secret-identifier",
-      model: "gpt-5.6-terra",
+      model: delegated.target.model,
       transcript_path: transcript,
     };
     const started = runHook("subagent-start", {
@@ -812,7 +905,7 @@ test("concurrent prompt hooks create exactly one pending event for one model cha
 test("prompt hook applies a control idempotently and ignores ordinary discussion", async () => {
   const project = await temporaryProject("adaptive hook Unicode 空格 ");
   try {
-    const input = { cwd: project.root, session_id: "hook-session", prompt: "router: lock gpt-5.6-sol high once" };
+    const input = { cwd: project.root, session_id: "hook-session", prompt: "router: lock gpt-6-astra high once" };
     const first = runHook("prompt", input, project.home);
     assert.equal(first.status, 0, first.stderr);
     assert.match(first.stdout, /additionalContext/);
@@ -828,7 +921,7 @@ test("prompt hook applies a control idempotently and ignores ordinary discussion
       const context = store.context({ cwd: project.root, contextId: "hook-session" });
       const resolved = store.resolveOverride(context);
       assert.equal(resolved.source, "once");
-      assert.equal(resolved.override.model, "gpt-5.6-sol");
+      assert.equal(resolved.override.model, "gpt-6-astra");
       store.close();
     });
   } finally {
@@ -848,7 +941,7 @@ test("hook-owned control turns forbid duplicate MCP calls and invented context I
       "router: global on",
       "router: manual",
       "router: auto session",
-      "router: lock gpt-5.6-terra low once",
+      "router: lock gpt-6-astra low once",
       "router: off",
       "router: status",
       "router: history 1",
@@ -915,7 +1008,7 @@ test("status and history controls visibly separate the root model from bounded s
       store.observeHostModel(store.context({ cwd: project.root, contextId }), "gpt-5.6-sol", { detectChanges: false });
       const route = await routeStage(routeInput({
         contextId,
-        override: { model: "gpt-5.6-sol", effort: "high" },
+        override: { model: "gpt-6-astra", effort: "high" },
       }), { catalog: CATALOG, cwd: project.root, store });
       store.close();
 
@@ -928,7 +1021,7 @@ test("status and history controls visibly separate the root model from bounded s
       assert.equal(statusResult.status, 0, statusResult.stderr);
       const status = JSON.parse(statusResult.stdout).hookSpecificOutput.additionalContext;
       assert.match(status, /根任务模型：gpt-5\.6-sol（Codex 管理，路由器未改变；effort 仅在右下角可见）/);
-      assert.match(status, /委派目标 gpt-5\.6-sol \(high\)/);
+      assert.match(status, /委派目标 gpt-6-astra \(high\)/);
       assert.match(status, new RegExp(route.routeId));
       assert.match(status, /路由器：历史 10/);
       assert.match(status, /\d{4}-\d{2}-\d{2}T/);

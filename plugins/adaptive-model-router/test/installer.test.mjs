@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { access, chmod, cp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { supportsRuntime } from "../scripts/lib/runtime.mjs";
 import { AGENTS_MARKER_END, AGENTS_MARKER_START } from "../scripts/lib/constants.mjs";
 import { DEFAULT_PLUGIN_DATA_DIRECTORY } from "../scripts/lib/plugin-data.mjs";
+import { parseHookNodeCommand } from "../scripts/lib/hook-command.mjs";
 import { temporaryProject } from "./fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -58,7 +59,17 @@ if (args.join(" ") === "mcp list --json") {
   save();
   process.stdout.write(JSON.stringify(servers)); process.exit(0);
 }
-if (args[0] === "exec") {
+if (args[0] === "app-server") {
+  const { createInterface } = await import("node:readline");
+  createInterface({input:process.stdin}).on("line", line => {
+    const request = JSON.parse(line);
+    if (request.id == null) return;
+    const result = request.method === "model/list" ? {data:[{model:"gpt-6-astra",hidden:false,supportedReasoningEfforts:["low","medium","high","xhigh","max","ultra"].map(reasoningEffort=>({reasoningEffort}))}],nextCursor:null} : {};
+    process.stdout.write(JSON.stringify({id:request.id,result}) + String.fromCharCode(10));
+  });
+  await new Promise(resolve => process.stdin.once("end", resolve));
+  process.exit(0);
+} else if (args[0] === "exec") {
   state.execCalls = (state.execCalls || 0) + 1;
   if (state.rewriteCacheOnExec) {
     for (const root of state.rewriteCacheRoots || [state.pluginInstallRoot]) {
@@ -229,6 +240,12 @@ function managerEnvironment(project, fake, {
     FAKE_CODEX_STATE: fake.statePath,
   };
   if (useCodexBin) env.CODEX_BIN = fake.executable;
+  else {
+    delete env.CODEX_BIN;
+    // Discovery fixtures must never select an installed native Desktop host.
+    if (process.platform === "win32") env.PATH = env.PATH.split(delimiter)
+      .filter((directory) => !existsSync(join(directory, "codex.exe"))).join(delimiter);
+  }
   if (effectiveDesktopOverride) {
     env.ADAPTIVE_ROUTER_DESKTOP_OVERRIDE_DIR = effectiveDesktopOverride;
   }
@@ -889,7 +906,7 @@ test("a compatible upgrade materializes an absolute Node command that starts und
     const hooks = JSON.parse(await readFile(join(newRoot, "hooks", "hooks.json"), "utf8"));
     const promptHook = hooks.hooks.UserPromptSubmit[0].hooks[0];
     const hookCommand = process.platform === "win32" ? promptHook.commandWindows : promptHook.command;
-    assert.ok(hookCommand.includes(process.execPath), "installed Hook must use an absolute Node executable");
+    assert.equal(parseHookNodeCommand(hookCommand).executable, process.execPath, "installed Hook must use an absolute Node executable");
 
     const bridgeName = process.platform === "win32" ? "node.cmd" : "node";
     const desktopNodeBridge = await readFile(join(desktopOverrideDir, bridgeName), "utf8");
@@ -953,6 +970,22 @@ test("a compatible upgrade materializes an absolute Node command that starts und
       JSON.parse(desktopHook.stdout).hookSpecificOutput.additionalContext,
       /already been applied atomically by the trusted UserPromptSubmit hook/i,
     );
+    if (process.platform === "win32") {
+      const powershellHook = spawnSync(
+        join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+        ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", hookCommand],
+        {
+          cwd: project.root,
+          encoding: "utf8",
+          env: { ...process.env, PATH: "", PLUGIN_ROOT: newRoot, PLUGIN_DATA: pluginData, ADAPTIVE_ROUTER_LOCAL_ONLY: "1" },
+          input: JSON.stringify({ cwd: project.root, session_id: "desktop-powershell-hook", model: "gpt-6-astra", prompt: "router: status" }),
+          timeout: 15_000,
+          windowsHide: true,
+        },
+      );
+      assert.equal(powershellHook.status, 0, powershellHook.stderr);
+      assert.ok(JSON.parse(powershellHook.stdout).hookSpecificOutput?.additionalContext);
+    }
   } finally {
     await project.cleanup();
   }
@@ -1036,7 +1069,7 @@ test("repair recovers a direct-add bare launch contract and survives a later Des
     const hooks = JSON.parse(await readFile(join(directAddRoot, "hooks", "hooks.json"), "utf8"));
     const promptHook = hooks.hooks.UserPromptSubmit[0].hooks[0];
     const hookCommand = process.platform === "win32" ? promptHook.commandWindows : promptHook.command;
-    assert.ok(hookCommand.includes(process.execPath));
+    assert.equal(parseHookNodeCommand(hookCommand).executable, process.execPath);
     const pluginData = join(project.root, "repair plugin data");
     await mkdir(pluginData, { recursive: true });
     const hookShell = process.platform === "win32"
@@ -1466,7 +1499,7 @@ test("a failed hot-upgrade verification restores complete historical runtime tre
     );
     await writeFile(join(oldRoot, "compatibility.json"), JSON.stringify({
       schemaVersion: 1,
-      liveWorkflowContractVersion: 3,
+      liveWorkflowContractVersion: 4,
       stdioBridgeContractVersion: 1,
     }));
     await rm(join(oldRoot, "scripts", "stdio-tool.mjs"), { force: true });
@@ -1486,7 +1519,7 @@ test("a failed hot-upgrade verification restores complete historical runtime tre
     );
     assert.equal(
       JSON.parse(await readFile(join(oldRoot, "compatibility.json"), "utf8")).liveWorkflowContractVersion,
-      3,
+      4,
     );
     await assert.rejects(access(join(oldRoot, "scripts", "stdio-tool.mjs")), { code: "ENOENT" });
     await assert.rejects(access(join(oldRoot, "scripts", "lib", "plugin-data.mjs")), { code: "ENOENT" });
@@ -1652,7 +1685,7 @@ test("compatible upgrade preserves historical runtime identities and refreshes t
       const hooks = JSON.parse(await readFile(join(root, "hooks", "hooks.json"), "utf8"));
       const prompt = hooks.hooks.UserPromptSubmit[0].hooks[0];
       const command = process.platform === "win32" ? prompt.commandWindows : prompt.command;
-      assert.ok(command.includes(process.execPath));
+      assert.equal(parseHookNodeCommand(command).executable, process.execPath);
     }
   } finally {
     await project.cleanup();
@@ -1939,7 +1972,9 @@ test("marketplace recovery refuses a symlinked restore workspace without touchin
 });
 
 test("the installer lifecycle lock serializes processes and releases after a crash", {
-  timeout: 20_000,
+  // Two complete installs plus the five-second contention deadline exceed
+  // twenty seconds on native Windows; all lock and recovery assertions remain.
+  timeout: 60_000,
 }, async () => {
   const fixture = await marketplacePruneFixture("adaptive installer lifecycle lock crash recovery ");
   let holder = null;
@@ -2249,6 +2284,37 @@ test("upgrade accepts the exact local repository marketplace without replacing o
   }
 });
 
+test("upgrade recognizes the native CLI local marketplace root without source metadata", async () => {
+  const project = await temporaryProject("adaptive native local marketplace ");
+  try {
+    const fake = await fakeCodex(project, {
+      marketplaces: [{ name: "adaptive-model-router", root: repoRoot }],
+    });
+    const result = runManager(project, fake, ["upgrade", "--non-interactive"]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual((await state(fake)).mutations.map((args) => args.join(" ")), [
+      "plugin add adaptive-model-router@adaptive-model-router",
+    ]);
+  } finally { await project.cleanup(); }
+});
+
+test("native local marketplace roots never override a foreign or explicit source", async () => {
+  for (const entry of [
+    { root: tmpdir() },
+    { root: repoRoot, marketplaceSource: { sourceType: "git", source: "someone/else" } },
+  ]) {
+    const project = await temporaryProject("adaptive foreign local marketplace ");
+    try {
+      const fake = await fakeCodex(project, {
+        marketplaces: [{ name: "adaptive-model-router", ...entry }],
+      });
+      const result = runManager(project, fake, ["upgrade", "--non-interactive"]);
+      assert.equal(result.status, 4);
+      assert.deepEqual((await state(fake)).mutations, []);
+    } finally { await project.cleanup(); }
+  }
+});
+
 test("upgrade accepts a stable marketplace checkout when Codex omits install metadata", async () => {
   const project = await temporaryProject("adaptive marketplace checkout Unicode 空格 ");
   try {
@@ -2492,7 +2558,8 @@ test("platform wrapper performs the same native installation flow", async () => 
     if (process.platform === "win32") {
       result = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(repoRoot, "install.ps1"), "-NonInteractive", "-Ref", candidateRef], {
         encoding: "utf8",
-        env: { ...process.env, PATH: `${fake.bin};${dirname(process.execPath)};${process.env.PATH}`, CODEX_HOME: codexHome, FAKE_CODEX_STATE: fake.statePath },
+        env: { ...process.env, PATH: `${fake.bin};${dirname(process.execPath)};${process.env.PATH}`,
+          CODEX_BIN: fake.executable, CODEX_HOME: codexHome, FAKE_CODEX_STATE: fake.statePath },
       });
     } else {
       result = spawnSync("sh", [join(repoRoot, "install.sh"), `--ref=${candidateRef}`, "--non-interactive"], {

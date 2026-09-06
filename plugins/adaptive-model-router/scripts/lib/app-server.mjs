@@ -188,16 +188,18 @@ export class AppServerClient {
     return this.request("hooks/list", { cwds: [cwd] }, deadlineAt);
   }
 
-  async classify({ model, effort, prompt, outputSchema }, deadlineAt = this.clock() + this.timeoutMs) {
+  async classify({ model, effort, prompt, outputSchema, onObservation }, deadlineAt = this.clock() + this.timeoutMs) {
     await this.start(deadlineAt);
     const started = await this.request("thread/start", { model, ephemeral: true }, deadlineAt);
     const threadId = started?.thread?.id;
     if (!threadId) throw new Error("classifier thread did not start");
     const deltas = [];
     let finalText = null;
+    let usage = null;
     const unsubscribe = this.subscribe((message) => {
       if (message?.params?.threadId && message.params.threadId !== threadId) return;
       const method = String(message?.method || "");
+      if (method === "thread/tokenUsage/updated") usage = message.params?.tokenUsage?.total || null;
       const delta = message?.params?.delta;
       if (/agentMessage\/delta$/i.test(method) && typeof delta === "string") deltas.push(delta);
       const item = message?.params?.item;
@@ -227,6 +229,8 @@ export class AppServerClient {
     }
     const text = String(finalText ?? deltas.join("")).trim();
     if (!text) throw new Error("classifier returned no output");
+    onObservation?.({ configuredModel: started.model || started.thread?.model || null,
+      servedModel: null, usage });
     return JSON.parse(text);
   }
 
