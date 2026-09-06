@@ -246,6 +246,10 @@ assert(!packageJson.dependencies && !packageJson.devDependencies, "runtime must 
 assert(!Object.hasOwn(manifest, "hooks"), "default hooks/hooks.json discovery should not be duplicated in the manifest");
 assert(manifest.mcpServers === "./.mcp.json", "manifest must reference the root MCP configuration");
 const routerMcp = mcpConfig.mcpServers?.["adaptive-model-router"];
+assert(
+  ["CODEX_HOME", "CODEX_BIN"].every((name) => routerMcp?.env_vars?.includes(name)),
+  "MCP must forward the selected Codex Home and executable for native task and Hook inspection",
+);
 assert(routerMcp?.command === "node", "MCP must use the Node command resolved by Codex");
 assert(routerMcp.cwd === ".", "MCP cwd must resolve from the plugin root");
 assert(routerMcp.args?.[0] === "./scripts/node-launcher.mjs", "MCP must use the relative runtime launcher");

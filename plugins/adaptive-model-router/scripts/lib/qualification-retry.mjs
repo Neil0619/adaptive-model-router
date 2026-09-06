@@ -1,6 +1,7 @@
 import { qualificationTargetMatches } from "./qualification-policy.mjs";
 import { realpathSync } from "node:fs";
 import { canonicalJson, payloadHash } from "./io.mjs";
+import { NATIVE_LIFECYCLE_CLI_VERSIONS } from "./native-lifecycle-audit.mjs";
 
 const DURATION_MS = 60 * 60 * 1000;
 const digest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
@@ -15,7 +16,7 @@ function read(db, key) {
 }
 
 function fingerprint(binding) {
-  if (binding?.cliVersion !== "0.153.0" || !["runtimeDigest", "configurationDigest", "taskCwdDigest"].every((field) => digest(binding[field]))) return null;
+  if (!NATIVE_LIFECYCLE_CLI_VERSIONS.includes(binding?.cliVersion) || !["runtimeDigest", "configurationDigest", "taskCwdDigest"].every((field) => digest(binding[field]))) return null;
   // The configured host/Hook set is shared by the CLI and the task's pinned
   // shell. Each new qualification still binds and verifies its own shell roots.
   return Object.fromEntries(["cliVersion", "runtimeDigest", "configurationDigest", "taskCwdDigest"].map((field) => [field, binding[field]]));
@@ -47,6 +48,31 @@ function recoveredBasis(db, context, qualification) {
   return payloadHash({ qualification, receipt, attempt, outcome, route });
 }
 
+function authorizationBasis(db, context, qualification, binding) {
+  // The existing failed-qualification recovery remains restricted to its
+  // proven host. An upgrade of a successful qualification is a separate case.
+  const recovered = binding?.cliVersion === "0.153.0" ? recoveredBasis(db, context, qualification) : null;
+  if (recovered) return { kind: "recovered_failure", digest: recovered };
+  const previousFingerprint = fingerprint(qualification?.binding);
+  const currentFingerprint = fingerprint(binding);
+  if (qualification?.schema !== 1 || qualification.state !== "passed"
+    || !digest(qualification.proof?.rawAuditDigest) || !previousFingerprint || !currentFingerprint
+    || payloadHash(previousFingerprint) === payloadHash(currentFingerprint)
+    || qualification.binding?.taskCwdDigest !== binding.taskCwdDigest) return null;
+  const routeId = qualification.routeId;
+  const values = [routeId, context.projectId, context.contextKey];
+  const attempt = db.prepare("SELECT * FROM delegation_attempts WHERE route_id=? AND project_id=? AND context_key=?").get(...values);
+  const outcome = db.prepare("SELECT * FROM outcomes WHERE route_id=? AND project_id=? AND context_key=?").get(...values);
+  const route = db.prepare("SELECT * FROM routes WHERE route_id=? AND project_id=? AND context_key=?").get(...values);
+  if (!attempt?.finalized_at || attempt.ticket_consumed !== 1 || attempt.post_observed !== 1
+    || attempt.stop_observed !== 1 || attempt.outcome_recorded !== 1 || attempt.no_child !== 0
+    || attempt.ambiguous !== 0 || !digest(attempt.agent_id)
+    || outcome?.status !== "passed" || outcome.gate !== "structured-check"
+    || !qualificationTargetMatches(db, qualification, route)
+    || route.reason_codes_json !== '["HOST_LIFECYCLE_QUALIFICATION"]') return null;
+  return { kind: "verified_upgrade", digest: payloadHash({ qualification, attempt, outcome, route }) };
+}
+
 function isFresh(value, now = Date.now()) {
   const issued = Date.parse(value?.issuedAt), expires = Date.parse(value?.expiresAt);
   return Number.isFinite(issued) && Number.isFinite(expires) && issued <= now && now < expires
@@ -56,13 +82,15 @@ function isFresh(value, now = Date.now()) {
 export function activeRequalification(db, context, qualification, binding) {
   const authorization = read(db, retryKey(qualification?.routeId));
   const current = fingerprint(binding);
-  const basisDigest = recoveredBasis(db, context, qualification);
+  const basis = authorizationBasis(db, context, qualification, binding);
+  const basisDigest = basis?.digest;
   if (!current || authorization?.schema !== 1 || authorization.state !== "authorized" || !isFresh(authorization)
     || !basisDigest || !digest(authorization.contextDigest)
     || authorization.priorRouteId !== qualification.routeId
-    || authorization.basisDigest !== basisDigest
+    || authorization.basisDigest !== basisDigest || (authorization.basisKind || "recovered_failure") !== basis.kind
     || authorization.evidenceDigest !== payloadHash({ contextDigest: authorization.contextDigest, basisDigest, binding: authorization.binding })
     || payloadHash(authorization.binding) !== payloadHash(current)) return null;
+  if (basis.kind === "verified_upgrade") return { priorRouteId: qualification.routeId, evidenceDigest: authorization.evidenceDigest };
   const diagnostic = read(db, diagnosticKey(authorization.contextDigest));
   if (diagnostic?.schema !== 1 || diagnostic.enabled !== true || diagnostic.contextDigest !== authorization.contextDigest
     || diagnostic.authorizationDigest !== authorization.evidenceDigest || diagnostic.expiresAt !== authorization.expiresAt
@@ -97,16 +125,20 @@ export async function authorizeRequalification(input, { store, cwd, inspectBindi
   if (existing?.state === "consumed") return { status: "consumed", ordinaryDelegationEnabled: false };
   const qualification = read(store.db, qualificationKey(context));
   if (qualification?.routeId !== input.routeId) return denied();
-  const basisDigest = recoveredBasis(store.db, context, qualification);
-  if (!basisDigest) return denied();
-  const { readNativeRecoveryReceipt } = await import("./delegation-recovery.mjs");
-  if (!readNativeRecoveryReceipt(store.db, context, input.routeId)) return denied();
   const inspect = inspectBinding || (async () => {
     const { inspectLifecycleHookReadiness } = await import("./hook-readiness.mjs");
     return inspectLifecycleHookReadiness({ cwd, store, context, contextId: input.contextId });
   });
-  const binding = fingerprint((await inspect())?.binding);
+  const inspectedBinding = (await inspect())?.binding;
+  const binding = fingerprint(inspectedBinding);
   if (!binding || binding.taskCwdDigest !== payloadHash(realpathSync(cwd))) return denied();
+  const basis = authorizationBasis(store.db, context, qualification, inspectedBinding);
+  if (!basis) return denied();
+  const basisDigest = basis.digest;
+  if (basis.kind === "recovered_failure") {
+    const { readNativeRecoveryReceipt } = await import("./delegation-recovery.mjs");
+    if (!readNativeRecoveryReceipt(store.db, context, input.routeId)) return denied();
+  }
   const contextDigest = payloadHash(input.contextId);
   const evidenceDigest = payloadHash({ contextDigest, basisDigest, binding });
   if (existing) return existing.evidenceDigest === evidenceDigest && isFresh(existing)
@@ -116,13 +148,13 @@ export async function authorizeRequalification(input, { store, cwd, inspectBindi
     || payloadHash(fingerprint((await inspect())?.binding)) !== payloadHash(binding)) return denied();
   return store.transaction(() => {
     if (read(store.db, retryKey(input.routeId)) || store.activeDelegationRouteId(context)
-      || recoveredBasis(store.db, context, read(store.db, qualificationKey(context))) !== basisDigest) return denied();
+      || authorizationBasis(store.db, context, read(store.db, qualificationKey(context)), inspectedBinding)?.digest !== basisDigest) return denied();
     const issuedAt = new Date().toISOString();
     const expiresAt = new Date(Date.parse(issuedAt) + DURATION_MS).toISOString();
     const authority = { schema: 1, state: "authorized", priorRouteId: input.routeId, contextDigest,
-      basisDigest, binding, evidenceDigest, issuedAt, expiresAt };
+      basisKind: basis.kind, basisDigest, binding, evidenceDigest, issuedAt, expiresAt };
     store.db.prepare("INSERT INTO meta(key,value) VALUES(?,?)").run(retryKey(input.routeId), canonicalJson(authority));
-    store.db.prepare("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+    if (basis.kind === "recovered_failure") store.db.prepare("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
       .run(diagnosticKey(contextDigest), canonicalJson({ schema: 1, enabled: true, contextDigest,
         authorizationDigest: evidenceDigest, taskCwdDigest: binding.taskCwdDigest, issuedAt, expiresAt }));
     return { status: "authorized", evidenceDigest, expiresAt, idempotent: false, ordinaryDelegationEnabled: false };
