@@ -13,6 +13,7 @@ const MARKETPLACE = "adaptive-model-router";
 const VERSION = "0.4.0";
 const REPOSITORY = "neil0619/adaptive-model-router";
 const VERSION_PATTERN = /^0\.4\.0(?:\+codex\.[0-9A-Za-z][0-9A-Za-z.-]*)?$/u;
+const HOST_COMMAND_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 
 function fail(message) {
   throw new Error(`installed candidate invalid: ${message}`);
@@ -96,7 +97,8 @@ function codexJson(args) {
   const spec = spawnSpec(resolveCodexCommandSync(), args);
   const stdout = execFileSync(spec.command, spec.args, {
     encoding: "utf8",
-    env: process.env,
+    maxBuffer: HOST_COMMAND_MAX_BUFFER_BYTES,
+    env: spec.env,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
     windowsVerbatimArguments: spec.windowsVerbatimArguments,

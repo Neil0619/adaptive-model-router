@@ -113,6 +113,7 @@ function Add-WarningCode {
 
 function Resolve-ProcessCommand {
     param([Parameter(Mandatory = $true)][string]$Name)
+    if ($Name -eq 'codex' -and $env:CODEX_BIN) { $Name = [string]$env:CODEX_BIN }
     if ([IO.Path]::IsPathFullyQualified($Name)) {
         $commands = @([pscustomobject]@{ Source = $Name; Extension = [IO.Path]::GetExtension($Name) })
     }
@@ -123,8 +124,9 @@ function Resolve-ProcessCommand {
                 ForEach-Object { [pscustomobject]@{ Source = $_.Source; Extension = [IO.Path]::GetExtension($_.Source) } }
         )
     }
-    $selected = @($commands | Where-Object { $_.Extension -eq '.ps1' } | Select-Object -First 1)
-    if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -eq '.exe' } | Select-Object -First 1) }
+    # Keep smoke on the native host even when an older npm shim occurs first.
+    $selected = @($commands | Where-Object { $_.Extension -eq '.exe' } | Select-Object -First 1)
+    if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -eq '.ps1' } | Select-Object -First 1) }
     if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -in @('.cmd', '.bat') } | Select-Object -First 1) }
     if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -notin @('.cmd', '.bat', '') } | Select-Object -First 1) }
     if ($selected.Count -eq 0) {

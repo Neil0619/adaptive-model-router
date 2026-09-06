@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { AppServerClient, resolveCodexCommand } from "./app-server.mjs";
 import { canonicalJson, payloadHash } from "./io.mjs";
-import { auditNativeLifecycleNoop, NATIVE_LIFECYCLE_CLI_VERSIONS } from "./native-lifecycle-audit.mjs";
+import { auditNativeLifecycleNoop, NATIVE_LIFECYCLE_CLI_VERSIONS, supportsNativeLifecycleHost } from "./native-lifecycle-audit.mjs";
 import { activeRequalification, consumeRequalification } from "./qualification-retry.mjs";
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -26,12 +26,13 @@ export function runtimeSourceDigest(root = MODULE_ROOT) {
 }
 
 export async function nativeQualificationHost() {
-  if (process.platform !== "darwin") throw new Error("native qualification platform is unproven");
+  if (!["darwin", "win32"].includes(process.platform)) throw new Error("native qualification platform is unproven");
   const command = await resolveCodexCommand();
+  if (command.kind !== "direct") throw new Error("native qualification requires a directly verifiable executable");
   const path = realpathSync(command.path);
-  const result = spawnSync(path, ["--version"], { encoding: "utf8", timeout: 3_000, maxBuffer: 1024 });
+  const result = spawnSync(path, ["--version"], { encoding: "utf8", timeout: 3_000, maxBuffer: 1024, windowsHide: true });
   const version = /^codex-cli (\S+)\s*$/u.exec(result.stdout || "")?.[1];
-  if (result.error || result.status !== 0 || !NATIVE_LIFECYCLE_CLI_VERSIONS.includes(version)) throw new Error("native qualification build is unproven");
+  if (result.error || result.status !== 0 || !supportsNativeLifecycleHost(process.platform, version)) throw new Error("native qualification build is unproven");
   return { platform: process.platform, arch: process.arch, cliVersion: version,
     executableDigest: sha(readFileSync(path)), executablePathDigest: payloadHash(path) };
 }

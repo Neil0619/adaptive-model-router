@@ -3,7 +3,8 @@ import { runtimeSourceDigest } from "./lib/lifecycle-qualification.mjs";
 // Diagnostic qualification only: fixed no-tool payloads, a disposable native
 // host, and a fresh Router store. This never writes production readiness proof.
 import { createHash, randomBytes } from "node:crypto";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
@@ -16,8 +17,8 @@ import { routeStage } from "./lib/router.mjs";
 import { auditNativeLifecycleNoop } from "./lib/native-lifecycle-audit.mjs";
 
 const mode = process.argv[2] || "deny";
-if (process.platform !== "darwin" || !["deny", "roundtrip"].includes(mode) || process.argv.length > 3) {
-  process.stderr.write("Usage on native macOS: probe-native-lifecycle.mjs [deny|roundtrip]\n");
+if (!["darwin", "win32"].includes(process.platform) || !["deny", "roundtrip"].includes(mode) || process.argv.length > 3) {
+  process.stderr.write("Usage on native macOS or Windows: probe-native-lifecycle.mjs [deny|roundtrip]\n");
   process.exit(2);
 }
 const scratch = mkdtempSync(join(tmpdir(), "router-native-lifecycle-"));
@@ -42,6 +43,7 @@ const client = new AppServerClient({
   timeoutMs: 240_000,
   async resolveImpl() {
     const command = await resolveCodexCommand();
+    if (command.kind !== "direct") throw new Error("native probe requires a directly executable Codex host");
     // Desktop companions are resolved beside argv[0]. A symlink in ~/.local/bin
     // may leave codex-code-mode-host unavailable even though codex itself runs.
     return { ...command, path: realpathSync(command.path) };
@@ -217,6 +219,6 @@ try {
   }
   store?.close();
   client.close();
-  if (terminal || !rootId) rmSync(scratch, { recursive: true, force: true });
+  if (terminal || !rootId) await rm(scratch, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   else emit({ stage: "cleanup-deferred", scratch });
 }

@@ -1,0 +1,140 @@
+{
+  "schema": 1,
+  "date": "2026-09-06",
+  "kind": "native-windows-production-mcp-validation",
+  "productionAdmission": false,
+  "productionPathVerified": true,
+  "admissionBoundary": "This evidence documents one disposable native task. It does not prequalify another task or replace its current Hook trust, executable and runtime binding, lifecycle observations, or complete source audit.",
+  "host": {
+    "platform": "win32",
+    "arch": "x64",
+    "cliVersion": "0.153.4",
+    "executableDigest": "e5aa76d19c7c94e2e9ef9b707d590206a73ac0e97c8ddc8382181242494bef75",
+    "executablePathDigest": "8383671576ac4ef3fa119dd4f1371f637d87cbafa81741f3fc5d94a58c717c9a"
+  },
+  "runtimeVersion": "0.4.0+codex.20260906014558",
+  "runtimeSourceDigest": "ed56b62b96fbec6a107ad069e90444e64a43b1c76df1e55163e5d8755d16e744",
+  "trustedHooks": 7,
+  "sourceProbe": "plugins/adaptive-model-router/scripts/probe-native-qualification.mjs",
+  "rootModel": "gpt-6-astra",
+  "rootEffort": "high",
+  "children": 2,
+  "outcomes": 2,
+  "pendingOutcomes": 0,
+  "qualification": "passed",
+  "attempts": [
+    {
+      "childIdDigest": "aea98cab105786858197de8a5360c53d5d32bd3520c7f32ef974723410619a17",
+      "parentIdDigest": "30a8e85c85e031b859ae3c384a01573868cb8a1d88fb4c596ae1ddee458da50d",
+      "cliVersion": "0.153.4",
+      "target": {
+        "model": "gpt-6-astra",
+        "effort": "low"
+      },
+      "records": {
+        "session_meta": 1,
+        "event_msg": 4,
+        "response_item": 7,
+        "world_state": 1,
+        "turn_context": 1,
+        "inter_agent_communication_metadata": 1,
+        "token_usage_record": 1
+      },
+      "events": {
+        "task_started": 1,
+        "item_completed": 1,
+        "token_count": 1,
+        "task_complete": 1
+      },
+      "responseTypes": {
+        "message": 6,
+        "agent_message": 1
+      },
+      "projectedItemTypes": [
+        "agentMessage"
+      ],
+      "audit": {
+        "passed": true,
+        "rawAuditAdapter": "codex-0.153.4-no-work/1",
+        "rawAuditDigest": "f6b3bac0dd7cfdc07622ff0397f020d6801c4b28a2bd305c9c1d48d23064a97e",
+        "sourceBytes": 84059
+      },
+      "qualification": true,
+      "routeIdDigest": "4229e246315f6a413270bbbaae2559ed7d117727169b38901f841947063c9f20",
+      "delegationGate": "available"
+    },
+    {
+      "childIdDigest": "642ae66cb5a5d968c6d08aa11adfa29e03390ad977d7f05f7e126b24cac44478",
+      "parentIdDigest": "30a8e85c85e031b859ae3c384a01573868cb8a1d88fb4c596ae1ddee458da50d",
+      "cliVersion": "0.153.4",
+      "target": {
+        "model": "gpt-6-astra",
+        "effort": "low"
+      },
+      "records": {
+        "session_meta": 1,
+        "event_msg": 4,
+        "response_item": 7,
+        "world_state": 1,
+        "turn_context": 1,
+        "inter_agent_communication_metadata": 1,
+        "token_usage_record": 1
+      },
+      "events": {
+        "task_started": 1,
+        "item_completed": 1,
+        "token_count": 1,
+        "task_complete": 1
+      },
+      "responseTypes": {
+        "message": 6,
+        "agent_message": 1
+      },
+      "projectedItemTypes": [
+        "agentMessage"
+      ],
+      "audit": {
+        "passed": true,
+        "rawAuditAdapter": "codex-0.153.4-no-work/1",
+        "rawAuditDigest": "4e3b975b3f0758385654cc64e79d58b89a6d794651a43952a02b1b4e71b2bb0f",
+        "sourceBytes": 83987
+      },
+      "qualification": false,
+      "routeIdDigest": "798a5ed4bb697f0d4c64ca4bb6b594aabd2828ca9216adf27ac6c2f77e3ab74c",
+      "delegationGate": "available"
+    }
+  ],
+  "negativeControl": {
+    "sourceProbe": "plugins/adaptive-model-router/scripts/probe-native-lifecycle.mjs deny",
+    "unissuedTicket": "blocked",
+    "children": 0
+  },
+  "cliToolExposure": {
+    "sourceProbe": "plugins/adaptive-model-router/scripts/verify-task-tools.mjs",
+    "passed": true,
+    "tools": [
+      "diagnose_router",
+      "route_stage"
+    ]
+  },
+  "canonicalWindowsReleaseGate": false,
+  "sameDesktopTaskContinuity": false,
+  "controlsAcceptance": {
+    "passed": true,
+    "checks": [
+      "trusted-native-global-on",
+      "quoted-control-does-not-enable",
+      "capability-and-policy-boundaries",
+      "shadow-and-learning-no-mutations",
+      "redacted-observability-and-settled-state",
+      "cross-project-persistence-and-isolation"
+    ],
+    "rootModel": "gpt-6-astra",
+    "rootEffort": "high",
+    "subagents": 0,
+    "pendingOutcomes": 0,
+    "globalSettingRestored": true,
+    "storage": "isolated-temporary-router-home",
+    "canonicalReleaseGate": false
+  }
+}

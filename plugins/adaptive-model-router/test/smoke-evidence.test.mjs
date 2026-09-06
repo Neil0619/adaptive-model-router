@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -550,7 +551,9 @@ if (args === "plugin marketplace list --json") {
   process.exit(0);
 }
 if (args === "plugin list --available --json") {
-  process.stdout.write(JSON.stringify({ installed: [{ pluginId: "adaptive-model-router@adaptive-model-router", enabled: true, version: "0.4.0+codex.20260814065649" }] }));
+  // A real remote catalog is larger than child_process's default 1 MiB buffer.
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(1, JSON.stringify({ installed: [{ pluginId: "adaptive-model-router@adaptive-model-router", enabled: true, version: "0.4.0+codex.20260814065649" }], available: [{ description: "x".repeat(2 * 1024 * 1024) }] }));
   process.exit(0);
 }
 if (args === "mcp list --json") {
@@ -574,16 +577,25 @@ process.exit(2);
       FAKE_MARKETPLACE_ROOT: marketplaceRoot,
     };
     env[pathKey] = `${bin}${delimiter}${baseEnv[pathKey] || ""}`;
-    const result = spawnSync(process.execPath, [
-      join(repoRoot, "scripts", "verify-installed-candidate.mjs"),
-      "--ref=codex/windows-smoke",
-      `--commit=${commit}`,
-    ], {
-      encoding: "utf8",
-      env,
-    });
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /ref, revision, and plugin version verified/u);
+    // Keep PATH discovery entirely on the fake host even with Desktop in PATH.
+    if (process.platform === "win32") env[pathKey] = env[pathKey].split(delimiter)
+      .filter((directory) => !existsSync(join(directory, "codex.exe"))).join(delimiter);
+    const explicitEnv = { ...env,
+      CODEX_BIN: join(bin, process.platform === "win32" ? "codex.cmd" : "codex"),
+      [pathKey]: env[pathKey].split(delimiter).filter((entry) => entry !== bin).join(delimiter),
+    };
+    for (const commandEnv of [env, explicitEnv]) {
+      const result = spawnSync(process.execPath, [
+        join(repoRoot, "scripts", "verify-installed-candidate.mjs"),
+        "--ref=codex/windows-smoke",
+        `--commit=${commit}`,
+      ], {
+        encoding: "utf8",
+        env: commandEnv,
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /ref, revision, and plugin version verified/u);
+    }
   } finally {
     await project.cleanup();
   }

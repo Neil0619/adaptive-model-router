@@ -302,6 +302,13 @@ async function promptHook(input) {
         store.observeHostModel(context, input.model, { detectChanges: false });
         if (inspection) {
           additionalContext(inspectionContext(store.rootTask(context), contextId, inspection.tools));
+        } else if (/\$adaptive-model-router(?![A-Za-z0-9_-])/u.test(prompt)) {
+          additionalContext([
+            "Trusted Adaptive Model Router context is available for explicitly requested Router calls.",
+            "This identity does not enable automatic routing or change Router controls.",
+            `The root-task model is ${rootLabel(store.rootTask(context))} and remains host-managed.`,
+            contextIdInstruction(contextId),
+          ].join("\n"));
         }
         return;
       }
