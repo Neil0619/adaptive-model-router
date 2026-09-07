@@ -116,7 +116,7 @@ test("missing session identity is diagnosed without persisting raw turn data", a
     const value = diagnostic(result.stderr);
     assert.equal(value.stage, "identity");
     assert.equal(value.category, "missing_session_identity");
-    const doctor = spawnSync(process.execPath, [join(pluginRoot, "scripts", "codex-route.mjs"), "hook-doctor"], {
+    const doctor = spawnSync(process.execPath, [join(pluginRoot, "scripts", "codex-route.mjs"), "hook-doctor", "--global"], {
       encoding: "utf8",
       env: { ...process.env, ADAPTIVE_ROUTER_HOME: project.home },
     });

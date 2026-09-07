@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -357,25 +358,64 @@ function matchingCandidate(candidates, directory, version) {
     candidate.directory === directory && candidate.descriptor.runtimeVersion === version) || null;
 }
 
+// The host may reconstruct its cache from the registered marketplace source.
+// An activated runtime is also retained by the installer outside that cache.
+// Read only the indexed active entry; do not promote arbitrary vault versions
+// or mutate the cache from concurrent Hook/MCP bootstrap processes.
+function vaultedActiveCandidate(pointer, env) {
+  const dataRoot = pluginDataRoot(env);
+  if (!dataRoot || !pointer.activeDirectory || !pointer.activeVersion
+    || pointer.failedDirectories.includes(pointer.activeDirectory)) return null;
+  try {
+    const vault = join(dataRoot, "runtime-shell-vault");
+    if (!lstatSync(vault).isDirectory()) return null;
+    const indexPath = join(vault, "index.json");
+    if (!lstatSync(indexPath).isFile()) return null;
+    const index = JSON.parse(readFileSync(indexPath, "utf8"));
+    if (!isPlainObject(index) || !exactKeys(index, ["schemaVersion", "directories"])
+      || index.schemaVersion !== 1 || !Array.isArray(index.directories)
+      || index.directories.some((entry) => !safeDirectoryName(entry))
+      || new Set(index.directories).size !== index.directories.length
+      || !index.directories.includes(pointer.activeDirectory)) return null;
+    const root = join(vault, pointer.activeDirectory);
+    const pending = [root];
+    while (pending.length) {
+      const path = pending.pop();
+      const metadata = lstatSync(path);
+      if (metadata.isDirectory()) {
+        for (const name of readdirSync(path)) pending.push(join(path, name));
+      } else if (!metadata.isFile()) return null;
+    }
+    const candidate = candidateAt(root);
+    if (candidate?.descriptor.runtimeVersion !== pointer.activeVersion) return null;
+    for (const name of ["hook", "service", "probe"]) runtimeEntrypoint(candidate, name);
+    return candidate;
+  } catch { return null; }
+}
+
 export function resolveRuntime(currentRoot, { env = process.env, allowTrial = true } = {}) {
   const candidates = discoverRuntimeCandidates(currentRoot);
   const current = candidates.find((candidate) => candidate.root === resolve(currentRoot));
   if (!current) throw new Error("current runtime descriptor is unavailable or incompatible");
   const pointer = readPointer(env);
-  const active = matchingCandidate(
-    candidates,
+  const cachedActive = matchingCandidate(
+    candidates.filter((candidate) => !pointer.failedDirectories.includes(candidate.directory)),
     pointer.activeDirectory,
     pointer.activeVersion,
-  ) || current;
-  if (!allowTrial) return { candidate: active, current, active, pointer, provisional: false };
+  );
+  const vaultedActive = cachedActive ? null : vaultedActiveCandidate(pointer, env);
+  const active = cachedActive || vaultedActive || current;
+  const activePointerStatus = !pointer.activeDirectory ? "unset"
+    : cachedActive || vaultedActive ? "matched" : "unavailable";
+  const activeSource = vaultedActive ? "vault" : activePointerStatus === "unavailable" ? "fallback" : "cache";
+  const base = { current, active, pointer, activeSource, activePointerStatus };
+  if (!allowTrial) return { ...base, candidate: active, provisional: false };
   const trial = candidates.find((candidate) =>
     !pointer.failedDirectories.includes(candidate.directory) &&
     compareRuntimeVersions(candidate.descriptor.runtimeVersion, active.descriptor.runtimeVersion) > 0);
   return {
     candidate: trial || active,
-    current,
-    active,
-    pointer,
+    ...base,
     provisional: Boolean(trial),
   };
 }
@@ -491,6 +531,9 @@ export function runtimePublicState(resolution, env = process.env) {
     storageContractVersion: STORAGE_CONTRACT_VERSION,
     runtimeVersion: resolution.candidate.descriptor.runtimeVersion,
     activeVersion: resolution.active.descriptor.runtimeVersion,
+    requestedActiveVersion: resolution.pointer.activeVersion,
+    activePointerStatus: resolution.activePointerStatus,
+    activeSource: resolution.activeSource,
     previousVersion: pointer.previousVersion,
     failedRuntimeCount: pointer.failedDirectories.length,
     databaseVersion: resolution.candidate.descriptor.databaseVersion,

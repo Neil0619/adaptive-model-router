@@ -1,9 +1,11 @@
-import { readFileSync, realpathSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AppServerClient, withAppServer } from "./app-server.mjs";
-import { lifecycleBinding, nativeQualificationHost, nativeTaskWorkingDirectory, qualificationReadiness } from "./lifecycle-qualification.mjs";
+import { lifecycleBinding, nativeQualificationHost, nativeTaskWorkingDirectory, provenQualificationShellRoots, qualificationReadiness } from "./lifecycle-qualification.mjs";
 import { payloadHash } from "./io.mjs";
+import { discoverRuntimeCandidates } from "./runtime-loader.mjs";
+import { readHookIdentityDiagnostic } from "./hook-diagnostics.mjs";
 
 export const HOOK_READINESS_TIMEOUT_MS = 5_000;
 
@@ -22,6 +24,7 @@ const READINESS_FAILURE_CODES = new Set([
   "HOOK_TRUST_REQUIRED",
   "HOST_HOOK_SET_MISMATCH",
   "HOST_HOOK_STATUS_UNAVAILABLE",
+  "HOST_HOOK_DISPATCH_NOT_OBSERVED",
   "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN",
   "HOST_LIFECYCLE_QUALIFICATION_FAILED",
 ]);
@@ -162,6 +165,35 @@ async function withHostAppServer(callback, { timeoutMs }) {
   });
 }
 
+function safeHistoricalTree(root) {
+  if (canonicalPath(root) !== resolve(root) || !lstatSync(root).isDirectory() || lstatSync(root).isSymbolicLink()) return false;
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (entry.isDirectory()) { if (!safeHistoricalTree(join(root, entry.name))) return false; }
+    else if (!entry.isFile() || entry.isSymbolicLink()) return false;
+  }
+  return true;
+}
+
+function historicalHookShells(store, context, pluginRoot, inventoryRoot, platform) {
+  const roots = [pluginRoot, inventoryRoot].map(canonicalPath);
+  const required = new Set(provenQualificationShellRoots(store.db, context));
+  for (const root of roots) required.delete(payloadHash(root));
+  if (required.size === 0) return [];
+  const expected = expectedHooks(inventoryRoot, platform);
+  const matched = [];
+  for (const base of roots) for (const candidate of discoverRuntimeCandidates(base)) {
+    const hash = payloadHash(candidate.root);
+    if (!required.has(hash)) continue;
+    const actual = expectedHooks(candidate.root, platform);
+    if (!safeHistoricalTree(candidate.root) || !actual || payloadHash(actual.entries) !== payloadHash(expected.entries)) {
+      throw new Error("previously observed Hook shell is no longer equivalent");
+    }
+    matched.push(candidate.root); required.delete(hash);
+  }
+  if (required.size !== 0) throw new Error("previously observed Hook shell is unavailable");
+  return matched;
+}
+
 export async function inspectLifecycleHookReadiness({
   cwd,
   pluginRoot = resolveLifecyclePluginRoot(),
@@ -176,6 +208,7 @@ export async function inspectLifecycleHookReadiness({
 } = {}) {
   let inventory;
   let hooksList;
+  let taskTurnId;
   let inventoryRoot = pluginRoot;
   try {
     hooksList = await appServer(
@@ -184,6 +217,10 @@ export async function inspectLifecycleHookReadiness({
           await client.start(deadlineAt);
           const result = await client.request("thread/read", { threadId: contextId, includeTurns: false }, deadlineAt);
           cwd = nativeTaskWorkingDirectory(result.thread, { contextId, store, context });
+          const turns = await client.request("thread/turns/list", {
+            threadId: contextId, limit: 1, itemsView: "summary", sortDirection: "desc",
+          }, deadlineAt);
+          taskTurnId = turns.data?.[0]?.id;
         }
         return client.listHooks(cwd, deadlineAt);
       },
@@ -201,7 +238,7 @@ export async function inspectLifecycleHookReadiness({
         // inert qualification, never normal work without its current-task proof.
         const pinned = expectedHooks(pluginRoot, platform);
         const configured = expectedHooks(roots[0], platform);
-        if (discovered.ready && pinned && configured
+        if ((discovered.ready || discovered.reasonCode === "HOOK_TRUST_REQUIRED") && pinned && configured
           && payloadHash(pinned.entries) === payloadHash(configured.entries)) {
           inventory = discovered;
           inventoryRoot = roots[0];
@@ -212,12 +249,24 @@ export async function inspectLifecycleHookReadiness({
     return { ready: false, reasonCode: "HOST_HOOK_STATUS_UNAVAILABLE" };
   }
   if (inventory.ready !== true) return inventory;
+  if (store && context) {
+    // A new app-server's trusted inventory does not prove that the long-lived
+    // Desktop task loaded those plugin Hooks. Require an actual receipt for the
+    // latest native turn before allocating even an inert qualification ticket.
+    // Never borrow another task's receipt or an older turn's successful proof.
+    const dispatched = typeof taskTurnId === "string" && taskTurnId
+      ? readHookIdentityDiagnostic(process.env, { contextId, turnId: taskTurnId }) : null;
+    if (!dispatched?.available || dispatched.reasonCode !== "HOOK_DISPATCHED_IDENTITY_ACCEPTED") {
+      return { ready: false, reasonCode: "HOST_HOOK_DISPATCH_NOT_OBSERVED" };
+    }
+  }
   if (typeof dispatchRoundTripProbe !== "function") {
     if (store && context) {
       try {
         const host = await nativeHost();
         const group = hooksList.data.find((entry) => canonicalPath(entry.cwd) === canonicalPath(cwd));
-        const binding = lifecycleBinding(group.hooks, pluginRoot, inventoryRoot, host, cwd);
+        const historicalRoots = historicalHookShells(store, context, pluginRoot, inventoryRoot, platform);
+        const binding = lifecycleBinding(group.hooks, pluginRoot, inventoryRoot, host, cwd, historicalRoots);
         return qualificationReadiness(store.db, context, binding);
       } catch { /* Unknown hosts remain root-only, without a qualification ticket. */ }
     }

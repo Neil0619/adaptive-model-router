@@ -24,6 +24,18 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Preserve the activated repair through host cache rebuilds by resolving the
+  indexed runtime vault and registering a managed marketplace source that
+  retains the exact trusted Hook and MCP launch commands.
+- Require a Hook receipt from the current native task turn before allocating
+  delegation, including lifecycle qualification. Installation startup probes
+  no longer imply that an already-running Desktop task has recovered.
+- Support the separately audited native macOS CLI `0.153.4` lifecycle stream
+  and retain only proven compatible historical shell bindings during refresh.
+- Allow explicitly authorized, native-audited requalification after recovery,
+  preserving failed attempts and missing handshakes without inventing outcomes.
+  Narrow metadata-only recovery auditing remains separate from the no-tool
+  qualification contract.
 - Normalize explicit targets without mutating immutable policy objects.
 - Support the separately audited native macOS CLI `0.153.3` lifecycle stream;
   unknown builds and legacy recovery receipts retain their existing boundaries.

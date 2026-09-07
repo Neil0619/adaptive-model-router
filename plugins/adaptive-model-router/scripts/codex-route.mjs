@@ -29,7 +29,7 @@ function help() {
 
 Usage:
   node scripts/codex-route.mjs doctor [--context ID]
-  node scripts/codex-route.mjs hook-doctor
+  node scripts/codex-route.mjs hook-doctor [--context ID] [--turn ID] [--global]
   node scripts/codex-route.mjs status [--context ID]
   node scripts/codex-route.mjs history [--context ID] [--limit 20] [--action all|delegate|continue|ask_user]
   node scripts/codex-route.mjs catalog
@@ -54,7 +54,10 @@ async function main() {
   const command = args._[0] || "doctor";
   if (command === "hook-doctor") {
     const { readHookIdentityDiagnostic } = await import("./lib/hook-diagnostics.mjs");
-    return print(readHookIdentityDiagnostic());
+    return print(readHookIdentityDiagnostic(process.env, {
+      contextId: args.global ? null : args.context || process.env.CODEX_THREAD_ID,
+      turnId: args.turn,
+    }));
   }
   const [{ getModelCatalog }, { RouterStore }, { importLegacySettingsAndPolicy }, { callRouterTool }] = await Promise.all([
     import("./lib/catalog.mjs"),

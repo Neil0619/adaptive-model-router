@@ -327,7 +327,7 @@ test("global automatic activation is opt-in, crosses projects, and detects later
   }
 });
 
-test("routine notices hide trace IDs without losing history or inferring a child's service tier", async () => {
+test("routine notices hide trace IDs and unobserved child service tiers without losing history", async () => {
   const project = await temporaryProject("adaptive compact notice Unicode 展示 ");
   try {
     await withRouterEnvironment(project, async () => {
@@ -356,7 +356,9 @@ test("routine notices hide trace IDs without losing history or inferring a child
           const instructions = JSON.parse(result.stdout).hookSpecificOutput.additionalContext;
           assert.match(instructions, /omit routeId and blockingRouteId from routine conversation notices/i);
           assert.match(instructions, /stage label.*target\.model.*target\.effort.*service_tier/);
-          assert.match(instructions, /service_tier=unknown.*host has not provided/i);
+          assert.match(instructions, /adding service_tier only when directly observed for that child/i);
+          assert.match(instructions, /omit the service_tier field from routine notices unless.*direct host evidence identifies that exact child's tier/i);
+          assert.doesNotMatch(instructions, /service_tier=unknown|host has not provided the child's tier|宿主未提供/i);
           assert.match(instructions, /Never infer.*parent.*Fast.*supported.*tiers/i);
           assert.match(instructions, /requested.*actually served/i);
           assert.match(instructions, /Keep the exact IDs internally.*history.*diagnostics/i);

@@ -19,6 +19,8 @@ import {
 import { resolveCodexCommandSync, spawnSpec } from "./lib/codex-command.mjs";
 import { canonicalJson, sanitizedError } from "./lib/io.mjs";
 import { defaultPluginData } from "./lib/plugin-data.mjs";
+import { withAppServer } from "./lib/app-server.mjs";
+import { createManagedMarketplace, inspectManagedMarketplace, isManagedMarketplacePath, switchManagedMarketplace } from "./lib/materialized-marketplace.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
 import {
   compareRuntimeVersions,
@@ -53,6 +55,7 @@ const HOOK_EVENTS = Object.freeze([
 ]);
 const LIVE_BRIDGE_FILES = Object.freeze([
   "compatibility.json",
+  "scripts/lib/runtime-loader.mjs",
   "scripts/lib/plugin-data.mjs",
   "scripts/stdio-tool.mjs",
   "skills/adaptive-model-router/SKILL.md",
@@ -95,6 +98,7 @@ function parseArgs(values) {
     patchAgents: false,
     nonInteractive: false,
     verifyTaskTools: false,
+    pinLocalMarketplace: false,
     yes: false,
     ref: DEFAULT_REF,
   };
@@ -103,6 +107,7 @@ function parseArgs(values) {
     else if (value === "--patch-agents") parsed.patchAgents = true;
     else if (value === "--non-interactive") parsed.nonInteractive = true;
     else if (value === "--verify-task-tools") parsed.verifyTaskTools = true;
+    else if (value === "--pin-local-marketplace") parsed.pinLocalMarketplace = true;
     else if (value === "--yes") parsed.yes = true;
     else if (value.startsWith("--ref=")) parsed.ref = value.slice("--ref=".length);
     else throw new InstallError(`unknown installer argument: ${value}`, 2);
@@ -116,6 +121,9 @@ function parseArgs(values) {
     parsed.ref.endsWith("/")
   ) {
     throw new InstallError("marketplace ref contains unsupported characters", 2);
+  }
+  if (parsed.pinLocalMarketplace && parsed.action !== "repair") {
+    throw new InstallError("--pin-local-marketplace is supported only with repair", 2);
   }
   return parsed;
 }
@@ -327,6 +335,16 @@ function materializeLaunchCommands(root) {
   const mcpChanged = materializeMcpNodeCommand(root);
   const hookChanged = materializeHookNodeCommands(root);
   return mcpChanged || hookChanged;
+}
+
+function inheritInstalledLaunchCommands(root, baselineRoot) {
+  if (!sameHostSurface(root, baselineRoot)) throw new Error("candidate host surface differs from the installed baseline");
+  for (const relative of ["hooks/hooks.json", ".mcp.json"]) {
+    atomicWrite(join(root, relative), readFileSync(join(baselineRoot, relative)));
+  }
+  // Preserve valid absolute launch paths and exact Hook bytes, even when this
+  // installer runs under another Node installation.
+  materializeLaunchCommands(root);
 }
 
 function materializeMcpNodeCommand(root) {
@@ -1338,7 +1356,7 @@ function stageCompatibleRuntime(beforeHealth, mutableRoots) {
       preserveTimestamps: true,
     });
     assertSafeRuntimeTree(temporaryRoot);
-    materializeLaunchCommands(temporaryRoot);
+    inheritInstalledLaunchCommands(temporaryRoot, beforeHealth.root);
     const staged = runtimeHealthAtRoot(temporaryRoot);
     if (
       staged?.version !== INSTALL_VERSION ||
@@ -1786,18 +1804,81 @@ function marketplaceRef(entry) {
 }
 
 function desiredMarketplace(entry, ref = DEFAULT_REF) {
-  return localRepositoryMarketplace(entry) || (
+  return managedRepositoryMarketplace(entry) || localRepositoryMarketplace(entry) || (
     canonicalRepository(marketplaceSource(entry)) === REPOSITORY.toLowerCase() &&
     marketplaceRef(entry) === ref
   );
 }
 
+function managedRepositoryMarketplace(entry) {
+  const source = marketplaceSource(entry);
+  if (entry?.marketplaceSource?.sourceType !== "local" || !isManagedMarketplacePath(source, installerPluginDataRoot())) return false;
+  return inspectManagedMarketplace(source, {
+    dataRoot: verifiedInstallerPluginDataRoot(), originalSource: REPOSITORY_ROOT,
+  });
+}
+
+async function refreshManagedMarketplace(entry, baseline, { verifyRegistration = true } = {}) {
+  if (baseline.state !== "healthy") throw new Error("managed marketplace refresh requires one healthy installed baseline");
+  const managed = managedRepositoryMarketplace(entry);
+  if (!managed && !localRepositoryMarketplace(entry)) throw new InstallError("LOCAL_MARKETPLACE_REQUIRED: pinning requires the exact local repository source", 4);
+  const generation = createManagedMarketplace({
+    dataRoot: verifiedInstallerPluginDataRoot(), sourceRoot: PLUGIN_ROOT,
+    originalSource: managed?.receipt?.originalSource || REPOSITORY_ROOT,
+    prepare: (root) => inheritInstalledLaunchCommands(root, baseline.root),
+    verify: (root) => {
+      const health = runtimeHealthAtRoot(root);
+      if (!health || health.version !== INSTALL_VERSION) throw new Error("managed marketplace candidate is incomplete");
+      verifyInstalledToolContract(health, INSTALL_VERSION);
+      verifyInstalledHookContract(health);
+      verifyInstalledStdioBridge(health);
+    },
+  });
+  try {
+    await withAppServer(async (client) => {
+      await client.start();
+      await switchManagedMarketplace({
+        client, filePath: join(codexHome(), "config.toml"), expectedSource: marketplaceSource(entry), generation,
+        verify: () => {
+          if (verifyRegistration) restoreVaultedRuntimeRoots(baseline.root);
+          const state = loadState();
+          const observed = state.marketplaces.find((candidate) => entryName(candidate) === MARKETPLACE);
+          if (marketplaceSource(observed) !== generation.root || !managedRepositoryMarketplace(observed)) {
+            throw new Error("native marketplace inventory differs from the committed generation");
+          }
+          if (!verifyRegistration) return;
+          restoreVaultedRuntimeRoots(baseline.root);
+          const health = installedPluginHealth(state);
+          if (health.state !== "healthy") throw new Error("managed marketplace switch lost the healthy installed baseline");
+          verifyMcpRegistration(health);
+          verifyInstalledToolContract(health, INSTALL_VERSION);
+          verifyInstalledHookContract(health);
+        },
+      });
+    }, { timeoutMs: 20_000 });
+  } catch (error) {
+    const recovery = { schemaVersion: 1, generation: basename(generation.root),
+      previousSource: marketplaceSource(entry), attemptedSource: generation.root,
+      rollback: "not-attempted", ...error.marketplaceRecovery, historicalShells: "restored" };
+    try { if (verifyRegistration) restoreVaultedRuntimeRoots(baseline.root); }
+    catch { recovery.historicalShells = "unconfirmed"; }
+    const recoveryName = `recovery-${basename(generation.root)}.json`;
+    atomicWrite(join(dirname(generation.root), recoveryName), `${JSON.stringify(recovery, null, 2)}\n`);
+    process.stderr.write(`Managed marketplace recovery evidence retained as ${recoveryName} in stable plugin data.\n`);
+    throw error;
+  }
+  process.stdout.write("The native local marketplace now uses a verified durable materialized generation; prior generations were retained.\n");
+}
+
 function localRepositoryMarketplace(entry) {
   const source = marketplaceSource(entry);
   if (entry?.marketplaceSource?.sourceType !== "local" || typeof source !== "string") return false;
-  const actual = resolve(source);
-  if (process.platform === "win32") return actual.toLowerCase() === REPOSITORY_ROOT.toLowerCase();
-  return actual === REPOSITORY_ROOT;
+  let actual;
+  let expected;
+  try { actual = realpathSync(source); expected = realpathSync(REPOSITORY_ROOT); }
+  catch { return false; }
+  if (process.platform === "win32") return actual.toLowerCase() === expected.toLowerCase();
+  return actual === expected;
 }
 
 function codexHome() {
@@ -1966,6 +2047,16 @@ async function installOrUpgrade(args, state) {
     archiveRuntimeRoots(roots);
   }
   let currentState = state;
+  let managedSourceRefreshed = false;
+  const managed = managedRepositoryMarketplace(currentMarketplace);
+  if (beforeHealth.state === "missing" && managed) {
+    const baseline = runtimeHealthAtRoot(managed.pluginRoot);
+    if (!baseline) throw new Error("managed marketplace has no valid cold-install baseline");
+    assertCompatibleHotUpgrade(baseline);
+    await refreshManagedMarketplace(currentMarketplace, { state: "healthy", ...baseline }, { verifyRegistration: false });
+    currentState = loadState();
+    managedSourceRefreshed = true;
+  }
   let marketplaceMutationStarted = false;
   let currentHealth;
   try {
@@ -1973,7 +2064,7 @@ async function installOrUpgrade(args, state) {
       marketplaceMutationStarted = true;
       codex(["plugin", "marketplace", "add", REPOSITORY, "--ref", args.ref]);
       currentState = loadState();
-    } else if (!localRepositoryMarketplace(currentMarketplace)) {
+    } else if (!localRepositoryMarketplace(currentMarketplace) && !managedRepositoryMarketplace(currentMarketplace)) {
       marketplaceMutationStarted = true;
       codex(["plugin", "marketplace", "upgrade", MARKETPLACE]);
       currentState = loadState();
@@ -2001,6 +2092,9 @@ async function installOrUpgrade(args, state) {
   } else {
     addPluginWithIntegrityCheck(currentState, { verifyTaskToolExposure: args.verifyTaskTools });
   }
+  if (managed && !managedSourceRefreshed) {
+    await refreshManagedMarketplace(currentMarketplace, installedPluginHealth(loadState()));
+  }
   if (args.patchAgents) patchAgents();
   if (hotUpgrade) {
     process.stdout.write(
@@ -2021,11 +2115,16 @@ async function installOrUpgrade(args, state) {
   }
   process.stdout.write("Tasks whose host tool inventory was already frozen use the verified stdio bridge on their next routed stage; no replacement task is required.\n");
   process.stdout.write("When Codex reports changed Hook definitions, review and trust those exact definitions before using Router controls.\n");
-  process.stdout.write("Compatible v0.4.x+ runtime-only updates activate on the next Hook or MCP call without reopening an existing task.\n");
+  process.stdout.write("Compatible runtime-only updates activate on the next dispatched Hook or MCP call. Installation probes do not certify the existing task's Hook dispatch or delegation; current-task native verification is still required.\n");
   process.stdout.write('To opt into automatic routing for all local projects, send "router: global on" once; upgrades preserve this setting.\n');
 }
 
-function repairInstallation(args, state) {
+async function repairInstallation(args, state) {
+  const marketplace = state.marketplaces.find((entry) => entryName(entry) === MARKETPLACE);
+  const managed = managedRepositoryMarketplace(marketplace);
+  if (args.pinLocalMarketplace && !managed && !localRepositoryMarketplace(marketplace)) {
+    throw new InstallError("LOCAL_MARKETPLACE_REQUIRED: pinning requires the exact local repository source", 4);
+  }
   const health = installedPluginHealth(state);
   if (health.state !== "healthy") {
     const detail = health.state === "missing"
@@ -2038,9 +2137,10 @@ function repairInstallation(args, state) {
     );
   }
   hotUpgradeWithIntegrityCheck(health);
+  if (args.pinLocalMarketplace || managed) await refreshManagedMarketplace(marketplace, installedPluginHealth(loadState()));
   if (args.patchAgents) patchAgents();
   process.stdout.write(
-    `Adaptive Model Router runtime ${INSTALL_VERSION} was repaired without plugin re-registration or marketplace mutation.\n`,
+    `Adaptive Model Router runtime ${INSTALL_VERSION} was repaired without plugin re-registration${args.pinLocalMarketplace || managed ? "; its managed marketplace source was refreshed" : " or marketplace mutation"}.\n`,
   );
   if (args.verifyTaskTools) {
     process.stdout.write(
@@ -2048,7 +2148,7 @@ function repairInstallation(args, state) {
     );
   }
   process.stdout.write(
-    "Existing tasks can use the repaired Desktop PATH shim immediately; installed absolute launch commands survive later Codex runtime replacement.\n",
+    "The Desktop PATH shim and absolute launch commands are repaired. Current-task Hook dispatch and native child verification are still required before reporting delegation restored; a fresh process's trusted Hook inventory alone is insufficient.\n",
   );
 }
 
@@ -2075,7 +2175,7 @@ async function main() {
     if (args.patchAgents || args.action === "uninstall") markerState();
     const state = loadState();
     if (args.action === "uninstall") uninstall(args, state);
-    else if (args.action === "repair") repairInstallation(args, state);
+    else if (args.action === "repair") await repairInstallation(args, state);
     else await installOrUpgrade(args, state);
   } finally {
     releaseInstallerLifecycleLock(lifecycleLock);

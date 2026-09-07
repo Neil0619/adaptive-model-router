@@ -23,6 +23,7 @@ import { readThreadSpawnIdentity } from "./lib/subagent-session.mjs";
 import { createLifecycleDiagnostic } from "./lib/lifecycle-diagnostics.mjs";
 
 let RouterStore;
+let diagnosticIdentity;
 let lifecycleDiagnostic = () => {};
 
 function readInput() {
@@ -48,6 +49,7 @@ function additionalContext(message, hookEventName = "UserPromptSubmit") {
   writeJsonLine(process.stdout, {
     hookSpecificOutput: { hookEventName, additionalContext: message },
   });
+  if (diagnosticIdentity) recordIdentity(diagnosticIdentity, "context_emitted");
 }
 
 function preToolDecision(permissionDecision, fields = {}) {
@@ -118,7 +120,7 @@ function rejectedSubagentContext() {
 
 function recordIdentity(identity, contextInjection) {
   try {
-    recordHookIdentityDiagnostic(identity.audit, contextInjection);
+    recordHookIdentityDiagnostic(identity.audit, contextInjection, process.env, identity);
   } catch (error) {
     emitDiagnostic({ component: "hook", stage: "identity_diagnostic", error });
   }
@@ -126,6 +128,7 @@ function recordIdentity(identity, contextInjection) {
 
 function requireIdentity(input, event) {
   const identity = resolveHookIdentity(input, { event });
+  diagnosticIdentity = identity;
   if (identity.contextId) return identity;
   recordIdentity(identity, "blocked_missing_session_id");
   process.stderr.write("Adaptive Model Router hook skipped: trusted session identity unavailable.\n");
@@ -216,9 +219,9 @@ function automaticRoutingContext(rootTask, contextId) {
     `The active root-task model observed by the hook is ${rootLabel(rootTask)}; its reasoning effort remains visible only in the Codex composer.`,
     "The router must never change the root-task model or label a bounded subagent target as the root model.",
     contextIdInstruction(contextId),
-    "After each route, show a compact notice with the unchanged root model and a readable stage label; for delegate, show target.model / target.effort / service_tier. Keep root reasoning effort host-managed.",
+    "After each route, show a compact notice with the unchanged root model and a readable stage label; for delegate, show target.model / target.effort, adding service_tier only when directly observed for that child. Keep root reasoning effort host-managed.",
     "Omit routeId and blockingRouteId from routine conversation notices. Keep the exact IDs internally for lifecycle calls, history, and diagnostics; show them only for an explicit inspection, troubleshooting request, or a necessary user action that names an exact route.",
-    "Use service_tier=unknown (host has not provided the child's tier) unless already available, direct host evidence identifies that exact child's tier. Never infer it from the parent task's Fast setting, model/effort, a supported service-tiers list, or an assumed default; unknown does not mean Fast is off.",
+    "Omit the service_tier field from routine notices unless already available, direct host evidence identifies that exact child's tier. Never infer it from the parent task's Fast setting, model/effort, a supported service-tiers list, or an assumed default; an omitted tier does not mean Fast is off.",
     "If only the requested tier is observed, label it requested, not actually served. This is display-only: do not change Fast, invent a spawn parameter, or launch a probe just to populate the notice.",
     "For delegate only, verify the work and record exactly one outcome; continue, ask_user, and busy routes have no outcome.",
   ].join("\n");

@@ -90,6 +90,18 @@ Router 只接受 Codex 提供的非空 `session_id` 作为稳定任务身份，�
 .\install.ps1 -Action Repair
 ```
 
+如果注册来源是本地源码目录，可执行以下命令，让缓存重建继续使用已验证的包和启动定义：
+
+```bash
+node plugins/adaptive-model-router/scripts/manage-install.mjs repair --pin-local-marketplace
+```
+
+安装器会在稳定 plugin data 中发布经过校验的物化 marketplace，并通过 Codex 原生配置
+接口只切换该 marketplace 的来源。有效的 Hook 定义保持原样，缓存重建不会将它们恢复
+成裸 `node`，相同定义也不需要重新信任。之后的 `repair`、`upgrade` 和 `install` 会
+自动从原源码目录更新该来源；应在该目录执行，不能把历史副本或其他 worktree 当作上游。
+旧副本会保留；切换失败时只回滚本次写入，不覆盖并发配置修改。Hook 信任仍由宿主单独管理。
+
 ```bash
 codex plugin remove adaptive-model-router@adaptive-model-router
 codex plugin marketplace remove adaptive-model-router
@@ -119,6 +131,10 @@ vault 只保存经过验证的插件包副本和运行时目录名索引，位�
 必须匹配自身已索引的 host surface、受支持 Hook 集合和当前共享 runtime/storage
 兼容契约；当前版本还必须完整匹配当前源码表面，再以目录 rename 原子安装。索引、
 历史 Hook 集合或归档损坏时升级会 fail closed。
+
+宿主缓存丢失已激活版本时，Hook 和 MCP 启动壳会只读加载索引中的该版本备份，检查
+包版本、入口、兼容契约与符号链接，不选择未索引或已隔离的版本，也不并发重写缓存。
+诊断会同时显示请求版本、实际来源和活动指针是否可用，避免隐藏旧版回退。
 
 v0.4.0 增加了稳定启动壳。安装后续兼容的 v0.4.x 或更高版本后，已经打开的任务会在
 下一次 Hook 或 MCP 调用时加载新实现，不需要更换根模型，也不必重新开任务。旧壳会先
@@ -172,12 +188,15 @@ Router Hook 与插件定义一致、已启用且受信任；同时还要求 sour
 `HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN`；四种情况都只允许根任务继续，不签发委派
 ticket。这个检查不会写 `config.toml`，也不会替用户确认 Hook 信任。
 
-对于已明确支持的 macOS 原生构建（`0.153.3`、`0.153.0`、`0.153.0-alpha.5`），尚无证明的任务
+对于已明确支持的 macOS 原生构建（`0.153.4`、`0.153.3`、`0.153.0`、`0.153.0-alpha.5`）
+及 Windows 原生 `0.153.4`，尚无证明的任务
 可先收到 `delegate / HOST_LIFECYCLE_QUALIFICATION`：仅创建一个策略绑定的 GPT-6/low 子任务，
 不携带原任务内容、不调用工具，只返回固定标记。服务端核验四个生命周期事件和完整
 原始子任务记录后才接受通过结果。证明绑定当前任务、可执行文件、完整有序 Hook
-清单、实际 Hook 入口和运行时源码；失败或绑定变化后仍禁止普通委派，不会自动重试
-自检。自检不消耗 once override，也不进入学习；成功后再对原阶段正常路由。
+清单、实际 Hook 入口和运行时源码。绑定变化后仍禁止普通委派；若保留的证明及原始
+结果均为有效成功，且没有未结束的委派，下一次合适阶段可先归档旧证明，再为新绑定
+签发一次固定自检。失败、进行中、损坏或关联不明的尝试不会自动重试。自检不消耗
+once override，也不进入学习；新证明通过服务端核验后，再对原阶段正常路由。
 
 优先级固定为：本次请求、once、session、project、可选 global、已批准项目策略、默认均衡策略。隐藏模型和未知模型不会自动入选；显式目标不可用时不会静默替换。
 
@@ -217,10 +236,10 @@ Hook 可以观察根模型 slug，但读不到 Max/High 等 reasoning effort；�
 `delegate` 中的 `target.model`/`target.effort` 只是当前 bounded stage 的
 subagent 目标。每次 `route_stage` 后，skill 会明确显示这条边界和本次动作。
 
-日常通知省略排查用的 route ID，委派阶段显示“阶段 · 模型 / effort / service_tier”。
+日常通知省略排查用的 route ID，委派阶段显示“阶段 · 模型 / effort”。
 编号仍保留在路由记录、状态/历史查询和诊断中，不影响子任务关联或验收。
-当前接口未提供子任务服务档位时显示 `service_tier=unknown（宿主未提供）`；这不代表
-Fast 已关闭，也不会根据主任务 Fast 设置推测。仅观察到请求档位时会明确标注，
+当前接口未提供子任务服务档位时省略 `service_tier` 字段，仅有该子任务的直接证据时才展示。
+字段省略不代表 Fast 已关闭，也不会根据主任务 Fast 设置推测。仅观察到请求档位时会明确标注，
 不会当作实际服务档位；该展示不修改 Fast 设置。
 
 当前任务首次观察到的模型只作为基线，不询问。如果随后 slug 发生变化，本轮和未

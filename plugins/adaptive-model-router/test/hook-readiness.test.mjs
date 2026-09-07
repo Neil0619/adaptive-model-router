@@ -13,9 +13,17 @@ import {
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { payloadHash } from "../scripts/lib/io.mjs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
+import { recordHookIdentityDiagnostic } from "../scripts/lib/hook-diagnostics.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+const nativeTurn = "native-readiness-turn";
+function observeCurrentHook(contextId, turnId = nativeTurn) {
+  recordHookIdentityDiagnostic({ identityStatus: "accepted", eventName: "UserPromptSubmit" }, "injected", process.env, { contextId, turnId });
+}
+function nativeRead(method, contextId, cwd) {
+  return method === "thread/turns/list" ? { data: [{ id: nativeTurn }] } : { thread: { id: contextId, cwd } };
+}
 
 test("lifecycle readiness resolves the pinned host shell before a hot runtime module", () => {
   assert.equal(resolveLifecyclePluginRoot({
@@ -236,9 +244,10 @@ test("production readiness offers only qualification and binds the full ordered 
       const store = new RouterStore();
       try {
         const context = store.context({ cwd: project.root, contextId: "native-binding" });
+        observeCurrentHook("native-binding");
         const inventory = fixture(project.root);
         const inspect = () => inspectLifecycleHookReadiness({ cwd: project.root, pluginRoot, store, context, contextId: "native-binding",
-          appServer: async (run) => run({ start: async () => {}, request: async () => ({ thread: { id: "native-binding", cwd: project.root } }), listHooks: async () => inventory }),
+          appServer: async (run) => run({ start: async () => {}, request: async (method) => nativeRead(method, "native-binding", project.root), listHooks: async () => inventory }),
           nativeHost: async () => ({ platform: "darwin", arch: "arm64", cliVersion: "0.153.0", executableDigest: "a".repeat(64) }),
         });
         const first = await inspect();
@@ -272,12 +281,16 @@ test("equivalent hot-shell paths allow an inert qualification, never an inventor
       const store = new RouterStore();
       try {
         const context = store.context({ cwd: project.root, contextId: "hot-binding" });
-        const result = await inspectLifecycleHookReadiness({ cwd: project.root, pluginRoot, store, context, contextId: "hot-binding",
-          appServer: async (run) => run({ start: async () => {}, request: async () => ({ thread: { id: "hot-binding", cwd: project.root } }), listHooks: async () => inventory }),
+        observeCurrentHook("hot-binding");
+        const inspect = () => inspectLifecycleHookReadiness({ cwd: project.root, pluginRoot, store, context, contextId: "hot-binding",
+          appServer: async (run) => run({ start: async () => {}, request: async (method) => nativeRead(method, "hot-binding", project.root), listHooks: async () => inventory }),
           nativeHost: async () => ({ platform: "darwin", cliVersion: "0.153.0" }),
         });
+        const result = await inspect();
         assert.equal(result.ready, false);
         assert.equal(result.qualificationBinding.shellRoots.length, 2);
+        inventory.data[0].hooks[0].trustStatus = "modified";
+        assert.deepEqual(await inspect(), { ready: false, reasonCode: "HOOK_TRUST_REQUIRED" });
       } finally { store.close(); }
     });
   } finally { await project.cleanup(); }
@@ -291,23 +304,56 @@ test("production readiness discovers and binds the native task cwd, not the MCP 
       try {
         const contextId = "native-cwd";
         const context = store.context({ cwd: project.root, contextId });
+        observeCurrentHook(contextId);
         const calls = [];
         let nativeCwd = project.root;
         const inspect = () => inspectLifecycleHookReadiness({ cwd: pluginRoot, pluginRoot, store, context, contextId,
           appServer: async (run) => run({
             start: async () => {},
-            request: async (method, args) => { calls.push([method, args]); return { thread: { id: contextId, cwd: nativeCwd } }; },
+            request: async (method, args) => { calls.push([method, args]); return nativeRead(method, contextId, nativeCwd); },
             listHooks: async (cwd) => { calls.push(["hooks/list", cwd]); return fixture(cwd); },
           }),
           nativeHost: async () => ({ platform: "darwin", arch: "arm64", cliVersion: "0.153.0", executableDigest: "a".repeat(64) }),
         });
         const result = await inspect();
         assert.equal(result.qualificationBinding?.taskCwdDigest, payloadHash(realpathSync(project.root)));
-        assert.deepEqual(calls, [["thread/read", { threadId: contextId, includeTurns: false }], ["hooks/list", realpathSync(project.root)]]);
+        assert.deepEqual(calls, [["thread/read", { threadId: contextId, includeTurns: false }],
+          ["thread/turns/list", { threadId: contextId, limit: 1, itemsView: "summary", sortDirection: "desc" }],
+          ["hooks/list", realpathSync(project.root)]]);
         nativeCwd = pluginRoot;
         const mismatch = await inspect();
         assert.equal(mismatch.ready, false);
         assert.equal(mismatch.qualificationBinding, undefined);
+      } finally { store.close(); }
+    });
+  } finally { await project.cleanup(); }
+});
+
+test("a trusted fresh inventory cannot allocate a ticket when this native turn has no Router Hook receipt", async () => {
+  const project = await temporaryProject("router-missing-live-hooks-");
+  try {
+    await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      try {
+        const contextId = "missing-runtime-hooks";
+        const context = store.context({ cwd: project.root, contextId });
+        const options = { cwd: project.root, pluginRoot, store, context, contextId,
+          appServer: async (run) => run({ start: async () => {},
+            request: async (method) => nativeRead(method, contextId, project.root), listHooks: async () => fixture(project.root) }),
+          nativeHost: async () => ({ platform: "darwin", cliVersion: "0.153.4" }) };
+        observeCurrentHook(contextId, "previously-successful-turn");
+        observeCurrentHook("different-task", nativeTurn);
+        assert.deepEqual(await inspectLifecycleHookReadiness(options), { ready: false, reasonCode: "HOST_HOOK_DISPATCH_NOT_OBSERVED" });
+        const route = await callRouterTool("route_stage", routeInput({ contextId }), { store, cwd: project.root,
+          routeOptions: { enforceLifecycleHooks: true, catalog: CATALOG,
+            lifecycleHookProbe: () => inspectLifecycleHookReadiness(options), diskProbe: () => 16n * 1024n * 1024n * 1024n } });
+        assert.equal(route.action, "continue");
+        assert.deepEqual(route.reasonCodes, ["HOST_HOOK_DISPATCH_NOT_OBSERVED"]);
+        assert.equal(store.db.prepare("SELECT count(*) AS n FROM delegation_attempts").get().n, 0);
+        observeCurrentHook(contextId);
+        const live = await inspectLifecycleHookReadiness(options);
+        assert.equal(live.ready, false);
+        assert.ok(live.qualificationBinding);
       } finally { store.close(); }
     });
   } finally { await project.cleanup(); }

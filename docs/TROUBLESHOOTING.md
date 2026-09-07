@@ -167,10 +167,37 @@ Plugin installation does not automatically trust command hooks. In Codex, open
 Trust is tied to the definition hash, so changed hooks require review again.
 
 If a task reports that no trusted `contextId` is available after compaction,
-run `node scripts/codex-route.mjs hook-doctor` from the installed plugin root.
-`HOOK_DISPATCH_NOT_OBSERVED` means no Router identity Hook has recorded a run;
+run `node scripts/codex-route.mjs hook-doctor --context <native-task-id>` from the
+installed plugin root with its `PLUGIN_DATA` environment. `CODEX_THREAD_ID` is
+the default task when the host exposes it; `--turn <native-turn-id>` narrows the
+check to that turn. `HOOK_DISPATCH_NOT_OBSERVED` means no matching retained
+Router identity Hook receipt exists for that task or turn;
 `HOOK_DISPATCHED_MISSING_SESSION_ID` means the Hook ran but Codex supplied no
 stable `session_id`. The report never contains the raw session or turn ID.
+`--global` explicitly reads the latest observation from any task; its
+`scope=global_latest` is never evidence for the task under investigation.
+An inventory of trusted Hook definitions likewise does not prove dispatch.
+`contextInjection=context_emitted` confirms Hook output was emitted, not that
+the host consumed it; check the native task record for that final boundary.
+
+If delegation worked before a host cache refresh, compare `runtimeVersion`,
+`requestedActiveVersion`, `activePointerStatus` and `activeSource` in runtime
+diagnostics. The loader can use the indexed active backup in stable plugin
+data without another installer run. Also update the source registered in the
+local marketplace: a repair that exists only in a separate worktree or cache
+can be lost on the next refresh. A missing or invalid backup is reported as
+`activePointerStatus=unavailable`; do not call that state fully recovered.
+
+For an exact local repository registration, run
+`node plugins/adaptive-model-router/scripts/manage-install.mjs repair --pin-local-marketplace`
+from that repository. This switches the native marketplace source to a verified
+materialized generation in stable plugin data, retaining the installed Hook
+bytes and launch paths. Subsequent managed repairs and upgrades refresh the
+generation from the original checkout. A cache rebuilt solely from this source
+must run the Hook and an actual MCP tool call with an empty `PATH`; an MCP
+initialization response alone does not prove runtime recovery. The installer
+retains prior generations and writes recovery evidence if source verification
+or conditional rollback fails. It never writes Hook trust state.
 
 Do not use `--dangerously-bypass-hook-trust` for normal installation or smoke
 testing. Also check that hooks have not been disabled by local or managed Codex
@@ -179,23 +206,36 @@ configuration.
 ## Routing stays root-only because lifecycle Hooks are not ready
 
 Before it can return `delegate`, the Router reads the current Hook inventory
-through Codex's read-only `hooks/list` API. It never edits Codex configuration
-or accepts Hook trust automatically.
+through Codex's read-only `hooks/list` API and checks a task-scoped Hook receipt
+against the latest native turn from `thread/turns/list`. A fresh app-server's
+inventory does not establish that an already running Desktop task loaded the
+plugin Hooks. It never accepts Hook trust automatically.
 
 - `HOOK_TRUST_REQUIRED`: at least one exact current Router Hook is disabled or
   not trusted. Review `/hooks` and explicitly trust the definitions if they are
   expected.
 - `HOST_HOOK_SET_MISMATCH`: the host-loaded Router Hook definitions do not
   exactly match the active plugin installation. Reinstall or repair the plugin,
-  then start the required fresh task.
+  then inspect the current task again. A compatible runtime repair can continue
+  in the same task after its fresh qualification succeeds.
 - `HOST_HOOK_STATUS_UNAVAILABLE`: the read-only inventory could not be obtained.
   Keep working in the root task and diagnose the Codex/app-server availability;
   do not retry delegation in a loop.
+- `HOST_HOOK_DISPATCH_NOT_OBSERVED`: the exact latest native turn has no Router
+  Hook receipt. Check the live Desktop task's Hook events, not only a new
+  process's inventory. User-level Hooks can run while plugin Hooks are absent.
+  A native `config/batchWrite` with `reloadUserConfig: true` refreshes runtime
+  settings only in that app-server's loaded threads; launching a separate CLI
+  app-server does not refresh Desktop. Use an available native host refresh
+  capability, or explicitly report that the running host must be reloaded. Do
+  not ask for trust again when the seven exact definitions are already trusted,
+  and do not allocate another qualification until the affected turn has a real
+  receipt. This failure creates no ticket or reservation.
 - `HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN`: the trusted inventory does not have a
   source-owned native proof that the exact host Agent path dispatches the
   complete lifecycle. Continue in the root task; trust alone is not a fix.
 
-All four results create no Agent, no delegation ticket, and no occupied gate.
+All five results create no Agent, no delegation ticket, and no occupied gate.
 
 `HOST_LIFECYCLE_QUALIFICATION` is a distinct `delegate` result on supported
 native macOS builds, not ordinary work: launch its exact fixed no-tool carrier
@@ -203,9 +243,17 @@ once, verify the child, and record the outcome through MCP. The server audits
 the native lifecycle and complete raw transcript itself; a caller's passed
 flag is insufficient. After success, route the original stage again.
 `HOST_LIFECYCLE_QUALIFICATION_FAILED` keeps the task root-only after a failed
-self-test. A changed proof binding returns `HOST_HOOK_SET_MISMATCH`; neither
-condition silently creates a replacement qualification. If its gate remains
-occupied, preserve the evidence and follow the existing reconciliation rules.
+self-test. A changed binding can receive a fresh fixed qualification only when
+the previous source-verified proof, original route, and successful outcome are
+intact, the current Hook inventory is trusted, and no child is unresolved. The
+old proof is archived atomically. Readiness also retains the parent/child Hook
+shells actually observed by that proof, after checking that their current
+definitions are equivalent and their compatible runtime trees have no symbolic
+links. An open task may still use an older child shell after the configured
+cache advances. Ordinary work stays disabled until the new native round trip
+passes. Failed, pending, invalid, and ambiguous attempts do
+not receive automatic replacements. If a gate remains occupied, preserve the
+evidence and follow the existing reconciliation rules.
 
 ### Inspect a failed qualification without resetting it
 
@@ -217,8 +265,20 @@ directory, and use an absolute path to the script when necessary:
 node /absolute/plugin/scripts/reconcile-delegation.mjs --context <task-id> --route <route-id>
 ```
 
-The legacy recovery adapter remains limited to its original unconsumed-child
-incident. A separate `native-thread-delegation-recovery/3` branch accepts only
+The unconsumed-child recovery uses a separately pinned raw adapter for the
+child's actual `0.153.0-alpha.5`, `0.153.3`, or `0.153.4` build; an older parent
+task's version metadata is not substituted for that build. A retained pending
+qualification additionally binds its original policy, ticket and child build.
+Successful recovery preserves that qualification and all missing lifecycle
+fields, records a distinct failure receipt, accounts physical bytes once and
+releases only that reservation. It creates no ordinary outcome or passed proof.
+For `0.153.4`, a distinct `tool-metadata-only/1` audit also recognizes the single
+reviewed literal program that only filters and prints `ALL_TOOLS` descriptions.
+It does not evaluate arbitrary JavaScript, accept general read-only tool calls,
+or relax the no-tool qualification audit. Its receipt retains the complete raw
+source digest, byte count, query digest and metadata-call count. Extra code,
+extra calls, missing outputs and unknown actions remain unresolved.
+A separate `native-thread-delegation-recovery/3` branch accepts only
 the supported `0.153.0` failed no-tool qualification: exact consumed Pre/Post,
 no child claim or Stop, one retained tooling-failure outcome, matching stored
 qualification binding, one native completed child, and two stable complete raw
@@ -237,9 +297,23 @@ successful recovery alone does not repair that dispatch path.
 
 ### Explicitly authorize one diagnostic requalification
 
+An unused authorization expires after one hour and becomes stale when its
+source/configuration binding changes. If either occurs, inspect again with the same operator command and
+approve its newly returned digest. The command repeats the native source audit,
+archives the exact stale authorization, and grants one fresh window. The old
+preview cannot renew it, and a consumed authorization cannot be renewed. Neither
+inspection nor ordinary routing renews a grant automatically.
+
 Only after the operator approves another fixed no-tool self-test, use
 `scripts/authorize-requalification.mjs` from the affected project directory.
-It requires the exact `/3` recovery receipt and unchanged original failure:
+Run the script from the installed package so its binding reflects the installed
+runtime. It requires a retained native recovery receipt bound to the unchanged
+qualification (either an unconsumed pending qualification or the original `/3`
+failed qualification), or a finalized qualification that failed with
+`HOST_HOOK_SET_MISMATCH` while its correlated child completed without work.
+The latter path independently re-reads the complete native child twice and
+verifies its original marker, model, parent, raw transcript, and retained
+tooling-failure outcome. It never converts that failed attempt into a success:
 
 ```sh
 node /absolute/plugin/scripts/authorize-requalification.mjs --context <task-id> --route <failed-route-id>
@@ -249,7 +323,7 @@ node /absolute/plugin/scripts/authorize-requalification.mjs --context <task-id> 
 The authorization expires after one hour and binds the task, recovered state,
 current runtime, executable/Hook configuration, and task directory. Inspection
 does not authorize anything. Admission atomically archives the complete old
-failed qualification and consumes the authorization while creating one new
+qualification and consumes the authorization while creating one new
 fixed qualification; the original route, outcome and recovery receipt remain
 unchanged. Replay, expiry, changed sources or state, and another occupied gate
 cannot create a replacement. There is no public MCP permission flag or model
@@ -534,8 +608,8 @@ distinction and score thresholds.
 Routine conversation notices intentionally omit route IDs. They remain in
 explicit status/history reports and internal route/outcome records; missing
 IDs in a normal notice do not mean that tracing was disabled. A delegated
-target includes `service_tier=unknown` when no direct, child-scoped host
-evidence is available. Do not interpret that as Standard mode or infer Fast
+target omits `service_tier` when no direct, child-scoped host
+evidence is available. Do not interpret that omission as Standard mode or infer Fast
 from the parent setting or a model's supported tiers. A requested tier alone
 does not verify the tier actually used to serve the request.
 

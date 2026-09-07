@@ -1,0 +1,876 @@
+{
+  "schemaVersion": 4,
+  "observedAt": "2026-09-07T08:29:48.891Z",
+  "status": "current_desktop_qualification_ordinary_delegation_and_review_passed",
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cliVersion": "0.153.4"
+  },
+  "sourceVersion": "0.4.0+codex.20260907074802",
+  "sourceDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+  "installedDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+  "sourceMatchesInstalledAndManaged": true,
+  "managedRegistration": {
+    "owner": "adaptive-model-router/materialized-marketplace/1",
+    "generation": "generation-b7795f6e1a138a9808293351",
+    "originalSource": "/Users/niuzhenya/Documents/adaptive-model-router",
+    "runtimeVersion": "0.4.0+codex.20260907074802",
+    "treeDigest": "70d1b54b46f517524fe413d55e70312aef39a3ebc8fcddbee4b995982db98cc4",
+    "hookDigest": "69ee7aebf54346049b1948ee4eb735bb0939fca7834fd39cfee9fabe6226ea0e"
+  },
+  "managedRoot": "/Users/niuzhenya/.codex/plugins/data/adaptive-model-router-adaptive-model-router/materialized-marketplace/generation-b7795f6e1a138a9808293351",
+  "hooks": [
+    {
+      "eventName": "postToolUse",
+      "currentHash": "sha256:536f7142e3337a9665609212c5869613f75dcee5d2f71e5b1d5d9f1d96f7c243",
+      "enabled": true,
+      "trustStatus": "trusted"
+    },
+    {
+      "eventName": "preToolUse",
+      "currentHash": "sha256:58222a3c8ea361d2fc23fcd5c4c2dfdb5f7a30a5481877019bb2f916a5a10d6e",
+      "enabled": true,
+      "trustStatus": "trusted"
+    },
+    {
+      "eventName": "sessionStart",
+      "currentHash": "sha256:f4df68347e9e9a703ce55cbfdb285cad39004e2d0002f03fa0acaa553cd7c7d4",
+      "enabled": true,
+      "trustStatus": "trusted"
+    },
+    {
+      "eventName": "stop",
+      "currentHash": "sha256:b2bae719fb2e2fd78518726e96d79554506ae91bb52c14fc876b1e691f284347",
+      "enabled": true,
+      "trustStatus": "trusted"
+    },
+    {
+      "eventName": "subagentStart",
+      "currentHash": "sha256:b5579abc5c692ddf94b0337d1d7b229aa71a5a26de6e907ebfd7323d7f1807c3",
+      "enabled": true,
+      "trustStatus": "trusted"
+    },
+    {
+      "eventName": "subagentStop",
+      "currentHash": "sha256:b1d0748b7ffc6647a065fe488dd0d3d8c5d74510cd58561359b13bc78d2606c8",
+      "enabled": true,
+      "trustStatus": "trusted"
+    },
+    {
+      "eventName": "userPromptSubmit",
+      "currentHash": "sha256:a6107a2e117be5abe5bf82f11a2c07da6896f41156aa521bcfa02fb62a6e4eb4",
+      "enabled": true,
+      "trustStatus": "trusted"
+    }
+  ],
+  "unrelatedConfigUnchanged": true,
+  "checks": {
+    "tests": 329,
+    "passed": 328,
+    "skipped": 1,
+    "failed": 0,
+    "policyCases": 232,
+    "policyMismatches": 0,
+    "skippedReason": "Windows cmd.exe / PowerShell integration requires native Windows",
+    "packageValidation": "passed",
+    "diffCheck": "passed",
+    "managedRepair": "passed",
+    "nativeConfigCAS": {
+      "passed": true,
+      "host": "codex-cli 0.153.4",
+      "isolatedCodexHome": true,
+      "baseUserLayerMatched": true,
+      "atomicSwitchReadback": true,
+      "unrelatedFeaturesPreserved": true,
+      "staleVersionRejected": true,
+      "rollbackVerified": true
+    },
+    "sourceCacheReconstruction": {
+      "passed": true,
+      "host": "codex-cli 0.153.4",
+      "isolatedCodexHome": true,
+      "usedActualRegisteredGeneration": true,
+      "entirePluginCacheRebuiltByNativeCli": true,
+      "postRebuildMaterialization": false,
+      "hookBytesPreserved": true,
+      "hookDigest": "69ee7aebf54346049b1948ee4eb735bb0939fca7834fd39cfee9fabe6226ea0e",
+      "emptyPathHookPassed": true,
+      "emptyPathMcpDiagnosePassed": true,
+      "runtimeVersion": "0.4.0+codex.20260907074802"
+    },
+    "currentTurnGuard": {
+      "passed": true,
+      "contextId": "01a079b0-eba4-7792-bc1c-288c3f0af2f9",
+      "result": {
+        "ready": false,
+        "reasonCode": "HOST_HOOK_DISPATCH_NOT_OBSERVED"
+      },
+      "attemptsBefore": 7,
+      "attemptsAfter": 7,
+      "actualNativeTurnChecked": true,
+      "noNewTicket": true
+    },
+    "independentReview": {
+      "passed": true,
+      "findings": 0,
+      "tests": {
+        "passed": 47,
+        "failed": 0,
+        "skipped": 0
+      },
+      "routeId": "c51c6ba2-c1c2-46ef-aeb8-e00199470ee5"
+    }
+  },
+  "nativeFreshProcess": [
+    {
+      "stage": "started",
+      "threadId": "01a07adf-7c66-7750-9255-8adfd12f9ea5"
+    },
+    {
+      "stage": "qualification",
+      "routeId": "d12c3dfc-f906-4368-b8da-9ede970ab115",
+      "target": {
+        "model": "gpt-6-astra",
+        "effort": "low"
+      }
+    },
+    {
+      "stage": "verified",
+      "qualification": true,
+      "routeId": "d12c3dfc-f906-4368-b8da-9ede970ab115",
+      "audit": {
+        "passed": true,
+        "rawAuditAdapter": "codex-0.153.4-no-work/1",
+        "rawAuditDigest": "fad3b0df1469b88df6048d37be05db672801a80dfa370fb82e01f522596bcda0",
+        "sourceBytes": 91884
+      },
+      "gate": "available"
+    },
+    {
+      "stage": "ordinary-delegation",
+      "routeId": "cfd7a6a2-0da9-4c1f-9529-fe103223e54e",
+      "target": {
+        "model": "gpt-6-astra",
+        "effort": "low"
+      }
+    },
+    {
+      "stage": "verified",
+      "qualification": false,
+      "routeId": "cfd7a6a2-0da9-4c1f-9529-fe103223e54e",
+      "audit": {
+        "passed": true,
+        "rawAuditAdapter": "codex-0.153.4-no-work/1",
+        "rawAuditDigest": "2aa995f2f69b978ae5117184af2b95887e11ecfd7687ca3dec7df167dc77912a",
+        "sourceBytes": 91803
+      },
+      "gate": "available"
+    },
+    {
+      "stage": "summary",
+      "passed": true,
+      "children": 2,
+      "outcomes": 2,
+      "qualification": "passed",
+      "rootModel": "gpt-6-astra",
+      "rootEffort": "high"
+    },
+    {
+      "stage": "archived",
+      "threadId": "01a07adf-c528-7fb3-9603-663fa87d3c01"
+    },
+    {
+      "stage": "archived",
+      "threadId": "01a07ae0-099c-7b10-ba4c-a97c7d1f57ee"
+    },
+    {
+      "stage": "archived",
+      "threadId": "01a07adf-7c66-7750-9255-8adfd12f9ea5"
+    }
+  ],
+  "nativeStaleProcessExperiment": {
+    "result": {
+      "passed": true,
+      "isolated": true,
+      "threadId": "01a07adb-9e08-7631-962d-c9e2d18e8fb2",
+      "results": [
+        {
+          "label": "before-source-change",
+          "status": "completed",
+          "hooks": [
+            {
+              "event": "userPromptSubmit",
+              "source": "/private/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-source-switch-yAdNa8/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907043408/hooks/hooks.json",
+              "status": "completed"
+            },
+            {
+              "event": "stop",
+              "source": "/private/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-source-switch-yAdNa8/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907043408/hooks/hooks.json",
+              "status": "completed"
+            }
+          ]
+        },
+        {
+          "label": "after-external-source-change",
+          "status": "completed",
+          "hooks": [
+            {
+              "event": "userPromptSubmit",
+              "source": "/private/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-source-switch-yAdNa8/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907043408/hooks/hooks.json",
+              "status": "failed"
+            },
+            {
+              "event": "stop",
+              "source": "/private/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-source-switch-yAdNa8/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907043408/hooks/hooks.json",
+              "status": "failed"
+            }
+          ]
+        },
+        {
+          "label": "new-session-in-same-stale-host",
+          "status": "completed",
+          "hooks": [
+            {
+              "event": "userPromptSubmit",
+              "source": "/private/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-source-switch-yAdNa8/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907043408/hooks/hooks.json",
+              "status": "failed"
+            },
+            {
+              "event": "stop",
+              "source": "/private/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-source-switch-yAdNa8/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907043408/hooks/hooks.json",
+              "status": "failed"
+            }
+          ]
+        },
+        {
+          "label": "after-native-mcp-reload",
+          "status": "completed",
+          "hooks": [
+            {
+              "event": "userPromptSubmit",
+              "source": "/private/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-source-switch-yAdNa8/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907043408/hooks/hooks.json",
+              "status": "failed"
+            },
+            {
+              "event": "stop",
+              "source": "/private/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-source-switch-yAdNa8/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907043408/hooks/hooks.json",
+              "status": "failed"
+            }
+          ]
+        },
+        {
+          "label": "after-same-process-resume",
+          "status": "completed",
+          "hooks": [
+            {
+              "event": "userPromptSubmit",
+              "source": "/private/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-source-switch-yAdNa8/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907043408/hooks/hooks.json",
+              "status": "failed"
+            },
+            {
+              "event": "stop",
+              "source": "/private/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-source-switch-yAdNa8/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907043408/hooks/hooks.json",
+              "status": "failed"
+            }
+          ]
+        },
+        {
+          "label": "after-same-process-config-reload",
+          "status": "completed",
+          "hooks": [
+            {
+              "event": "userPromptSubmit",
+              "source": "/private/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-source-switch-yAdNa8/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907071420/hooks/hooks.json",
+              "status": "completed"
+            },
+            {
+              "event": "stop",
+              "source": "/private/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-source-switch-yAdNa8/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907071420/hooks/hooks.json",
+              "status": "completed"
+            }
+          ]
+        }
+      ]
+    },
+    "limitation": "Reproduces stale Hook paths after source replacement; does not independently reproduce the current Desktop omission of all plugin Hook runs."
+  },
+  "initialCurrentTaskQualification": {
+    "routeId": "ba6a5f40-cd4d-4d16-add0-88c45ef75156",
+    "state": "passed",
+    "proof": {
+      "childDigest": "00feb126adc90444549de7f81539ce0a1853afd37a9bec37676bbf53b85ec137",
+      "childTurnDigest": "feb7f0c5f68f82a8464e7d6953d95197b222de26b71efd226db94006c5622e9a",
+      "passed": true,
+      "rawAuditAdapter": "codex-0.153.4-no-work/1",
+      "rawAuditDigest": "fb3f6bb441997a01d7c55d7fad0fe3a6a740088e1ed7647d1b91bfc850475c32",
+      "rootTurnDigest": "c6585f7e8b5910eada89e531f43f3742d35a4aabb1e950e0915184d9016420f6",
+      "sourceBytes": 100363,
+      "toolUseDigest": "65d4f8168df25f277c398714b50721af1a5fecb7b6aa7607570535d70fe8f5c8"
+    },
+    "runtimeDigest": "2732e1689448158ef55b237bee61087dd4a23bd95354af1df1ee9d8601e59ebd",
+    "exactArchivedProofPreserved": true
+  },
+  "retainedHotUpgradeFailure": {
+    "routeId": "ef88efa6-77fb-4c26-9b54-15804707cf45",
+    "failure": "HOST_HOOK_SET_MISMATCH",
+    "outcome": "failed",
+    "outcomeSequence": 1212,
+    "proof": null
+  },
+  "reconciledFailures": [
+    {
+      "routeId": "b89034a0-5fcc-44ec-a5d1-cd8db08253b3",
+      "attempt": {
+        "ticket_consumed": 0,
+        "post_observed": 0,
+        "stop_observed": 0,
+        "outcome_recorded": 0,
+        "ambiguous": 1,
+        "finalized_at": "2026-09-07T07:18:15.583Z",
+        "context_package_bytes": 773
+      },
+      "outcomeCount": 0,
+      "receipt": {
+        "childDigest": "045ae37f126023e0113c9f6a367794c58334c11de9fbd4d7fe79e94b20024f79",
+        "childItemsDigest": "d3a73adf3e93cb87a59e514569fd7eb680bb4a3dacb5b843c2b82d958990939f",
+        "childTurnDigest": "43f921dd64abaa8e59af98676d73f91fe2513e1ec7de440915a40710e4985526",
+        "cliVersion": "0.153.4",
+        "completionItemDigest": "9766799bcc9adb2b9f62d028089cf71e55060a2355a0e2db2346c1975252549c",
+        "evidenceDigest": "92271b719447d41d0f23dd75008fe05b4ad2118eb991f3a66011bd3bb5c1a71d",
+        "failureType": "tooling",
+        "finalResultDigest": "3b3c616f89e19cbab521e2339452159e5ece39ae5cdec1594a0d852b881d9615",
+        "launchItemDigest": "2e520a304194b850e8bcf9ee4ff521f2ca8687fdeb0c0fb229315cb742bdd062",
+        "ordinaryDelegationEnabled": false,
+        "originalDispatchConsumed": false,
+        "originalHandshakeProven": false,
+        "parentTurnDigest": "a721cf57eb11b4a1bfdd0fc466f7e8aa2db77fc3ac45936954c55170319fe33a",
+        "qualificationDigest": "7e56cf27c39f79bf41b1501b3319f3c4fe384086a4c67ecfd1639338a3278c59",
+        "qualificationState": "pending",
+        "rawAuditAdapter": "codex-0.153.4-no-work/1",
+        "rawAuditDigest": "8051737954b91378359cb166a4ac3b9605ba0d2d5fcadb58423b78ba25939a2e",
+        "recordedAt": "2026-09-07T07:18:15.583Z",
+        "recoveryKind": "unconsumed_qualification",
+        "schemaVersion": "native-thread-delegation-recovery/2",
+        "source": "native_thread_read",
+        "sourceBytes": 113747,
+        "status": "reconciled_failure",
+        "subjectDigest": "e67e07bda52aa5a2b458a12b4542051fe9faac4d3ef20db62551b915c91b33f8",
+        "transcriptBytes": 147456
+      }
+    },
+    {
+      "routeId": "ce2f0cd2-1d37-44ad-9d07-5fd2fb4a4236",
+      "attempt": {
+        "ticket_consumed": 0,
+        "post_observed": 0,
+        "stop_observed": 0,
+        "outcome_recorded": 0,
+        "ambiguous": 1,
+        "finalized_at": "2026-09-07T07:57:40.960Z",
+        "context_package_bytes": 773
+      },
+      "outcomeCount": 0,
+      "receipt": {
+        "schemaVersion": "native-thread-delegation-recovery/2",
+        "subjectDigest": "14b9c204152b158f68385122dad719011d1b5612860435a3f9bc2f4b2c75c601",
+        "evidenceDigest": "7c10bee4994f27983ddbbda8f96657b055bf0386a7151019ed99c60ecaa12c40",
+        "status": "reconciled_failure",
+        "failureType": "tooling",
+        "source": "native_thread_read",
+        "originalHandshakeProven": false,
+        "parentTurnDigest": "e90d79fbb2d8b093df53d3bf65cec8d54fe00f5432b62384742cdccc984ac091",
+        "launchItemDigest": "9143183fd5893f1eb5a514a3e6ac7ffc34c3096db7c80c51ac06627a6c9d71ad",
+        "childDigest": "baec62712bf681ace933ccb58dd3bd89dffd0ee4b56a0e5c06f2f23db057b742",
+        "childTurnDigest": "38af868382c0190b25ed9e200debc3185a7d604ceb90a6788948f289f1caa2a4",
+        "completionItemDigest": "9925634965d8e6ee9792fc37ef0f362a6af29ffa6b65d2fef02faa5b15880595",
+        "finalResultDigest": "e16f857f793c539008c0d327f8eaec5af14beca4e57a198ea05c26732588ebeb",
+        "childItemsDigest": "d3860822b54cfccffcdf2afc287dd1af918d720854da7e3756e74134f9375d9b",
+        "cliVersion": "0.153.4",
+        "rawAuditAdapter": "codex-0.153.4-tool-metadata-only/1",
+        "rawAuditDigest": "86d57a245d6e233a7a4bdfd0dca338f969ffdbd2d47b95e299911c96b022b54c",
+        "sourceBytes": 122057,
+        "metadataOnlyCalls": 1,
+        "metadataQueryDigest": "edf07c308f553aad23ed3bf4024c0369fb9e3368037abe48f6d263dd94ed03a3",
+        "transcriptBytes": 143360,
+        "recoveryKind": "unconsumed_qualification",
+        "qualificationDigest": "39539737437de64e4889ac1a7e02acc01471065ae0264a61976b4073c8490636",
+        "qualificationState": "pending",
+        "ordinaryDelegationEnabled": false,
+        "originalDispatchConsumed": false,
+        "recordedAt": "2026-09-07T07:57:40.960Z"
+      }
+    }
+  ],
+  "currentTask": {
+    "contextId": "01a079b0-eba4-7792-bc1c-288c3f0af2f9",
+    "turnId": "01a07af1-19ac-72b1-a2c3-943696ab6004",
+    "state": "passed",
+    "routeId": "ad8af32d-1fab-4878-b2dc-86ab3a025b7b",
+    "qualificationPassedOnFinalBuild": true,
+    "ordinaryDelegationPassed": true,
+    "reviewPassed": true,
+    "qualification": {
+      "binding": {
+        "cliVersion": "0.153.4",
+        "configurationDigest": "e34616ab889d850561486cdbd1dab463ebcee0633f20c8591149360e09710f21",
+        "digest": "d503afb61e7a6ba142024d83c419ff087d0d192782932e020a14eb567dab8ee2",
+        "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+        "shellRoots": [
+          "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+        ],
+        "taskCwdDigest": "881f79aa5ba478b0bb42df2f5d46c3ec4a965956a864c9a270b663c2a7e8d982"
+      },
+      "completedAt": "2026-09-07T08:21:53.802Z",
+      "createdAt": "2026-09-07T08:20:33.507Z",
+      "hooks": {
+        "post": {
+          "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+          "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+        },
+        "pre": {
+          "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+          "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+        },
+        "start": {
+          "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+          "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+        },
+        "stop": {
+          "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+          "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+        }
+      },
+      "marker": "NATIVE_ROUTER_NOOP_4003624aaa072f89ee236de9",
+      "modelPolicy": {
+        "digest": "eeef1f9773b931b8651fea7c7804a1ed7170da8d14694a16e5aea3e2e67c3a78",
+        "target": {
+          "effort": "low",
+          "model": "gpt-6-astra"
+        }
+      },
+      "passedRefresh": {
+        "basisDigest": "d6ceed8bf57bb7d8cfc64ce345dbd98644a002e33a37977f7ec329a3b0deec90",
+        "bindingDigest": "510b8e4cc6c007b109bd3ddf0abf57093398f41ae4bea2adced17726889a4967",
+        "priorRouteId": "9ee6e49c-2b1b-4d76-a9b6-a7eb67289f85"
+      },
+      "proof": {
+        "childDigest": "58f9f1ed6a19963fc17f239ae5389bd3f4db458dbbca7d11381b3089f729e21e",
+        "childTurnDigest": "58aeb82cb0264367bad3610888db9d451db32d80e3aed7051a8a67ea302ba4fe",
+        "passed": true,
+        "rawAuditAdapter": "codex-0.153.4-no-work/1",
+        "rawAuditDigest": "c7c5be2c476b3e44e40d15dad9d79cad7cfaa294bb7807176b93b72b08dffb4c",
+        "rootTurnDigest": "fd1ad18dbb9fffaefe6739a55ec9f321136c43dbd6feeeaa3f132a2c09f865cd",
+        "sourceBytes": 104048,
+        "toolUseDigest": "6a2be126b5d5d9faec2eff351c114d8554236efa2837a1247d9fcdd250b0ef4a"
+      },
+      "routeId": "ad8af32d-1fab-4878-b2dc-86ab3a025b7b",
+      "schema": 1,
+      "state": "passed",
+      "ticketHash": "c792025d6dcad971472611230dba8c14da45b6cb946e9104a5085d349943ef64"
+    },
+    "actualDesktop": {
+      "source": "live-desktop-ipc-read-only",
+      "observedAt": "2026-09-07T08:27:00.905Z",
+      "rootModel": "gpt-6-astra",
+      "rootEffort": "max",
+      "routerHookRuns": 7,
+      "hooks": [
+        {
+          "event": "userPromptSubmit",
+          "status": "completed",
+          "source": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907074802/hooks/hooks.json"
+        },
+        {
+          "event": "preToolUse",
+          "status": "completed",
+          "source": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907074802/hooks/hooks.json"
+        },
+        {
+          "event": "postToolUse",
+          "status": "completed",
+          "source": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907074802/hooks/hooks.json"
+        },
+        {
+          "event": "preToolUse",
+          "status": "completed",
+          "source": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907074802/hooks/hooks.json"
+        },
+        {
+          "event": "postToolUse",
+          "status": "completed",
+          "source": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907074802/hooks/hooks.json"
+        },
+        {
+          "event": "preToolUse",
+          "status": "completed",
+          "source": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907074802/hooks/hooks.json"
+        },
+        {
+          "event": "postToolUse",
+          "status": "completed",
+          "source": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260907074802/hooks/hooks.json"
+        }
+      ]
+    },
+    "qualificationRuns": [
+      {
+        "verificationBeforeOutcome": {
+          "passed": true,
+          "observedAt": "2026-09-07T08:19:42.363Z",
+          "runtimeVersion": "0.4.0+codex.20260907074802",
+          "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+          "routeId": "9ee6e49c-2b1b-4d76-a9b6-a7eb67289f85",
+          "rootTurnId": "01a07af1-19ac-72b1-a2c3-943696ab6004",
+          "childId": "01a07af2-798b-7730-a67c-dfc1601bc56b",
+          "target": {
+            "model": "gpt-6-astra",
+            "effort": "low"
+          },
+          "observedHookEvents": [
+            "post",
+            "pre",
+            "start",
+            "stop"
+          ],
+          "hooks": {
+            "post": {
+              "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+              "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+            },
+            "pre": {
+              "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+              "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+            },
+            "start": {
+              "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+              "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+            },
+            "stop": {
+              "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+              "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+            }
+          },
+          "shellRoots": [
+            "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed",
+            "c1c5224c65a11996ebf8e9c5b10e5c0c460bbf85083f6ac57071c6a5734f54c9",
+            "cb394d4b11b052b754e2345bb83e23a51339094006e52e42d45303c46c5b5a75"
+          ],
+          "oldPassedProofArchivedExactly": true,
+          "recoveredFailureArchivedWithoutProof": true,
+          "oneUseAuthorizationConsumed": true,
+          "currentTurnHookReceipt": {
+            "scope": "turn",
+            "available": true,
+            "reasonCode": "HOOK_DISPATCHED_IDENTITY_ACCEPTED",
+            "lastObservation": {
+              "schemaVersion": 1,
+              "hookEvent": "UserPromptSubmit",
+              "source": "none",
+              "sessionId": "present",
+              "turnId": "present",
+              "boundedSubagent": false,
+              "identityStatus": "accepted",
+              "contextInjection": "context_emitted",
+              "observedAt": "2026-09-07T08:16:59.613Z"
+            }
+          },
+          "audit": {
+            "passed": true,
+            "rawAuditAdapter": "codex-0.153.4-no-work/1",
+            "rawAuditDigest": "172a14c3f67167d5ebe0d68ef78bb1edbd1d44b06173abbb542c125141474b82",
+            "sourceBytes": 104049
+          }
+        },
+        "finalizedAttempt": {
+          "ticket_consumed": 1,
+          "post_observed": 1,
+          "stop_observed": 1,
+          "outcome_recorded": 1,
+          "outcome_status": "passed",
+          "ambiguous": 0,
+          "finalized_at": "2026-09-07T08:19:50.814Z",
+          "ticket_hash": null,
+          "context_package": null,
+          "transcript_bytes": 143360
+        },
+        "outcome": {
+          "seq": 1213,
+          "status": "passed",
+          "gate": "structured-check",
+          "failure_type": null,
+          "recorded_at": "2026-09-07T08:19:50.813Z"
+        }
+      },
+      {
+        "verificationBeforeOutcome": {
+          "passed": true,
+          "observedAt": "2026-09-07T08:21:45.101Z",
+          "runtimeVersion": "0.4.0+codex.20260907074802",
+          "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+          "routeId": "ad8af32d-1fab-4878-b2dc-86ab3a025b7b",
+          "rootTurnId": "01a07af1-19ac-72b1-a2c3-943696ab6004",
+          "childId": "01a07af4-d14c-77e1-9751-99594a1137fa",
+          "target": {
+            "model": "gpt-6-astra",
+            "effort": "low"
+          },
+          "observedHookEvents": [
+            "post",
+            "pre",
+            "start",
+            "stop"
+          ],
+          "hooks": {
+            "post": {
+              "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+              "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+            },
+            "pre": {
+              "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+              "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+            },
+            "start": {
+              "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+              "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+            },
+            "stop": {
+              "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+              "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+            }
+          },
+          "shellRoots": [
+            "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+          ],
+          "oldPassedProofArchivedExactly": true,
+          "recoveredFailureArchivedWithoutProof": true,
+          "oneUseAuthorizationConsumed": true,
+          "passedRefresh": {
+            "basisDigest": "d6ceed8bf57bb7d8cfc64ce345dbd98644a002e33a37977f7ec329a3b0deec90",
+            "bindingDigest": "510b8e4cc6c007b109bd3ddf0abf57093398f41ae4bea2adced17726889a4967",
+            "priorRouteId": "9ee6e49c-2b1b-4d76-a9b6-a7eb67289f85"
+          },
+          "currentTurnHookReceipt": {
+            "scope": "turn",
+            "available": true,
+            "reasonCode": "HOOK_DISPATCHED_IDENTITY_ACCEPTED",
+            "lastObservation": {
+              "schemaVersion": 1,
+              "hookEvent": "UserPromptSubmit",
+              "source": "none",
+              "sessionId": "present",
+              "turnId": "present",
+              "boundedSubagent": false,
+              "identityStatus": "accepted",
+              "contextInjection": "context_emitted",
+              "observedAt": "2026-09-07T08:16:59.613Z"
+            }
+          },
+          "audit": {
+            "passed": true,
+            "rawAuditAdapter": "codex-0.153.4-no-work/1",
+            "rawAuditDigest": "c7c5be2c476b3e44e40d15dad9d79cad7cfaa294bb7807176b93b72b08dffb4c",
+            "sourceBytes": 104048
+          }
+        },
+        "finalizedAttempt": {
+          "ticket_consumed": 1,
+          "post_observed": 1,
+          "stop_observed": 1,
+          "outcome_recorded": 1,
+          "outcome_status": "passed",
+          "ambiguous": 0,
+          "finalized_at": "2026-09-07T08:21:53.802Z",
+          "ticket_hash": null,
+          "context_package": null,
+          "transcript_bytes": 143360
+        },
+        "outcome": {
+          "seq": 1214,
+          "status": "passed",
+          "gate": "structured-check",
+          "failure_type": null,
+          "recorded_at": "2026-09-07T08:21:53.802Z"
+        }
+      }
+    ],
+    "ordinaryDelegation": {
+      "verificationBeforeOutcome": {
+        "passed": true,
+        "observedAt": "2026-09-07T08:25:58.145Z",
+        "routeId": "c51c6ba2-c1c2-46ef-aeb8-e00199470ee5",
+        "childId": "01a07af6-2fda-7881-baf1-1d3f5ff3fe33",
+        "rootTurnId": "01a07af1-19ac-72b1-a2c3-943696ab6004",
+        "target": {
+          "effort": "high",
+          "model": "gpt-6-astra"
+        },
+        "rawDigest": "7dbab745821a4d33a14bb848ecc51cb8c77133aba4feadbfc0158c39a8807805",
+        "sourceBytes": 817526,
+        "rawPath": "/Users/niuzhenya/.codex/sessions/2026/09/07/rollout-2026-09-07T16-22-29-01a07af6-2fda-7881-baf1-1d3f5ff3fe33.jsonl",
+        "contexts": [
+          {
+            "model": "gpt-6-astra",
+            "effort": "high",
+            "turnId": "01a07af6-3034-7963-bf01-d245d2292add"
+          }
+        ],
+        "callNames": [
+          "exec",
+          "exec",
+          "exec",
+          "exec",
+          "exec",
+          "exec"
+        ],
+        "testCalls": [
+          "text(await tools.exec_command({cmd:\"sed -n '60,170p' plugins/adaptive-model-router/scripts/lib/lifecycle-qualification.mjs && sed -n '600,680p' plugins/adaptive-model-router/test/native-qualification.test.mjs && cat plugins/adaptive-model-router/test/hook-diagnostic-scope.test.mjs && sed -n '90,135p' plugins/adaptive-model-router/scripts/hook.mjs && cat plugins/adaptive-model-router/scripts/lib/hook-identity.mjs\",\"max_output_tokens\":6500}));\ntext(await tools.exec_command({cmd:\"node --test plugins/adaptive-model-router/test/hook-readiness.test.mjs plugins/adaptive-model-router/test/hook-diagnostic-scope.test.mjs plugins/adaptive-model-router/test/native-metadata-recovery-audit.test.mjs plugins/adaptive-model-router/test/delegation-recovery.test.mjs plugins/adaptive-model-router/test/native-qualification.test.mjs\",\"yield_time_ms\":1000,\"max_output_tokens\":1800}));\n"
+        ],
+        "testOutputVerified": true,
+        "tests": {
+          "passed": 47,
+          "failed": 0,
+          "skipped": 0
+        },
+        "terminalEvents": 1,
+        "final": "No actionable correctness findings.\n\nReviewed the four requested modules, their diffs, Hook identity recording/scoping, qualification reservation, and nearby native audit code. Verified:\n\n- Readiness requires a receipt matching the requested task and latest native turn; old-turn and other-task receipts do not qualify.\n- Exact metadata-query recovery remains separate from normal no-tool qualification.\n- Recovery preserves missing Hook observations and creates no successful outcome.\n- Pending qualification retries require explicit, evidence-bound authorization consumed when reserving the replacement; stale authorization renewal preserves the prior record.\n\nRan five targeted test files: **47 passed, 0 failed, 0 skipped**. No repository files, live Router state, configuration, or trust were changed. Live installation and current-task acceptance remain with the parent.\n\n<oai-mem-citation>\n<citation_entries>\nMEMORY.md:189-189|note=[respected bounded read-only review protocol]\n</citation_entries>\n<rollout_ids>\n01a06142-ea13-7201-9fda-bbff5a12d5d0\n</rollout_ids>\n</oai-mem-citation>",
+        "ticketConsumed": true,
+        "postObserved": true,
+        "stopObserved": true,
+        "ambiguous": false,
+        "outcomeRecorded": false
+      },
+      "finalizedAttempt": {
+        "ticket_consumed": 1,
+        "post_observed": 1,
+        "stop_observed": 1,
+        "outcome_recorded": 1,
+        "outcome_status": "passed",
+        "ambiguous": 0,
+        "finalized_at": "2026-09-07T08:26:11.773Z",
+        "ticket_hash": null,
+        "context_package": null,
+        "transcript_bytes": 876544
+      },
+      "outcome": {
+        "seq": 1215,
+        "status": "passed",
+        "gate": "full-checks",
+        "failure_type": null,
+        "recorded_at": "2026-09-07T08:26:11.773Z"
+      }
+    },
+    "bindingTransition": {
+      "priorRouteId": "9ee6e49c-2b1b-4d76-a9b6-a7eb67289f85",
+      "newRouteId": "ad8af32d-1fab-4878-b2dc-86ab3a025b7b",
+      "bindingDiff": {
+        "digest": {
+          "before": "55029eca21f1c6182146a55150026e62bf7470867b7a402f7f020a65f2399639",
+          "after": "d503afb61e7a6ba142024d83c419ff087d0d192782932e020a14eb567dab8ee2"
+        },
+        "shellRoots": {
+          "before": [
+            "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed",
+            "c1c5224c65a11996ebf8e9c5b10e5c0c460bbf85083f6ac57071c6a5734f54c9",
+            "cb394d4b11b052b754e2345bb83e23a51339094006e52e42d45303c46c5b5a75"
+          ],
+          "after": [
+            "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+          ]
+        }
+      }
+    },
+    "bindingTransitionExplanation": "After the first successful post-restart proof observed only the current shell, two obsolete historical shells dropped from the binding. One fixed no-tool refresh verified the narrower binding; the following stage delegated ordinary review and subsequent readiness remained ready without another ticket.",
+    "steadyReadiness": {
+      "passed": true,
+      "result": {
+        "ready": true,
+        "reasonCode": null,
+        "binding": {
+          "digest": "d503afb61e7a6ba142024d83c419ff087d0d192782932e020a14eb567dab8ee2",
+          "runtimeDigest": "ad3042ecb900cff9cd4aef0b0d528d575f9aa540a0ca838810b7366b23c08369",
+          "taskCwdDigest": "881f79aa5ba478b0bb42df2f5d46c3ec4a965956a864c9a270b663c2a7e8d982",
+          "configurationDigest": "e34616ab889d850561486cdbd1dab463ebcee0633f20c8591149360e09710f21",
+          "shellRoots": [
+            "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+          ],
+          "cliVersion": "0.153.4"
+        }
+      },
+      "attemptsUnchanged": true,
+      "diagnosticsClosed": true,
+      "source": "installed-plugin-data",
+      "observedAt": "2026-09-07T08:28:08.284Z"
+    },
+    "diagnosticsClosed": true,
+    "pendingOutcomes": 0,
+    "pendingDelegations": 0,
+    "gate": "available"
+  },
+  "globalBudget": {
+    "maximumBytes": 1073741824,
+    "reservationBytesPerPendingChild": 268435456,
+    "usedBytes": 164950016,
+    "pendingCount": 2,
+    "pending": [
+      {
+        "route_id": "b095dd37-3887-4067-8d37-a3beb34ef740",
+        "created_at": "2026-09-03T01:52:09.425Z",
+        "ticket_consumed": 1,
+        "post_observed": 1,
+        "stop_observed": 0,
+        "outcome_recorded": 1,
+        "ambiguous": 0
+      },
+      {
+        "route_id": "22c7adc3-dd79-4d09-b345-136dfb49645a",
+        "created_at": "2026-09-03T15:32:07.508Z",
+        "ticket_consumed": 1,
+        "post_observed": 1,
+        "stop_observed": 0,
+        "outcome_recorded": 0,
+        "ambiguous": 0
+      }
+    ]
+  },
+  "boundaries": {
+    "hookTrustChangedByAgent": false,
+    "rootModelChanged": false,
+    "oldFailureConvertedToSuccess": false,
+    "desktopOrBackendRestarted": true,
+    "nativeWindowsRun": false,
+    "backgroundMaintenanceRunning": false,
+    "desktopRestartedBy": "user"
+  },
+  "pending": [],
+  "previousDesktopFailure": {
+    "contextId": "01a079b0-eba4-7792-bc1c-288c3f0af2f9",
+    "turnId": "01a07aa8-4187-73e1-97b6-e43d81a3b330",
+    "state": "pending",
+    "routeId": "ce2f0cd2-1d37-44ad-9d07-5fd2fb4a4236",
+    "qualificationPassedOnFinalBuild": false,
+    "hookReceipt": {
+      "scope": "turn",
+      "available": false,
+      "reasonCode": "HOOK_DISPATCH_NOT_OBSERVED",
+      "lastObservation": null
+    },
+    "actualDesktop": {
+      "source": "live-desktop-ipc-read-only",
+      "observedAt": "2026-09-07T08:04:05.543Z",
+      "rootModel": "gpt-6-astra",
+      "rootEffort": "max",
+      "observedHookRuns": 629,
+      "routerHookRuns": 0,
+      "sources": [
+        "/Users/niuzhenya/.codex/hooks.json"
+      ]
+    },
+    "reasonCode": "HOST_HOOK_DISPATCH_NOT_OBSERVED"
+  },
+  "remainingBoundaries": [
+    "The two older September 3 global reservations lack sufficient native evidence for reconciliation and remain unchanged; they do not currently block this task.",
+    "Native Windows was not exercised on this macOS host; the full suite contains one Windows-only skip.",
+    "Referenced historical tasks were inspected for the incident, not resumed to execute their unrelated product work."
+  ]
+}

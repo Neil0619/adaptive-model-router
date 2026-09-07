@@ -5,14 +5,24 @@ import { join, relative, resolve, sep } from "node:path";
 import { AppServerClient } from "./app-server.mjs";
 import { parseCarrierTaskName } from "./delegation-gate.mjs";
 import { canonicalJson, payloadHash } from "./io.mjs";
-import { auditNativeRecoveryTranscript, readNativeRecoveryTranscript, RECOVERY_AUDIT_ADAPTER, LIFECYCLE_AUDIT_ADAPTER } from "./native-recovery-audit.mjs";
+import { auditNativeRecoveryTranscript, auditNativeLifecycle1533Transcript,
+  readNativeRecoveryTranscript, RECOVERY_AUDIT_ADAPTER, LIFECYCLE_AUDIT_ADAPTER,
+  LIFECYCLE_1533_AUDIT_ADAPTER, LIFECYCLE_1534_AUDIT_ADAPTER } from "./native-recovery-audit.mjs";
 import { QUALIFICATION_RECOVERY_SCHEMA, failedQualificationRecoverySubject, auditFailedQualificationTranscript } from "./qualification-recovery.mjs";
+import { readTaskQualification } from "./lifecycle-qualification.mjs";
+import { qualificationTargetMatches } from "./qualification-policy.mjs";
+import { auditNativeUnconsumed1534Transcript, isMetadataRecoveryAudit } from "./native-metadata-recovery-audit.mjs";
 
 const PREFIX = "native_recovery:";
 const SCHEMA = "native-thread-delegation-recovery/2";
 const hash = (value) => createHash("sha256").update(String(value)).digest("hex");
 const present = (value) => typeof value === "string" && value.length > 0;
 const isDigest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+const UNCONSUMED_AUDITORS = Object.freeze({
+  "0.153.0-alpha.5": { audit: auditNativeRecoveryTranscript, adapter: RECOVERY_AUDIT_ADAPTER },
+  "0.153.3": { audit: auditNativeLifecycle1533Transcript, adapter: LIFECYCLE_1533_AUDIT_ADAPTER },
+  "0.153.4": { audit: auditNativeUnconsumed1534Transcript, adapter: LIFECYCLE_1534_AUDIT_ADAPTER },
+});
 
 function unresolved(reasonCode = "RECOVERY_EVIDENCE_UNPROVEN") {
   return { status: "unresolved", reasonCode, gateReleased: false };
@@ -24,7 +34,11 @@ export function readNativeRecoveryReceipt(db, context, routeId) {
   try {
     const receipt = JSON.parse(row.value);
     const supported = receipt.schemaVersion === SCHEMA
-      ? receipt.rawAuditAdapter === RECOVERY_AUDIT_ADAPTER
+      ? Object.hasOwn(UNCONSUMED_AUDITORS, receipt.cliVersion)
+        && (receipt.rawAuditAdapter === UNCONSUMED_AUDITORS[receipt.cliVersion].adapter || isMetadataRecoveryAudit(receipt))
+        && (receipt.recoveryKind === undefined || (receipt.recoveryKind === "unconsumed_qualification"
+          && receipt.qualificationState === "pending" && receipt.ordinaryDelegationEnabled === false
+          && receipt.originalDispatchConsumed === false && isDigest(receipt.qualificationDigest)))
       : receipt.schemaVersion === QUALIFICATION_RECOVERY_SCHEMA
         && receipt.rawAuditAdapter === LIFECYCLE_AUDIT_ADAPTER && receipt.cliVersion === "0.153.0"
         && receipt.recoveryKind === "failed_qualification" && receipt.qualificationState === "failed"
@@ -81,11 +95,15 @@ function launchBinding(parent, attempt, input, cwd, subject) {
   }
   // Existing parent metadata can predate the build that actually ran the child.
   // Only the qualification branch has a stored exact child-build binding.
-  return { start, completion, cliVersion: subject.cliVersion || parent.cliVersion };
+  return { start, completion, cliVersion: subject.cliVersion || null };
 }
 
 function closedChild(child, binding, attempt, input, cwd, subject) {
-  const { start, completion, cliVersion } = binding;
+  const { start, completion } = binding;
+  // A long-lived parent may predate the executable that created this child.
+  // Pin the actual child build, then verify that same build in its raw source.
+  const cliVersion = binding.cliVersion || child?.cliVersion;
+  requireFact(subject.schemaVersion !== SCHEMA || Object.hasOwn(UNCONSUMED_AUDITORS, cliVersion));
   const spawn = child?.source?.subAgent?.thread_spawn;
   requireFact(child?.id === start.agentThreadId && child.parentThreadId === input.contextId);
   requireFact(child.forkedFromId === null && resolve(child.cwd) === resolve(cwd));
@@ -151,7 +169,19 @@ function eligible(attempt) {
 }
 
 function recoverySubject(store, context, attempt, cwd) {
-  if (eligible(attempt)) return { schemaVersion: SCHEMA, stateDigest: payloadHash(attempt), receiptFields: {} };
+  if (eligible(attempt)) {
+    const qualification = readTaskQualification(store.db, context);
+    if (qualification?.routeId === attempt.route_id) {
+      const route = store.db.prepare("SELECT * FROM routes WHERE route_id=?").get(attempt.route_id);
+      if (qualification.state !== "pending" || qualification.proof !== undefined
+        || qualification.ticketHash !== attempt.ticket_hash || !qualificationTargetMatches(store.db, qualification, route)) return null;
+      return { schemaVersion: SCHEMA, stateDigest: payloadHash({ attempt, qualification }),
+        cliVersion: qualification.binding.cliVersion,
+        receiptFields: { recoveryKind: "unconsumed_qualification", qualificationDigest: payloadHash(qualification),
+          qualificationState: "pending", ordinaryDelegationEnabled: false, originalDispatchConsumed: false } };
+    }
+    return { schemaVersion: SCHEMA, stateDigest: payloadHash(attempt), receiptFields: {} };
+  }
   return failedQualificationRecoverySubject(store.db, context, attempt, cwd);
 }
 
@@ -207,8 +237,9 @@ export async function recoverDelegation(input, {
   const subject = recoverySubject(store, context, attempt, cwd);
   if (!subject) return unresolved("RECOVERY_ATTEMPT_INELIGIBLE");
   const attemptDigest = subject.stateDigest;
-  const auditTranscript = subject.schemaVersion === SCHEMA ? auditNativeRecoveryTranscript
-    : (bytes, child, parentId) => auditFailedQualificationTranscript(bytes, child, parentId, cwd);
+  const auditTranscript = (bytes, child, parentId) => subject.schemaVersion === SCHEMA
+    ? UNCONSUMED_AUDITORS[child.cliVersion].audit(bytes, child, parentId)
+    : auditFailedQualificationTranscript(bytes, child, parentId, cwd);
   const client = readThread ? null : new AppServerClient({ timeoutMs: 20_000 });
   const deadline = Date.now() + 20_000;
   const read = readThread || (async (threadId) => {

@@ -141,19 +141,19 @@ stage-local suppression does not change the global or session Router setting.
 3. Immediately after every successful `route_stage` call, show one compact route notice in commentary:
    - always say that the root-task model is unchanged and host-managed;
    - when `rootTask.modelVisibility` is `hook_observed`, show `rootTask.model`; its reasoning effort remains visible only in the Codex composer;
-   - use a readable stage label; for `delegate`, show `target.model` / `target.effort` / `service_tier`;
+   - use a readable stage label; for `delegate`, show `target.model` / `target.effort`, adding `service_tier` only when directly observed for that child;
    - for `continue` or `ask_user`, show the action and a concise explanation of the reason; make any required user action explicit;
    - for `busy`, explain that an earlier delegation still owns the gate and the root is continuing; do not imply that a replacement child was launched;
    - omit `routeId` and `blockingRouteId` from routine conversation notices. Keep the exact IDs internally for lifecycle calls, outcomes, history, and diagnostics. Show them only for an explicit inspection, troubleshooting request, or a necessary user action that names an exact route; hiding them is not deleting or changing the recorded evidence;
-   - show `service_tier=unknown` with a brief localized "host has not provided the child's tier" label unless already available, direct host evidence identifies that exact child's tier. Current route output does not attest a child's service tier. Neither the parent task's Fast setting, the selected model/effort, a supported service-tiers list, nor an assumed inheritance/default is proof. Unknown does not mean Fast is off;
+   - omit the `service_tier` field from routine notices unless already available, direct host evidence identifies that exact child's tier. Current route output does not attest a child's service tier. Neither the parent task's Fast setting, the selected model/effort, a supported service-tiers list, nor an assumed inheritance/default is proof. An omitted tier does not mean Fast is off;
    - distinguish an observed **requested** tier from an **actually served** tier; label requested-only evidence accordingly. This is display-only: do not change Fast, invent a `service_tier` spawn parameter, scan unrelated logs, or launch a probe just to populate the notice;
    - never label a bounded subagent target as the current root-task model.
    - never call a `delegate` result a recommendation or claim that a conditional
      no-proactive-subagent policy prevented the required launch.
    Prefer the stable shape
-   `Router · root=<observed-or-host-managed> (unchanged) · <stage> · <model> / <effort> / service_tier=<observed-value-or-unknown>`
+   `Router · root=<observed-or-host-managed> (unchanged) · <stage> · <model> / <effort>`
    for delegated stages, and localize labels to the user's language. For example:
-   `Router · 主任务仍为 gpt-5.6-sol（思考档位由界面控制）· 最终差异审查 · gpt-6-astra / high / service_tier=unknown（宿主未提供）`.
+   `Router · 主任务仍为 gpt-5.6-sol（思考档位由界面控制）· 最终差异审查 · gpt-6-astra / high`.
 4. When delegation is unavailable in the current host, fail open by continuing with the current model. Do not claim that the root task model changed.
 5. Keep the delegated scope concrete and bounded. The root owns orchestration, integration, user communication, and verification. Never create overlapping writers.
 6. Run the returned `verificationGate` at the root. Call `record_outcome` once

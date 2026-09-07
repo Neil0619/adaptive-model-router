@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { AppServerClient, resolveCodexCommand } from "./app-server.mjs";
 import { canonicalJson, payloadHash } from "./io.mjs";
-import { auditNativeLifecycleNoop, NATIVE_LIFECYCLE_CLI_VERSIONS } from "./native-lifecycle-audit.mjs";
+import { auditNativeLifecycleNoop, NATIVE_LIFECYCLE_CLI_VERSIONS, supportsNativeLifecycleHost } from "./native-lifecycle-audit.mjs";
 import { activeRequalification, consumeRequalification } from "./qualification-retry.mjs";
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -26,20 +26,21 @@ export function runtimeSourceDigest(root = MODULE_ROOT) {
 }
 
 export async function nativeQualificationHost() {
-  if (process.platform !== "darwin") throw new Error("native qualification platform is unproven");
+  if (!["darwin", "win32"].includes(process.platform)) throw new Error("native qualification platform is unproven");
   const command = await resolveCodexCommand();
+  if (command.kind !== "direct") throw new Error("native qualification requires a directly verifiable executable");
   const path = realpathSync(command.path);
-  const result = spawnSync(path, ["--version"], { encoding: "utf8", timeout: 3_000, maxBuffer: 1024 });
+  const result = spawnSync(path, ["--version"], { encoding: "utf8", timeout: 3_000, maxBuffer: 1024, windowsHide: true });
   const version = /^codex-cli (\S+)\s*$/u.exec(result.stdout || "")?.[1];
-  if (result.error || result.status !== 0 || !NATIVE_LIFECYCLE_CLI_VERSIONS.includes(version)) throw new Error("native qualification build is unproven");
+  if (result.error || result.status !== 0 || !supportsNativeLifecycleHost(process.platform, version)) throw new Error("native qualification build is unproven");
   return { platform: process.platform, arch: process.arch, cliVersion: version,
     executableDigest: sha(readFileSync(path)), executablePathDigest: payloadHash(path) };
 }
 
-export function lifecycleBinding(hooks, shellRoot, inventoryRoot, host, cwd) {
+export function lifecycleBinding(hooks, shellRoot, inventoryRoot, host, cwd, historicalRoots = []) {
   const runtimeDigest = runtimeSourceDigest();
   const taskCwdDigest = payloadHash(realpathSync(cwd));
-  const shellRoots = [...new Set([shellRoot, inventoryRoot].map((root) => payloadHash(realpathSync(root))))].sort();
+  const shellRoots = [...new Set([shellRoot, inventoryRoot, ...historicalRoots].map((root) => payloadHash(realpathSync(root))))].sort();
   const hookSet = hooks.map((hook) => Object.fromEntries([
     "eventName", "handlerType", "command", "matcher", "timeoutSec", "statusMessage", "async",
     "source", "sourcePath", "pluginId", "currentHash", "enabled", "trustStatus",
@@ -53,13 +54,14 @@ function validBinding(binding) {
   return digest(binding?.digest) && digest(binding?.runtimeDigest) && digest(binding?.taskCwdDigest)
     && NATIVE_LIFECYCLE_CLI_VERSIONS.includes(binding.cliVersion)
     && Array.isArray(binding.shellRoots) && binding.shellRoots.length > 0
-    && binding.shellRoots.length <= 2 && binding.shellRoots.every(digest);
+    && binding.shellRoots.length <= 6 && binding.shellRoots.every(digest);
 }
 
-export function newTaskQualification(binding, routeId, requalification = null) {
+export function newTaskQualification(binding, routeId, requalification = null, passedRefresh = null) {
   if (!validBinding(binding)) return null;
   return { schema: 1, state: "pending", routeId, binding, hooks: {},
     ...(requalification ? { requalification } : {}),
+    ...(passedRefresh ? { passedRefresh } : {}),
     marker: `NATIVE_ROUTER_NOOP_${randomBytes(12).toString("hex")}`, createdAt: new Date().toISOString() };
 }
 
@@ -81,6 +83,7 @@ function write(db, context, value) {
 }
 
 export function reserveTaskQualification(db, context, qualification, ticketHash) {
+  if (qualification.passedRefresh) return consumePassedRefresh(db, context, qualification, ticketHash);
   if (qualification.requalification) return consumeRequalification(db, context,
     readTaskQualification(db, context), qualification, ticketHash);
   return db.prepare("INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO NOTHING")
@@ -93,9 +96,108 @@ export function qualificationReadiness(db, context, binding) {
   const requalification = activeRequalification(db, context, existing, binding);
   if (requalification) return { ready: false, reasonCode: "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN",
     qualificationBinding: binding, requalification, binding };
+  const passedRefresh = passedQualificationRefresh(db, context, existing, binding);
+  if (passedRefresh) return { ready: false, reasonCode: "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN",
+    qualificationBinding: binding, passedRefresh, binding };
   if (existing.binding?.digest !== binding.digest) return { ready: false, reasonCode: "HOST_HOOK_SET_MISMATCH", binding };
   if (existing.state === "passed" && digest(existing.proof?.rawAuditDigest)) return { ready: true, reasonCode: null, binding };
   return { ready: false, reasonCode: "HOST_LIFECYCLE_QUALIFICATION_FAILED", binding };
+}
+
+function validPassedProof(value) {
+  const proof = value?.proof;
+  return value?.schema === 1 && value.state === "passed" && validBinding(value.binding) && !value.failure && digest(value.ticketHash)
+    && Number.isFinite(Date.parse(value.completedAt)) && proof?.passed === true
+    && proof.rawAuditAdapter === `codex-${value.binding.cliVersion}-no-work/1`
+    && ["rawAuditDigest", "childDigest", "childTurnDigest", "rootTurnDigest", "toolUseDigest"]
+      .every((field) => digest(proof[field]))
+    && Number.isSafeInteger(proof.sourceBytes) && proof.sourceBytes > 0 && proof.sourceBytes <= 2 * 1024 * 1024
+    && EVENTS.every((event) => value.hooks[event]?.runtimeDigest === value.binding.runtimeDigest
+      && value.binding.shellRoots.includes(value.hooks[event].shellRoot));
+}
+
+function consistentPassedAttempt(attempt, context, value, route) {
+  // Terminal attempts are bounded history, unlike the qualification and its
+  // route/outcome. Their legitimate pruning must not revoke retained proof.
+  if (!attempt) return true;
+  return attempt.project_id === context.projectId && attempt.context_key === context.contextKey
+    && Number.isFinite(Date.parse(attempt.finalized_at)) && attempt.outcome_recorded === 1 && attempt.outcome_status === "passed"
+    && attempt.ticket_consumed === 1 && attempt.post_observed === 1 && attempt.stop_observed === 1
+    && attempt.no_child === 0 && attempt.ambiguous === 0 && attempt.ticket_hash === null && attempt.context_package === null
+    && attempt.model === route.model && attempt.effort === route.effort
+    && attempt.agent_id === value.proof.childDigest
+    && (attempt.early_agent_id === null || attempt.early_agent_id === attempt.agent_id)
+    && typeof attempt.root_turn_id === "string" && sha(attempt.root_turn_id) === value.proof.rootTurnDigest
+    && typeof attempt.tool_use_id === "string" && sha(attempt.tool_use_id) === value.proof.toolUseDigest
+    && digest(attempt.dispatch_input_digest)
+    && Number.isSafeInteger(attempt.transcript_bytes) && attempt.transcript_bytes > 0
+    && (attempt.early_transcript_bytes === null || attempt.early_transcript_bytes === attempt.transcript_bytes);
+}
+
+function passedQualificationBasis(db, context, value) {
+  if (!validPassedProof(value)) return null;
+  const route = db.prepare("SELECT * FROM routes WHERE route_id=? AND project_id=? AND context_key=?")
+    .get(value.routeId, context.projectId, context.contextKey);
+  const outcome = db.prepare("SELECT * FROM outcomes WHERE route_id=? AND project_id=? AND context_key=?")
+    .get(value.routeId, context.projectId, context.contextKey);
+  if (route?.action !== "delegate" || route.verification_gate !== "structured-check"
+    || route.reason_codes_json !== '["HOST_LIFECYCLE_QUALIFICATION"]'
+    || !qualificationTargetMatches(db, value, route)
+    || outcome?.status !== "passed" || outcome.gate !== "structured-check" || outcome.failure_type !== null
+    || outcome.category !== route.category || outcome.escalations !== route.escalation_count) return null;
+  const normalizedOutcome = { status: outcome.status, gate: outcome.gate, failureType: outcome.failure_type,
+    retries: outcome.retries, retryBreakdown: { reasoning: outcome.retry_reasoning, environment: outcome.retry_environment,
+      information: outcome.retry_information, tooling: outcome.retry_tooling }, escalations: outcome.escalations,
+    userCorrection: outcome.user_correction === 1 };
+  if (payloadHash(normalizedOutcome) !== outcome.payload_hash
+    || !consistentPassedAttempt(db.prepare("SELECT * FROM delegation_attempts WHERE route_id=?").get(value.routeId), context, value, route)) return null;
+  return payloadHash({ qualification: value, route, outcome });
+}
+
+// An open host task can keep separate parent and child Hook snapshots across
+// an upgrade. Retain only paths actually observed by its last verified proof,
+// not every historical cache path. Readiness rechecks their current definitions.
+export function provenQualificationShellRoots(db, context) {
+  let value = readTaskQualification(db, context);
+  const seen = new Set();
+  for (let depth = 0; value && depth < 8; depth++) {
+    if (passedQualificationBasis(db, context, value)) return [...new Set(EVENTS.map((event) => value.hooks[event].shellRoot))];
+    const prior = value.passedRefresh?.priorRouteId || value.requalification?.priorRouteId;
+    if (typeof prior !== "string" || seen.has(prior)) return [];
+    seen.add(prior);
+    try { value = JSON.parse(db.prepare("SELECT value FROM meta WHERE key=?").get(`native_qualification_archive:${prior}`)?.value); }
+    catch { return []; }
+    if (value?.routeId !== prior) return [];
+  }
+  return [];
+}
+
+function passedQualificationRefresh(db, context, previous, binding) {
+  if (!validBinding(binding) || previous?.binding?.digest === binding.digest
+    || previous?.binding?.taskCwdDigest !== binding.taskCwdDigest
+    || db.prepare("SELECT 1 FROM delegation_attempts WHERE project_id=? AND context_key=? AND finalized_at IS NULL")
+      .get(context.projectId, context.contextKey)
+    || db.prepare("SELECT 1 FROM meta WHERE key=?").get(`legacy_delegation_block:${context.projectId}:${context.contextKey}`)
+    || db.prepare("SELECT 1 FROM meta WHERE key=?").get(`native_qualification_archive:${previous?.routeId}`)) return null;
+  const basisDigest = passedQualificationBasis(db, context, previous);
+  return basisDigest ? { priorRouteId: previous.routeId, basisDigest, bindingDigest: payloadHash(binding) } : null;
+}
+
+// Admission calls this inside its route/ticket transaction. Refresh authorizes
+// only a new no-tool proof; it neither copies success nor consumes failed-proof
+// recovery authority. Re-read the full retained basis before replacing anything.
+function consumePassedRefresh(db, context, next, ticketHash) {
+  const previous = readTaskQualification(db, context);
+  const refresh = passedQualificationRefresh(db, context, previous, next.binding);
+  if (!refresh || payloadHash(refresh) !== payloadHash(next.passedRefresh)
+    || next.requalification || next.state !== "pending" || next.proof !== undefined
+    || Object.keys(next.hooks).length !== 0 || next.routeId === previous.routeId
+    || next.marker === previous.marker || !digest(ticketHash) || ticketHash === previous.ticketHash) return false;
+  const retained = db.prepare("SELECT value FROM meta WHERE key=?").get(key(context));
+  db.prepare("INSERT INTO meta(key,value) VALUES(?,?)")
+    .run(`native_qualification_archive:${previous.routeId}`, retained.value);
+  write(db, context, { ...next, ticketHash });
+  return true;
 }
 
 export function observeQualificationHook(db, context, routeId, event, shellRoot) {
@@ -103,7 +205,7 @@ export function observeQualificationHook(db, context, routeId, event, shellRoot)
   if (value?.state !== "pending" || value.routeId !== routeId || !EVENTS.includes(event)) return;
   const observation = { runtimeDigest: runtimeSourceDigest(), shellRoot: payloadHash(realpathSync(shellRoot)) };
   if (observation.runtimeDigest !== value.binding.runtimeDigest || !value.binding.shellRoots.includes(observation.shellRoot)) {
-    write(db, context, { ...value, state: "failed", failure: "HOST_HOOK_SET_MISMATCH" });
+    write(db, context, { ...value, state: "failed", failure: "HOST_HOOK_SET_MISMATCH", rejectedHook: { event, ...observation } });
     return;
   }
   write(db, context, { ...value, hooks: { ...value.hooks, [event]: observation } });
@@ -160,6 +262,24 @@ function verifySnapshot({ parent, child }, attempt, value, input, store, context
   requireFact(audit.passed);
   return { ...audit, childDigest: sha(child.id), childTurnDigest: sha(child.turns[0].id),
     rootTurnDigest: sha(turn.id), toolUseDigest: sha(starts[0].id) };
+}
+
+// Operator recovery may establish only that a failed, completed qualification
+// did no work. This does not mint a passed proof or enable ordinary delegation.
+export async function auditFailedQualificationNoop(input, { store, cwd, readNative = nativeSnapshot, auditOptions } = {}) {
+  const context = store.context({ cwd, contextId: input.contextId, create: false });
+  const value = readTaskQualification(store.db, context);
+  const attempt = store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=?").get(input.routeId);
+  requireFact(value?.state === "failed" && value.proof === null && value.routeId === input.routeId);
+  requireFact(attempt?.finalized_at && attempt.ticket_consumed === 1 && attempt.post_observed === 1
+    && attempt.stop_observed === 1 && attempt.no_child === 0 && attempt.ambiguous === 0 && attempt.outcome_recorded === 1);
+  const before = payloadHash({ value, attempt });
+  const first = verifySnapshot(await readNative(input.contextId, attempt), attempt, value, input, store, context, auditOptions);
+  const second = verifySnapshot(await readNative(input.contextId, attempt), attempt, value, input, store, context, auditOptions);
+  requireFact(payloadHash(first) === payloadHash(second));
+  requireFact(before === payloadHash({ value: readTaskQualification(store.db, context),
+    attempt: store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=?").get(input.routeId) }));
+  return first;
 }
 
 // Only this source-owned verifier mints the in-process token consumed by the

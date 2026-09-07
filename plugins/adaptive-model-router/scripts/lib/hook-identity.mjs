@@ -25,6 +25,7 @@ export function resolveHookIdentity(input, { event = input?.hook_event_name } = 
   const status = contextId ? "accepted" : "missing_session_id";
   return {
     contextId,
+    turnId: nonEmptyString(input?.turn_id),
     status,
     boundedSubagent,
     audit: Object.freeze({

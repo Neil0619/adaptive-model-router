@@ -17,8 +17,8 @@ const manager = join(pluginRoot, "scripts", "manage-install.mjs");
 const runtimeVersion = JSON.parse(await readFile(join(pluginRoot, "runtime.json"), "utf8")).runtimeVersion;
 
 const FAKE_SOURCE = `
-import { chmodSync, existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { chmodSync, cpSync, existsSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 const path = process.env.FAKE_CODEX_STATE;
 const state = JSON.parse(readFileSync(path, "utf8"));
 const args = process.argv.slice(2);
@@ -63,6 +63,25 @@ if (args[0] === "app-server") {
   createInterface({input:process.stdin}).on("line", line => {
     const request = JSON.parse(line);
     if (request.id == null) return;
+    if (["config/read", "config/batchWrite"].includes(request.method)) {
+      const current = JSON.parse(readFileSync(path, "utf8"));
+      const entry = current.marketplaces.find(candidate => candidate.name === "adaptive-model-router");
+      const table = current.nativeMarketplace || {source_type: entry?.marketplaceSource?.sourceType, source: entry?.marketplaceSource?.source};
+      const version = String(current.nativeConfigVersion || 1);
+      if (request.method === "config/read") {
+        process.stdout.write(JSON.stringify({id:request.id,result:{layers:[{name:{type:"user",file:join(process.env.CODEX_HOME,"config.toml")},version,config:{marketplaces:{"adaptive-model-router":table}}}]}})+String.fromCharCode(10));
+      } else {
+        const params=request.params;
+        if(params.expectedVersion!==version) { process.stdout.write(JSON.stringify({id:request.id,error:{message:"version conflict"}})+String.fromCharCode(10)); return; }
+        current.nativeConfigWrites = [...(current.nativeConfigWrites || []),params];
+        current.nativeConfigVersion = Number(version)+1;
+        current.nativeMarketplace = params.edits[0].value;
+        entry.marketplaceSource={sourceType:current.nativeMarketplace.source_type,source:current.nativeMarketplace.source};
+        writeFileSync(path,JSON.stringify(current));
+        process.stdout.write(JSON.stringify({id:request.id,result:{status:"ok"}})+String.fromCharCode(10));
+      }
+      return;
+    }
     const result = request.method === "model/list" ? {data:[{model:"gpt-6-astra",hidden:false,supportedReasoningEfforts:["low","medium","high","xhigh","max","ultra"].map(reasoningEffort=>({reasoningEffort}))}],nextCursor:null} : {};
     process.stdout.write(JSON.stringify({id:request.id,result}) + String.fromCharCode(10));
   });
@@ -137,7 +156,15 @@ if (args[0] === "plugin" && args[1] === "marketplace" && args[2] === "add") {
     state.installed.push(entry);
   }
   const previousRoot = entry?.source?.path;
-  const installedRoot = state.nextPluginInstallRoot || entry?.source?.path || state.pluginInstallRoot;
+  let installedRoot = state.nextPluginInstallRoot || entry?.source?.path || state.pluginInstallRoot;
+  if (state.copyRegisteredSourceOnPluginAdd) {
+    const source = state.nativeMarketplace.source;
+    const catalog = JSON.parse(readFileSync(join(source,".agents","plugins","marketplace.json"),"utf8"));
+    const sourcePlugin = join(source,catalog.plugins[0].source.path);
+    const version = JSON.parse(readFileSync(join(sourcePlugin,"runtime.json"),"utf8")).runtimeVersion;
+    installedRoot=join(dirname(installedRoot),version);
+    cpSync(sourcePlugin,installedRoot,{recursive:true});
+  }
   if (installedRoot) entry.source={source:"local",path:installedRoot};
   state.pluginInstallRoot = installedRoot;
   if (state.removePreviousOnPluginAdd && previousRoot && previousRoot !== installedRoot) {
@@ -247,7 +274,7 @@ function managerEnvironment(project, fake, {
 
 function runManager(project, fake, args = [], options = {}) {
   const { codexHome, env } = managerEnvironment(project, fake, options);
-  const result = spawnSync(process.execPath, [manager, ...args], {
+  const result = spawnSync(process.execPath, [options.managerPath || manager, ...args], {
     encoding: "utf8",
     env,
   });
@@ -564,7 +591,7 @@ test("install, upgrade, optional AGENTS patch, and uninstall are idempotent in a
     const installed = runManager(project, fake, ["install", "--non-interactive"]);
     assert.equal(installed.status, 0, installed.stderr);
     assert.match(installed.stdout, /frozen.*stdio bridge/i);
-    assert.match(installed.stdout, /Compatible v0\.4\.x\+ runtime-only updates/);
+    assert.match(installed.stdout, /Installation probes do not certify the existing task's Hook dispatch or delegation/);
     assert.match(installed.stdout, /upgrades preserve this setting/);
     assert.match(installed.stdout, /Migrated deprecated features\.codex_hooks/);
     assert.equal(
@@ -2199,6 +2226,123 @@ test("AGENTS patch and uninstall preserve the original content exactly", async (
   } finally {
     await project.cleanup();
   }
+});
+
+test("managed marketplace rebuilds a deleted cache from its registered source and refreshes from later installer source", async () => {
+  const project = await temporaryProject("adaptive managed source reconstruction ");
+  try {
+    const sourceRepository = join(project.root, "reviewed repository");
+    const sourcePlugin = join(sourceRepository, "plugins", "adaptive-model-router");
+    await cp(pluginRoot, sourcePlugin, { recursive: true });
+    const fake = await fakeCodex(project, { marketplaces: [{ name: "adaptive-model-router",
+      marketplaceSource: { sourceType: "local", source: sourceRepository } }],
+      installed: [{ pluginId: "adaptive-model-router@adaptive-model-router", name: "adaptive-model-router", marketplaceName: "adaptive-model-router" }] });
+    const initial = await state(fake);
+    const cache = initial.pluginInstallRoot;
+    // A second, valid Node pathname must remain trusted even if the installer
+    // itself uses a different executable. Hard links avoid symlink dependencies.
+    const preservedNode = join(project.root, "older Node runtime", process.platform === "win32" ? "node.exe" : "node");
+    await mkdir(dirname(preservedNode));
+    const { link } = await import("node:fs/promises");
+    try { await link(process.execPath, preservedNode); }
+    catch (error) {
+      if (!["EXDEV", "EPERM", "EACCES"].includes(error.code)) throw error;
+      await cp(process.execPath, preservedNode);
+    }
+    const mcpPath = join(cache, ".mcp.json");
+    const mcp = JSON.parse(await readFile(mcpPath, "utf8"));
+    mcp.mcpServers["adaptive-model-router"].command = preservedNode;
+    await writeFile(mcpPath, JSON.stringify(mcp, null, 4) + "\n");
+    const hookPath = join(cache, "hooks", "hooks.json");
+    const hooks = JSON.parse(await readFile(hookPath, "utf8"));
+    for (const groups of Object.values(hooks.hooks)) for (const group of groups) for (const handler of group.hooks) {
+      const field = process.platform === "win32" ? "commandWindows" : "command";
+      handler[field] = `"${preservedNode}"${handler[field].slice(4)}`;
+    }
+    const trustedHooks = JSON.stringify(hooks, null, 4) + "\n";
+    await writeFile(hookPath, trustedHooks);
+    const managerPath = join(sourcePlugin, "scripts", "manage-install.mjs");
+    const first = runManager(project, fake, ["repair", "--pin-local-marketplace", "--non-interactive"], { managerPath });
+    assert.equal(first.status, 0, first.stderr);
+    const registered = (await state(fake)).nativeMarketplace.source;
+    assert.equal(await readFile(join(registered, "plugins", "adaptive-model-router", "hooks", "hooks.json"), "utf8"), trustedHooks);
+    const catalog = JSON.parse(await readFile(join(registered, ".agents", "plugins", "marketplace.json"), "utf8"));
+    const registeredPlugin = join(registered, catalog.plugins[0].source.path);
+
+    // Reconstruct the entire cache using only the actual registered marketplace
+    // manifest, with no cache patch/materializer step after the copy.
+    await rm(cache, { recursive: true });
+    await cp(registeredPlugin, cache, { recursive: true });
+    const launchEnv = { ...managerEnvironment(project, fake).env, PATH: "", PLUGIN_ROOT: cache,
+      PLUGIN_DATA: project.home, ADAPTIVE_ROUTER_HOME: project.home, ADAPTIVE_ROUTER_LOCAL_ONLY: "1" };
+    delete launchEnv.ADAPTIVE_ROUTER_DESKTOP_OVERRIDE_DIR;
+    await rm(join(project.root, "Desktop runtime"), { recursive: true, force: true });
+    const command = hooks.hooks.UserPromptSubmit[0].hooks[0][process.platform === "win32" ? "commandWindows" : "command"];
+    const hook = process.platform === "win32"
+      ? spawnSync(join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe"), ["/d", "/s", "/c", `"${command}"`],
+        { cwd: cache, encoding: "utf8", env: launchEnv, windowsVerbatimArguments: true,
+          input: JSON.stringify({ cwd: cache, session_id: "reconstructed", prompt: "router: global on", model: "gpt-6-astra" }) })
+      : spawnSync("/bin/sh", ["-c", command], { cwd: cache, encoding: "utf8", env: launchEnv,
+        input: JSON.stringify({ cwd: cache, session_id: "reconstructed", prompt: "router: global on", model: "gpt-6-astra" }) });
+    assert.equal(hook.status, 0, hook.stderr);
+    assert.match(JSON.parse(hook.stdout).hookSpecificOutput.additionalContext, /already been applied atomically/u);
+    const rebuiltMcp = JSON.parse(await readFile(join(cache, ".mcp.json"), "utf8")).mcpServers["adaptive-model-router"];
+    assert.equal(rebuiltMcp.command, preservedNode);
+    const requests = [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "reconstructed", version: "1" } } },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "diagnose_router", arguments: { contextId: "reconstructed" } } },
+    ];
+    const probe = spawnSync(rebuiltMcp.command, rebuiltMcp.args, { cwd: cache, encoding: "utf8", env: launchEnv,
+      input: requests.map(value => JSON.stringify(value)).join("\n") + "\n" });
+    assert.equal(probe.status, 0, probe.stderr);
+    const diagnosis = probe.stdout.trim().split("\n").map(value => JSON.parse(value)).find(value => value.id === 2).result;
+    assert.equal(diagnosis.isError, false);
+    assert.equal(diagnosis.structuredContent.databaseHealth, "ok");
+    assert.equal(diagnosis.structuredContent.runtime.runtimeVersion, runtimeVersion);
+
+    await writeFile(join(sourcePlugin, "reviewed-source-marker.txt"), "later repair source\n");
+    const repaired = runManager(project, fake, ["repair", "--non-interactive"], { managerPath });
+    assert.equal(repaired.status, 0, repaired.stderr);
+    const refreshed = (await state(fake)).nativeMarketplace.source;
+    assert.notEqual(refreshed, registered);
+    assert.equal(await readFile(join(refreshed, "plugins", "adaptive-model-router", "reviewed-source-marker.txt"), "utf8"), "later repair source\n");
+    await assert.rejects(access(join(registeredPlugin, "reviewed-source-marker.txt")), { code: "ENOENT" });
+    const nextVersion = "0.4.0+codex.20990101000000";
+    for (const [relative, key] of [["runtime.json", "runtimeVersion"], [".codex-plugin/plugin.json", "version"]]) {
+      const path = join(sourcePlugin, relative);
+      const document = JSON.parse(await readFile(path, "utf8"));
+      document[key] = nextVersion;
+      await writeFile(path, JSON.stringify(document));
+    }
+    const upgraded = runManager(project, fake, ["upgrade", "--non-interactive"], { managerPath });
+    assert.equal(upgraded.status, 0, upgraded.stderr);
+    const final = await state(fake);
+    assert.notEqual(final.nativeMarketplace.source, refreshed);
+    const finalPlugin = join(final.nativeMarketplace.source, "plugins", "adaptive-model-router");
+    assert.equal(JSON.parse(await readFile(join(finalPlugin, "runtime.json"), "utf8")).runtimeVersion, nextVersion);
+    assert.equal(await readFile(join(finalPlugin, "hooks", "hooks.json"), "utf8"), trustedHooks);
+    assert.equal(await readFile(join(cache, "..", nextVersion, "hooks", "hooks.json"), "utf8"), trustedHooks);
+    assert.deepEqual(final.mutations, []);
+    assert.equal(final.nativeConfigWrites.length, 3);
+    // A retained managed marketplace can also bootstrap a removed plugin from
+    // a newer executing source; it must refresh before the native cold add.
+    final.installed = [];
+    final.copyRegisteredSourceOnPluginAdd = true;
+    await writeFile(fake.statePath, JSON.stringify(final));
+    const coldVersion = "0.4.0+codex.20990102000000";
+    for (const [relative, key] of [["runtime.json", "runtimeVersion"], [".codex-plugin/plugin.json", "version"]]) {
+      const path = join(sourcePlugin, relative);
+      const document = JSON.parse(await readFile(path, "utf8"));
+      document[key] = coldVersion;
+      await writeFile(path, JSON.stringify(document));
+    }
+    const cold = runManager(project, fake, ["install", "--non-interactive"], { managerPath });
+    assert.equal(cold.status, 0, cold.stderr);
+    const coldState = await state(fake);
+    assert.equal(coldState.nativeConfigWrites.length, 4);
+    assert.equal(JSON.parse(await readFile(join(coldState.pluginInstallRoot, "runtime.json"), "utf8")).runtimeVersion, coldVersion);
+    assert.deepEqual(coldState.mutations, [["plugin", "add", "adaptive-model-router@adaptive-model-router"]]);
+  } finally { await project.cleanup(); }
 });
 
 test("upgrade accepts the current Codex marketplace shape using install metadata for the stable ref", async () => {
