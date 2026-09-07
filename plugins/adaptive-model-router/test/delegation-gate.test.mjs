@@ -856,13 +856,18 @@ test("Agent hooks validate and consume Router tickets without rewriting encrypte
       reasoning_effort: delegated.target.effort,
       fork_turns: "none",
     };
+    const wrongContextId = `${contextId}-rejected-profile`;
+    const wrongRoute = await withRouterEnvironment(project, () => routeStage(routeInput({ contextId: wrongContextId }), {
+      cwd: project.root, catalog: CATALOG, diskProbe: ampleDisk,
+    }));
+    assert.equal(wrongRoute.action, "delegate");
     const wrongTarget = runHook("pre-tool-use", {
       cwd: project.root,
-      session_id: contextId,
+      session_id: wrongContextId,
       turn_id: "turn-wrong-target",
       tool_use_id: "tool-wrong-target",
       tool_name: "Agent",
-      tool_input: { ...toolInput, model: "gpt-5.6-luna", reasoning_effort: "low" },
+      tool_input: { ...toolInput, task_name: wrongRoute.carrier.taskName, model: "gpt-5.6-luna", reasoning_effort: "low" },
     }, project.home);
     assert.equal(wrongTarget.status, 0);
     assert.deepEqual(JSON.parse(wrongTarget.stdout).hookSpecificOutput, {

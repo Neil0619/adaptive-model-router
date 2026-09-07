@@ -14,12 +14,14 @@ import { RouterStore } from "../scripts/lib/database.mjs";
 import { payloadHash } from "../scripts/lib/io.mjs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
 import { recordHookIdentityDiagnostic } from "../scripts/lib/hook-diagnostics.mjs";
+import { resolveHookIdentity } from "../scripts/lib/hook-identity.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const nativeTurn = "native-readiness-turn";
 function observeCurrentHook(contextId, turnId = nativeTurn) {
-  recordHookIdentityDiagnostic({ identityStatus: "accepted", eventName: "UserPromptSubmit" }, "injected", process.env, { contextId, turnId });
+  const identity = resolveHookIdentity({ hook_event_name: "UserPromptSubmit", session_id: contextId, turn_id: turnId });
+  recordHookIdentityDiagnostic(identity.audit, "context_emitted", process.env, identity);
 }
 function nativeRead(method, contextId, cwd) {
   return method === "thread/turns/list" ? { data: [{ id: nativeTurn }] } : { thread: { id: contextId, cwd } };
@@ -351,6 +353,8 @@ test("a trusted fresh inventory cannot allocate a ticket when this native turn h
         assert.deepEqual(route.reasonCodes, ["HOST_HOOK_DISPATCH_NOT_OBSERVED"]);
         assert.equal(store.db.prepare("SELECT count(*) AS n FROM delegation_attempts").get().n, 0);
         observeCurrentHook(contextId);
+        const compact = resolveHookIdentity({ hook_event_name: "SessionStart", source: "compact", session_id: contextId });
+        recordHookIdentityDiagnostic(compact.audit, "injected_after_compaction", process.env, compact);
         const live = await inspectLifecycleHookReadiness(options);
         assert.equal(live.ready, false);
         assert.ok(live.qualificationBinding);

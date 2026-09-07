@@ -112,7 +112,7 @@ export function createDelegationTicket() {
       type: CARRIER_TYPE,
       taskName,
       message: ROUTER_ACTIVATION_MESSAGE,
-      instruction: "Call the direct native spawn_agent tool with taskName as task_name, message as message, and fork_turns=none. Never route this carrier through functions.exec or a code-mode nested tool. Trusted hooks validate the task name and inject bounded context only into that child.",
+      instruction: "Call direct native spawn_agent once: carrier.taskName as task_name, carrier.message as message, fork_turns=none, target.model as model, target.effort as reasoning_effort. Never omit a parameter or use functions.exec/nested tools. Trusted hooks inject bounded context into that child.",
     },
   };
 }
@@ -314,6 +314,11 @@ export function consumeDelegationTicket(db, context, {
       return { allowed: false, reason: "Router-marked Agent call is missing trusted hook correlation fields." };
     }
     if (toolInput.model !== row.model || toolInput.reasoning_effort !== row.effort) {
+      // This exact admission was presented to the trusted launch boundary and
+      // rejected. It must not later be reused by Stop-driven or manual retries.
+      // Keep its reservation until the native host's refusal is audited; this
+      // flag is not a no-child proof, dispatch handshake, or terminal outcome.
+      markPredispatchReconciliation(db, context, row.route_id);
       return { allowed: false, reason: "Router-marked Agent model or reasoning effort does not match the admitted route." };
     }
     if (typeof toolInput.message !== "string" || !toolInput.message) {
@@ -327,7 +332,7 @@ export function consumeDelegationTicket(db, context, {
       UPDATE delegation_attempts
       SET ticket_consumed = 1, root_turn_id = ?, tool_use_id = ?,
           dispatch_input_digest = ?, updated_at = ?
-      WHERE route_id = ? AND ticket_consumed = 0 AND finalized_at IS NULL
+      WHERE route_id = ? AND ticket_consumed = 0 AND ambiguous = 0 AND finalized_at IS NULL
     `).run(turnId, toolUseId, payloadHash(toolInput), timestamp, row.route_id);
     if (Number(changed.changes) !== 1) {
       return { allowed: false, reason: "Router delegation ticket could not be consumed atomically." };

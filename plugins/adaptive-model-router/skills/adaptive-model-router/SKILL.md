@@ -177,7 +177,10 @@ stage-local suppression does not change the global or session Router setting.
    and is not a successful verification. Consumed or ambiguous attempts remain
    fail-closed. The root `Stop` hook never fabricates an `unknown` outcome.
 
-Map the router's `target.effort` value to the current Codex subagent `reasoning_effort` parameter. Do not submit an `effort` parameter to a host that does not define one, and do not invent `agentType`, `agent_type`, or other unsupported parameters.
+Before dispatch, check all five host parameters: `task_name = carrier.taskName`,
+`message = carrier.message`, `fork_turns = "none"`, `model = target.model`, and
+`reasoning_effort = target.effort`. None may be omitted, including when the
+selected model happens to match the root model. Map the router's `target.effort` value to the current Codex subagent `reasoning_effort` parameter. Do not submit an `effort` parameter to a host that does not define one, and do not invent `agentType`, `agent_type`, or other unsupported parameters.
 
 ## Failures and escalation
 
@@ -203,6 +206,35 @@ outcome merely to release the gate, and do not call `route_stage` again into a
 known `busy` gate. Continue root-only and report the concrete Router/host
 failure. A route decision or generic tool error is not proof that no subagent
 started.
+
+For an ordinary launch explicitly blocked by `PreToolUse` because the model or
+reasoning effort did not match the route, use the installed native recovery
+command from the task's project directory. Resolve its current local
+`source.path` from `codex plugin list --json` for
+`adaptive-model-router@adaptive-model-router`; verify that directory's manifest
+version matches `diagnose_router.runtime.activeVersion`. Read its `.mcp.json`
+for the exact Node command. A long-lived skill may reside in an older cache;
+do not run that older immutable recovery script. If the active source cannot
+be verified, retain the gate and report the concrete resolution failure.
+First inspect with
+`<exact-node-command> <active-source-root>/scripts/reconcile-delegation.mjs --context <hook-injected-contextId> --route <exact-routeId>`.
+Only if it returns `status: "recoverable"` and
+`recoveryKind: "rejected_before_dispatch"`, apply the same command with
+`--apply --expect-digest <returned-evidenceDigest>`, then inspect Router status
+to confirm release. Resolving this Router failure is part of the already
+authorized task; do not ask for another approval for this bounded recovery.
+The command independently reads and checks the native parent transcript twice,
+correlates the exact call and host rejection, rejects replays or child activity,
+and revalidates the unchanged reservation before applying the receipt.
+It currently supports the audited Desktop `0.153.4` profile-mismatch format and
+ordinary routes only. Qualification failures and every unsupported or
+unproven result retain their existing recovery boundaries.
+Never reuse the rejected ticket or call `record_outcome` for it. After a
+verified release, a fresh route may cover still-needed work; if the root already
+finished that stage, proceed to its next meaningful stage. If recovery cannot
+establish closure, continue root-only and explicitly report the occupied gate
+and retained reservation. Root-only continuation does not release resources
+or prove that the originally planned independent review ran.
 
 Root, delegate and classifier capabilities are independent and all Router calls
 intersect the active model policy's exact allowed scope. Only direct

@@ -1363,7 +1363,7 @@ export class RouterStore {
           return {
             action: "block",
             routeId: attempt.route_id,
-            reason: `Adaptive Router route ${attempt.route_id} has an ambiguous launch lifecycle. Do not create a replacement child or record an outcome; keep the delegation gate occupied for reconciliation.`,
+            reason: `Adaptive Router route ${attempt.route_id} requires native recovery after a rejected or ambiguous launch. Do not reuse its ticket, create a replacement child, or record an outcome. Follow the skill's native recovery inspection and apply only a verified, authorized recovery digest; otherwise retain the delegation gate and report the blocker.`,
             recordedUnknown: 0,
             gateRetained: true,
           };

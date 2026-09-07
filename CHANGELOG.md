@@ -24,6 +24,19 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Include all five required host parameters in automatic delegation guidance.
+  A separately audited Desktop `0.153.4` recovery path closes ordinary launches
+  rejected for a profile mismatch before dispatch, preserving the failure and
+  missing lifecycle fields while releasing the unused storage reservation.
+  The refusal prevents ticket reuse, and Stop directs recovery instead of
+  demanding another launch of the rejected ticket. Qualification carriers
+  retain the complete parameter mapping, and missing or malformed qualification
+  metadata cannot enter the ordinary recovery path.
+- Keep exact-turn Hook receipts separate from the latest task diagnostic, so a
+  turnless compaction Hook cannot erase the current turn's observed dispatch.
+  Other tasks and unobserved turns still cannot establish readiness.
+  Both receipt indexes validate the full audit schema; partial, contradictory,
+  unknown-event and bounded-child records cannot establish root-turn readiness.
 - Preserve the activated repair through host cache rebuilds by resolving the
   indexed runtime vault and registering a managed marketplace source that
   retains the exact trusted Hook and MCP launch commands.

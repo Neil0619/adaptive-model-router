@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { AppServerClient } from "./app-server.mjs";
 import { parseCarrierTaskName } from "./delegation-gate.mjs";
-import { canonicalJson, payloadHash } from "./io.mjs";
+import { canonicalJson, parseJson, payloadHash } from "./io.mjs";
 import { auditNativeRecoveryTranscript, auditNativeLifecycle1533Transcript,
   readNativeRecoveryTranscript, RECOVERY_AUDIT_ADAPTER, LIFECYCLE_AUDIT_ADAPTER,
   LIFECYCLE_1533_AUDIT_ADAPTER, LIFECYCLE_1534_AUDIT_ADAPTER } from "./native-recovery-audit.mjs";
@@ -12,6 +12,7 @@ import { QUALIFICATION_RECOVERY_SCHEMA, failedQualificationRecoverySubject, audi
 import { readTaskQualification } from "./lifecycle-qualification.mjs";
 import { qualificationTargetMatches } from "./qualification-policy.mjs";
 import { auditNativeUnconsumed1534Transcript, isMetadataRecoveryAudit } from "./native-metadata-recovery-audit.mjs";
+import { inspectNativePredispatchRejection, isPredispatchRecoveryReceipt } from "./native-predispatch-audit.mjs";
 
 const PREFIX = "native_recovery:";
 const SCHEMA = "native-thread-delegation-recovery/2";
@@ -33,6 +34,7 @@ export function readNativeRecoveryReceipt(db, context, routeId) {
   if (!row) return null;
   try {
     const receipt = JSON.parse(row.value);
+    if (isPredispatchRecoveryReceipt(receipt, context, routeId)) return receipt;
     const supported = receipt.schemaVersion === SCHEMA
       ? Object.hasOwn(UNCONSUMED_AUDITORS, receipt.cliVersion)
         && (receipt.rawAuditAdapter === UNCONSUMED_AUDITORS[receipt.cliVersion].adapter || isMetadataRecoveryAudit(receipt))
@@ -171,16 +173,25 @@ function eligible(attempt) {
 function recoverySubject(store, context, attempt, cwd) {
   if (eligible(attempt)) {
     const qualification = readTaskQualification(store.db, context);
-    if (qualification?.routeId === attempt.route_id) {
-      const route = store.db.prepare("SELECT * FROM routes WHERE route_id=?").get(attempt.route_id);
-      if (qualification.state !== "pending" || qualification.proof !== undefined
+    const route = store.db.prepare("SELECT * FROM routes WHERE route_id=? AND project_id=? AND context_key=?")
+      .get(attempt.route_id, context.projectId, context.contextKey);
+    const reasons = parseJson(route?.reason_codes_json, null);
+    if (route?.action !== "delegate" || route.model !== attempt.model || route.effort !== attempt.effort
+      || !Array.isArray(reasons) || reasons.length === 0 || !reasons.every(present)
+      || qualification?.state === "invalid") return null;
+    // The immutable route class owns this boundary. Missing or malformed
+    // qualification metadata cannot turn a self-test into ordinary work.
+    const isQualification = reasons.includes("HOST_LIFECYCLE_QUALIFICATION");
+    if (isQualification || qualification?.routeId === attempt.route_id) {
+      if (!isQualification || qualification?.routeId !== attempt.route_id
+        || qualification.state !== "pending" || qualification.proof !== undefined
         || qualification.ticketHash !== attempt.ticket_hash || !qualificationTargetMatches(store.db, qualification, route)) return null;
-      return { schemaVersion: SCHEMA, stateDigest: payloadHash({ attempt, qualification }),
+      return { schemaVersion: SCHEMA, stateDigest: payloadHash({ attempt, qualification, route }),
         cliVersion: qualification.binding.cliVersion,
         receiptFields: { recoveryKind: "unconsumed_qualification", qualificationDigest: payloadHash(qualification),
           qualificationState: "pending", ordinaryDelegationEnabled: false, originalDispatchConsumed: false } };
     }
-    return { schemaVersion: SCHEMA, stateDigest: payloadHash(attempt), receiptFields: {} };
+    return { schemaVersion: SCHEMA, stateDigest: payloadHash({ attempt, qualification, route }), receiptFields: {} };
   }
   return failedQualificationRecoverySubject(store.db, context, attempt, cwd);
 }
@@ -219,6 +230,7 @@ function finishRecovery(store, context, input, stateDigest, receipt, cwd) {
 export async function recoverDelegation(input, {
   store, cwd, readThread = null, measureTranscript = measureNativeTranscript,
   readTranscript = readNativeRecoveryTranscript,
+  readParentTranscript,
 } = {}) {
   if (!present(input?.contextId) || !present(input.routeId)
     || (input.apply !== undefined && typeof input.apply !== "boolean")
@@ -249,6 +261,29 @@ export async function recoverDelegation(input, {
   });
   try {
     const parent = await read(input.contextId);
+    // A separate, exact native adapter covers ordinary launches rejected by
+    // PreToolUse before dispatch. Qualification recovery keeps its own proof
+    // and retry contracts; generic errors never enter this branch.
+    if (subject.schemaVersion === SCHEMA && subject.receiptFields.recoveryKind === undefined) {
+      let denial = null;
+      try {
+        denial = await inspectNativePredispatchRejection({ parent, read, attempt,
+          contextId: input.contextId, cwd, readParentTranscript });
+      } catch { /* Existing child recovery remains available for its own case. */ }
+      if (denial) {
+        const subjectDigest = payloadHash([context.projectId, context.contextKey, input.routeId]);
+        const evidenceDigest = payloadHash({ subjectDigest, attemptDigest, projection: denial.projection });
+        if (input.apply !== true) return { status: "recoverable", evidenceDigest, gateReleased: false,
+          disposition: "reconciled_failure", failureType: "tooling", transcriptBytes: 0,
+          recoveryKind: "rejected_before_dispatch" };
+        if (input.expectedEvidenceDigest !== evidenceDigest) return unresolved("RECOVERY_EVIDENCE_CHANGED");
+        return finishRecovery(store, context, input, attemptDigest, {
+          ...denial.projection, subjectDigest, evidenceDigest, sourceBytes: denial.sourceBytes,
+          sourceDigest: denial.sourceDigest, status: "reconciled_failure", failureType: "tooling",
+          source: "native_thread_read", originalHandshakeProven: false, transcriptBytes: 0,
+        }, cwd);
+      }
+    }
     const binding = launchBinding(parent, attempt, input, cwd, subject);
     const child = await read(binding.start.agentThreadId);
     const projection = closedChild(child, binding, attempt, input, cwd, subject);

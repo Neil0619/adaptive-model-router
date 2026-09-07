@@ -12,6 +12,7 @@ import { payloadHash } from "../scripts/lib/io.mjs";
 import { lifecycleBinding, observeQualificationHook, provenQualificationShellRoots, readTaskQualification, qualificationReadiness, reserveTaskQualification, runtimeSourceDigest } from "../scripts/lib/lifecycle-qualification.mjs";
 import { inspectLifecycleHookReadiness } from "../scripts/lib/hook-readiness.mjs";
 import { authorizeRequalification } from "../scripts/lib/qualification-retry.mjs";
+import { resolveHookIdentity } from "../scripts/lib/hook-identity.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -57,6 +58,11 @@ test("first eligible stage issues only a fixed no-tool qualification, without th
     assert.deepEqual(route.reasonCodes, ["HOST_LIFECYCLE_QUALIFICATION"]);
     assert.deepEqual(route.target, { model: "gpt-6-astra", effort: "low" });
     assert.equal(route.verificationGate, "structured-check");
+    for (const field of ["task_name", "message", "fork_turns", "model", "reasoning_effort"]) {
+      assert.match(route.carrier.instruction, new RegExp(`\\b${field}\\b`));
+    }
+    assert.match(route.carrier.instruction, /target\.model.*model/);
+    assert.match(route.carrier.instruction, /target\.effort.*reasoning_effort/);
     const toolInput = { task_name: route.carrier.taskName, message: route.carrier.message,
       model: route.target.model, reasoning_effort: route.target.effort, fork_turns: "none" };
     const consumed = store.transaction(() => consumeDelegationTicket(store.db, context, {
@@ -450,8 +456,9 @@ test("source verification accepts a cache-cwd MCP only for its native bound task
 test("hot upgrade retains the separately observed child Hook shell and requires its equivalent definition", async () => {
   await fixture(async (f) => {
     const { recordHookIdentityDiagnostic } = await import("../scripts/lib/hook-diagnostics.mjs");
-    recordHookIdentityDiagnostic({ identityStatus: "accepted", eventName: "UserPromptSubmit" }, "injected", process.env,
-      { contextId: f.input.contextId, turnId: "current-native-turn" });
+    const identity = resolveHookIdentity({ hook_event_name: "UserPromptSubmit",
+      session_id: f.input.contextId, turn_id: "current-native-turn" });
+    recordHookIdentityDiagnostic(identity.audit, "context_emitted", process.env, identity);
     const parentRoot = resolve(realpathSync(f.project.root), "cache", "parent-shell");
     const childRoot = resolve(realpathSync(f.project.root), "cache", "child-shell");
     const configuredRoot = resolve(realpathSync(f.project.root), "cache", "configured-shell");

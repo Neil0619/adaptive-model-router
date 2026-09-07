@@ -231,6 +231,13 @@ plugin Hooks. It never accepts Hook trust automatically.
   not ask for trust again when the seven exact definitions are already trusted,
   and do not allocate another qualification until the affected turn has a real
   receipt. This failure creates no ticket or reservation.
+  Exact-turn receipts are retained separately from the latest task diagnostic:
+  `SessionStart(source=compact)` may omit `turn_id`, so it must not overwrite
+  the current turn's proof or infer a new turn. Previously erased proof requires
+  another real native prompt/Hook dispatch; it is never reconstructed by hand.
+  Both the new turn index and legacy fallback require a complete, consistent
+  audit schema. A matching turn digest alone is insufficient, and a malformed
+  new index cannot fall back to an older record.
 - `HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN`: the trusted inventory does not have a
   source-owned native proof that the exact host Agent path dispatches the
   complete lifecycle. Continue in the root task; trust alone is not a fix.
@@ -254,6 +261,50 @@ cache advances. Ordinary work stays disabled until the new native round trip
 passes. Failed, pending, invalid, and ambiguous attempts do
 not receive automatic replacements. If a gate remains occupied, preserve the
 evidence and follow the existing reconciliation rules.
+
+### Recover an ordinary launch rejected before dispatch
+
+Every routed `spawn_agent` call must explicitly pass `task_name`, `message`,
+`fork_turns: "none"`, `model: target.model`, and
+`reasoning_effort: target.effort`. The root model and its selected effort are
+not substitutes for those host parameters. The automatic Hook context repeats
+the complete mapping so a resumed turn does not depend on recalling the skill.
+
+A profile mismatch is correctly denied by `PreToolUse` and marks the attempt
+as requiring reconciliation, preventing reuse even with corrected parameters.
+Stop directs native recovery instead of demanding the same launch again.
+That refusal does not consume the ticket, record an outcome, or by itself release the reservation.
+Continuing in the root leaves the task gate occupied and can also exhaust the
+host-wide reservation budget. Do not call the failure harmless or retry the
+same ticket.
+
+Resolve the current Router local `source.path` from `codex plugin list --json`
+and verify its manifest version against the diagnosed active runtime. This
+avoids invoking an older immutable CLI from a long-lived skill's cache path.
+From the affected project's working directory, inspect the exact attempt with
+that source's `scripts/reconcile-delegation.mjs --context <task-id> --route <route-id>`.
+The separate `native-thread-predispatch-rejection-recovery/1` adapter accepts
+only the reviewed Desktop `0.153.4` ordinary profile-mismatch refusal. It reads
+the native parent source and full task projection twice, binds one direct call
+to its exact host-authored rejection, and rejects duplicate calls, child
+activity, unsupported records/builds, truncated source and changed state.
+An assistant's explanation or a generic tool error cannot authorize release.
+
+When inspection returns `recoverable` with `recoveryKind: rejected_before_dispatch`,
+preserve a database backup and apply that exact fresh digest using
+`--apply --expect-digest <digest>`. Recovery of this bounded Router failure is
+within an already-authorized task or repair; do not ask for approval again.
+The transaction revokes only that ticket, retains a distinct failure receipt,
+and releases its unused reservation. Missing lifecycle fields stay missing;
+no outcome or successful review is invented. Parent-source bytes are audit
+evidence, not child storage usage. Unrelated progress by the parent may continue
+between inspect and apply, while new conflicting launch evidence blocks it.
+Check Router status after applying. A still-needed review requires a fresh
+route; a completed stage does not need to be repeated merely to fill a record.
+Qualification failures retain the separate procedures below.
+The persisted route class also guards this boundary: missing, invalid, or
+mismatched qualification metadata cannot make a self-test eligible for ordinary
+recovery. The final transaction rechecks that route and qualification state.
 
 ### Inspect a failed qualification without resetting it
 

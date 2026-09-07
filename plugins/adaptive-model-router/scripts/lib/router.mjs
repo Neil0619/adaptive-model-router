@@ -456,7 +456,7 @@ async function routeWithStore(input, options, store) {
       }
     }
     const ticket = createDelegationTicket();
-    if (qualification) ticket.carrier.instruction = "Native lifecycle self-test only: launch this fixed carrier once, verify the no-tool child, then record one outcome. The server independently audits the complete native transcript. Only after success, route the original stage again. Never retry a failed self-test.";
+    if (qualification) ticket.carrier.instruction = `Qualification only: no-tool child, then verify and record one outcome. Server audits its full native transcript. Route the original stage only after success; never retry this self-test. ${ticket.carrier.instruction}`;
     const committed = store.commitRoute(context, route, qualification ? null : resolved.onceId, {
       ticket,
       contextPackage,
