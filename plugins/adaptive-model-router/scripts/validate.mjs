@@ -185,9 +185,15 @@ assert(releaseChecklist.includes("smoke-contract: windows-artifact-authoritative
 assert(smokeEvidenceReadme.includes("smoke-contract: hook-trust-only-human-v1 selector-optional-v1"), "evidence contract must isolate Hook trust from optional selector evidence");
 assert(macosSmoke.includes("smoke-contract: post-trust-agent-owned-v1 selector-optional-v1"), "macOS smoke must use the same post-trust and selector semantics");
 assert(!macosSmoke.includes("human-only witness report"), "macOS smoke must not require a human selector report");
-assert(windowsSmokeRunner.includes("HOST_MODEL_INTENT_OFFLINE_ONLY"), "single-model smoke must label offline slug coverage");
-assert(windowsSmokeRunner.includes("test/host-model.test.mjs"), "single-model smoke must exercise offline host-model intent");
-assert(!/-Model ['"]gpt-5/.test(windowsSmokeRunner), "Windows smoke cannot invoke a legacy root model");
+assert(!windowsSmokeRunner.includes("HOST_MODEL_INTENT_OFFLINE_ONLY"), "blocking Windows host-model intent coverage must run on the native host");
+assert(windowsSmokeRunner.includes("Invoke-HostModelIntentSmoke"), "Windows smoke must exercise native root-model transitions");
+assert(windowsSmokeRunner.includes("smoke-host-model-target.mjs"), "native root-model overrides must come from the live host catalog");
+assert(windowsSmokeRunner.includes("Read-NativeRootBinding"), "Windows smoke must compare the native model and effort with trusted Hook observations");
+assert(windowsSmokeRunner.includes("HOST_MODEL_INTENT_PENDING") && windowsSmokeRunner.includes("MANUAL_ROOT_SELECTED"), "Windows smoke must enforce pending and manual-root delegation boundaries");
+assert(windowsSmokeRunner.includes("resolve_host_model_intent") && windowsSmokeRunner.includes("keep_automatic"), "Windows smoke must verify explicit host-model intent resolution");
+assert(windowsSmokeRunner.includes("native root-model cleanup did not restore the initial settled state"), "Windows smoke must restore both native model and effort after failure");
+assert(windowsSmokeRunner.includes("stop-windows-smoke-router-processes.ps1"), "Windows plugin lifecycle must stop only Router processes in the dedicated cache");
+assert(!/-Model ['"]gpt-5/.test(windowsSmokeRunner), "Windows smoke must not hardcode a secondary native root model");
 assert(windowsSmokeRunner.includes("[string]$finalStatus.rootTask.model -ne $InitialRootModel"), "Windows smoke runner must verify initial-model restoration");
 assert(!windowsSmokeRunner.includes("--dangerously-bypass-hook-trust"), "Windows smoke runner must not bypass Hook trust");
 assert(windowsSmokeRunner.includes("invoke-command-shim.ps1"), "Windows smoke runner must use the command-shim adapter");
@@ -246,6 +252,10 @@ assert(!packageJson.dependencies && !packageJson.devDependencies, "runtime must 
 assert(!Object.hasOwn(manifest, "hooks"), "default hooks/hooks.json discovery should not be duplicated in the manifest");
 assert(manifest.mcpServers === "./.mcp.json", "manifest must reference the root MCP configuration");
 const routerMcp = mcpConfig.mcpServers?.["adaptive-model-router"];
+assert(
+  ["CODEX_HOME", "CODEX_BIN"].every((name) => routerMcp?.env_vars?.includes(name)),
+  "MCP must forward the selected Codex Home and executable for native task and Hook inspection",
+);
 assert(routerMcp?.command === "node", "MCP must use the Node command resolved by Codex");
 assert(routerMcp.cwd === ".", "MCP cwd must resolve from the plugin root");
 assert(routerMcp.args?.[0] === "./scripts/node-launcher.mjs", "MCP must use the relative runtime launcher");

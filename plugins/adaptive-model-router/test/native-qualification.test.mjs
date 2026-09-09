@@ -41,6 +41,7 @@ async function fixture(run) {
       const context = store.context({ cwd: project.root, contextId: input.contextId });
       store.observeHostModel(context, "gpt-5.6-sol");
       const binding = { digest: "a".repeat(64), runtimeDigest: runtimeSourceDigest(),
+        configurationDigest: "b".repeat(64),
         taskCwdDigest: payloadHash(realpathSync(project.root)),
         shellRoots: [payloadHash(SOURCE_ROOT)], cliVersion: "0.153.0" };
       const options = { store, cwd: project.root, catalog: CATALOG,
@@ -475,6 +476,58 @@ test("an ordinary child admitted during refresh inspection keeps exclusive owner
     assert.equal(qualificationReadiness(f.store.db, f.context, f.binding).qualificationBinding, undefined);
     assert.deepEqual(readTaskQualification(f.store.db, f.context), f.original);
     assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM delegation_attempts WHERE finalized_at IS NULL").get().n, 1);
+    assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM meta WHERE key LIKE 'native_qualification_archive:%'").get().n, 0);
+  });
+});
+
+test("a trusted upgrade to 0.153.4 refreshes the no-tool proof and preserves the passed audit", async () => {
+  await passedQualification(async (f) => {
+    const { store, context, input, options, binding, original, route } = f;
+    const priorOutcome = store.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(route.routeId);
+    binding.digest = "c".repeat(64);
+    binding.configurationDigest = "d".repeat(64);
+    binding.cliVersion = "0.153.4";
+    const renewed = await routeStage(input, options);
+    assert.deepEqual(renewed.reasonCodes, ["HOST_LIFECYCLE_QUALIFICATION"]);
+    assert.equal(renewed.action, "delegate");
+    assert.notEqual(renewed.routeId, route.routeId);
+    const pending = readTaskQualification(store.db, context);
+    assert.equal(pending.state, "pending");
+    assert.equal(pending.binding.cliVersion, "0.153.4");
+    assert.equal(pending.proof, undefined);
+    assert.notEqual(pending.marker, original.marker);
+    assert.deepEqual(JSON.parse(store.db.prepare("SELECT value FROM meta WHERE key=?").get(`native_qualification_archive:${route.routeId}`).value), original);
+    assert.deepEqual(store.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(route.routeId), priorOutcome);
+    assert.equal((await routeStage(input, options)).action, "busy");
+    const refreshed = await completedQualification(f, renewed);
+    await callRouterTool("record_outcome", refreshed.outcome, refreshed.serviceOptions);
+    assert.equal(readTaskQualification(store.db, context).proof.rawAuditAdapter, "codex-0.153.4-no-work/1");
+    assert.equal(qualificationReadiness(store.db, context, binding).ready, true);
+    assert.equal(store.db.prepare("SELECT count(*) AS n FROM meta WHERE key LIKE 'native_requalification:%' OR key LIKE 'native_lifecycle_diagnostic:%'").get().n, 0);
+    const ordinary = await routeStage(input, options);
+    assert.equal(ordinary.action, "delegate");
+    assert.equal(ordinary.reasonCodes.includes("HOST_LIFECYCLE_QUALIFICATION"), false);
+  });
+});
+
+test("a 0.153.4 upgrade cannot refresh a changed project or an unsettled prior audit", async () => {
+  for (const mutate of [
+    ({ binding }) => { binding.taskCwdDigest = "e".repeat(64); },
+    ({ store, route }) => { store.db.prepare("UPDATE delegation_attempts SET ambiguous=1 WHERE route_id=?").run(route.routeId); },
+    ({ store, route }) => { store.db.prepare("UPDATE delegation_attempts SET finalized_at=NULL WHERE route_id=?").run(route.routeId); },
+    ({ store, route }) => { store.db.prepare("DELETE FROM outcomes WHERE route_id=?").run(route.routeId); },
+  ]) await passedQualification(async (f) => {
+    f.binding.digest = "c".repeat(64);
+    f.binding.configurationDigest = "d".repeat(64);
+    f.binding.cliVersion = "0.153.4";
+    mutate(f);
+    const readiness = qualificationReadiness(f.store.db, f.context, f.binding);
+    assert.equal(readiness.ready, false);
+    assert.equal(readiness.qualificationBinding, undefined);
+    const result = await routeStage(f.input, f.options);
+    assert.ok(["continue", "busy"].includes(result.action));
+    assert.deepEqual(readTaskQualification(f.store.db, f.context), f.original);
+    assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM delegation_attempts").get().n, 1);
     assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM meta WHERE key LIKE 'native_qualification_archive:%'").get().n, 0);
   });
 });

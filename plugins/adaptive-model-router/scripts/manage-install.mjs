@@ -21,6 +21,7 @@ import { canonicalJson, sanitizedError } from "./lib/io.mjs";
 import { defaultPluginData } from "./lib/plugin-data.mjs";
 import { withAppServer } from "./lib/app-server.mjs";
 import { createManagedMarketplace, inspectManagedMarketplace, isManagedMarketplacePath, switchManagedMarketplace } from "./lib/materialized-marketplace.mjs";
+import { isNodeCommand, parseHookNodeCommand as parsedCommandExecutable, renderHookNodeCommand, windowsPowerShellCommand } from "./lib/hook-command.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
 import {
   compareRuntimeVersions,
@@ -262,25 +263,6 @@ function mcpConfigAtRoot(root) {
   return { path, document, server };
 }
 
-function isNodeCommand(command) {
-  return typeof command === "string" && /^(?:.*[\\/])?node(?:\.exe)?$/iu.test(command);
-}
-
-function parsedCommandExecutable(command) {
-  if (typeof command !== "string") throw new Error("Hook command is invalid");
-  const match = /^(?:"([^"]+)"|'([^']+)'|(\S+))(?=\s)/u.exec(command);
-  const executable = match?.[1] || match?.[2] || match?.[3];
-  if (!match || !isNodeCommand(executable)) {
-    throw new Error("Hook command is not a recognized Node executable");
-  }
-  return { executable, suffix: command.slice(match[0].length) };
-}
-
-function quotedExecutable(executable) {
-  if (executable.includes('"')) throw new Error("Node executable path contains an unsupported quote");
-  return `"${executable}"`;
-}
-
 function hookConfigAtRoot(root) {
   const path = join(root, "hooks", "hooks.json");
   const document = JSON.parse(readFileSync(path, "utf8"));
@@ -327,13 +309,11 @@ function materializeHookNodeCommands(root) {
   let changed = false;
   for (const { handler } of config.handlers) {
     const parsed = parsedCommandExecutable(handler[field]);
-    if (parsed.executable === process.execPath) continue;
-    if (
-      parsed.executable !== "node" &&
-      isAbsolute(parsed.executable) &&
-      existsSync(parsed.executable)
-    ) continue;
-    handler[field] = `${quotedExecutable(process.execPath)}${parsed.suffix}`;
+    const executable = parsed.executable !== "node" && isAbsolute(parsed.executable) && existsSync(parsed.executable)
+      ? parsed.executable : process.execPath;
+    const command = renderHookNodeCommand(executable, parsed.suffix);
+    if (handler[field] === command) continue;
+    handler[field] = command;
     changed = true;
   }
   if (changed) atomicWrite(config.path, `${JSON.stringify(config.document, null, 2)}\n`);
@@ -1542,39 +1522,45 @@ function verifyInstalledHookContract(shellHealth) {
     }
     const promptHook = config.handlers.find(({ event }) => event === "UserPromptSubmit").handler;
     const command = promptHook[field];
-    const shell = process.platform === "win32"
-      ? {
+    const shells = process.platform === "win32"
+      ? [{
           executable: join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe"),
           args: ["/d", "/s", "/c", `"${command}"`],
           windowsVerbatimArguments: true,
-        }
-      : { executable: "/bin/sh", args: ["-c", command], windowsVerbatimArguments: false };
-    const result = spawnSync(shell.executable, shell.args, {
-      cwd: shellHealth.root,
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PATH: "",
-        PLUGIN_ROOT: shellHealth.root,
-        PLUGIN_DATA: temporary,
-        ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
-      },
-      input: JSON.stringify({
+        }, {
+          executable: windowsPowerShellCommand(),
+          args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+          windowsVerbatimArguments: false,
+        }]
+      : [{ executable: "/bin/sh", args: ["-c", command], windowsVerbatimArguments: false }];
+    for (const shell of shells) {
+      const result = spawnSync(shell.executable, shell.args, {
         cwd: shellHealth.root,
-        session_id: "installer-hook-probe",
-        model: "gpt-5.6-sol",
-        prompt: "router: global on",
-      }),
-      timeout: 15_000,
-      windowsHide: true,
-      windowsVerbatimArguments: shell.windowsVerbatimArguments,
-    });
-    if (result.error || result.status !== 0) throw new Error("installed Hook process failed");
-    const output = JSON.parse(result.stdout);
-    if (!/already been applied atomically by the trusted UserPromptSubmit hook/iu.test(
-      output?.hookSpecificOutput?.additionalContext || "",
-    )) {
-      throw new Error("installed Hook output contract is incomplete");
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: "",
+          PLUGIN_ROOT: shellHealth.root,
+          PLUGIN_DATA: temporary,
+          ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
+        },
+        input: JSON.stringify({
+          cwd: shellHealth.root,
+          session_id: "installer-hook-probe",
+          model: "gpt-5.6-sol",
+          prompt: "router: global on",
+        }),
+        timeout: 15_000,
+        windowsHide: true,
+        windowsVerbatimArguments: shell.windowsVerbatimArguments,
+      });
+      if (result.error || result.status !== 0) throw new Error("installed Hook process failed");
+      const output = JSON.parse(result.stdout);
+      if (!/already been applied atomically by the trusted UserPromptSubmit hook/iu.test(
+        output?.hookSpecificOutput?.additionalContext || "",
+      )) {
+        throw new Error("installed Hook output contract is incomplete");
+      }
     }
   } catch (error) {
     const detail = [
@@ -1783,7 +1769,16 @@ function canonicalRepository(source) {
 }
 
 function marketplaceSource(entry) {
-  return entry?.marketplaceSource?.source || entry?.source;
+  if (entry?.marketplaceSource != null || entry?.source != null) {
+    return entry?.marketplaceSource?.source || entry?.source;
+  }
+  return typeof entry?.root === "string" && isAbsolute(entry.root) ? entry.root : undefined;
+}
+
+function localMarketplaceSource(entry) {
+  if (entry?.marketplaceSource?.sourceType === "local" ||
+      (entry?.marketplaceSource == null && entry?.source == null)) return marketplaceSource(entry);
+  return undefined;
 }
 
 function marketplaceRef(entry) {
@@ -1829,8 +1824,8 @@ function desiredMarketplace(entry, ref = DEFAULT_REF) {
 }
 
 function managedRepositoryMarketplace(entry) {
-  const source = marketplaceSource(entry);
-  if (entry?.marketplaceSource?.sourceType !== "local" || !isManagedMarketplacePath(source, installerPluginDataRoot())) return false;
+  const source = localMarketplaceSource(entry);
+  if (!isManagedMarketplacePath(source, installerPluginDataRoot())) return false;
   return inspectManagedMarketplace(source, {
     dataRoot: verifiedInstallerPluginDataRoot(), originalSource: REPOSITORY_ROOT,
   });
@@ -1889,8 +1884,8 @@ async function refreshManagedMarketplace(entry, baseline, { verifyRegistration =
 }
 
 function localRepositoryMarketplace(entry) {
-  const source = marketplaceSource(entry);
-  if (entry?.marketplaceSource?.sourceType !== "local" || typeof source !== "string") return false;
+  const source = localMarketplaceSource(entry);
+  if (typeof source !== "string" || !isAbsolute(source)) return false;
   let actual;
   let expected;
   try { actual = realpathSync(source); expected = realpathSync(REPOSITORY_ROOT); }

@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmdirSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmdirSync, realpathSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { AppServerClient, resolveCodexCommand, spawnSpec } from "../scripts/lib/app-server.mjs";
+import { resolveCodexCommandSync } from "../scripts/lib/codex-command.mjs";
 import { buildClassifierPrompt, classifyBorderline } from "../scripts/lib/classifier.mjs";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { CATALOG, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
@@ -251,6 +252,32 @@ test("Codex launcher rejects environment-selected commands with an unexpected na
     () => spawnSpec({ path: "/tmp/not-codex", kind: "direct" }, ["--version"]),
     /unexpected executable name/,
   );
+});
+
+test("Windows discovery prefers a native host over an earlier npm shim and retains shim fallback", {
+  skip: process.platform !== "win32",
+}, async () => {
+  const project = await temporaryProject("native Codex discovery 空格 ");
+  try {
+    const shimDirectory = join(project.root, "npm");
+    const nativeDirectory = join(project.root, "Desktop");
+    mkdirSync(shimDirectory);
+    mkdirSync(nativeDirectory);
+    const shim = join(shimDirectory, "codex.cmd");
+    const native = join(nativeDirectory, "codex.exe");
+    writeFileSync(shim, "@exit /b 99\r\n");
+    writeFileSync(native, "discovery only; never execute");
+    const env = { SystemRoot: process.env.SystemRoot,
+      PATH: [shimDirectory, nativeDirectory, join(process.env.SystemRoot, "System32")].join(delimiter) };
+    for (const resolveCommand of [resolveCodexCommand, resolveCodexCommandSync]) {
+      assert.deepEqual(await resolveCommand({ env }), { path: native, kind: "direct" });
+      assert.deepEqual(await resolveCommand({ env: { ...env, CODEX_BIN: shim } }), { path: shim, kind: "cmd" });
+    }
+    unlinkSync(native);
+    for (const resolveCommand of [resolveCodexCommand, resolveCodexCommandSync]) {
+      assert.deepEqual(await resolveCommand({ env }), { path: shim, kind: "cmd" });
+    }
+  } finally { await project.cleanup(); }
 });
 
 test("classifier prompt is capped and removes paths, environments, code, and secrets", () => {

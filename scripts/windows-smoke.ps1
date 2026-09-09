@@ -49,6 +49,7 @@ $SessionId = $null
 $InitialRootModel = $null
 $SmokeModel = $null
 $SmokeEffort = $null
+$HostIntentModel = $null
 $InstalledRouterLauncher = $null
 $InstalledRouterCli = $null
 $CandidateCommit = ('0' * 40)
@@ -113,6 +114,7 @@ function Add-WarningCode {
 
 function Resolve-ProcessCommand {
     param([Parameter(Mandatory = $true)][string]$Name)
+    if ($Name -eq 'codex' -and $env:CODEX_BIN) { $Name = [string]$env:CODEX_BIN }
     if ([IO.Path]::IsPathFullyQualified($Name)) {
         $commands = @([pscustomobject]@{ Source = $Name; Extension = [IO.Path]::GetExtension($Name) })
     }
@@ -123,8 +125,9 @@ function Resolve-ProcessCommand {
                 ForEach-Object { [pscustomobject]@{ Source = $_.Source; Extension = [IO.Path]::GetExtension($_.Source) } }
         )
     }
-    $selected = @($commands | Where-Object { $_.Extension -eq '.ps1' } | Select-Object -First 1)
-    if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -eq '.exe' } | Select-Object -First 1) }
+    # Keep smoke on the native host even when an older npm shim occurs first.
+    $selected = @($commands | Where-Object { $_.Extension -eq '.exe' } | Select-Object -First 1)
+    if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -eq '.ps1' } | Select-Object -First 1) }
     if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -in @('.cmd', '.bat') } | Select-Object -First 1) }
     if ($selected.Count -eq 0) { $selected = @($commands | Where-Object { $_.Extension -notin @('.cmd', '.bat', '') } | Select-Object -First 1) }
     if ($selected.Count -eq 0) {
@@ -181,15 +184,20 @@ function Invoke-CodexTurn {
         [Parameter(Mandatory = $true)][string]$Prompt,
         [Parameter(Mandatory = $true)][string]$Model,
         [string]$ResumeSession,
-        [string]$WorkingProject = $Project
+        [string]$WorkingProject = $Project,
+        [string]$Effort = $SmokeEffort,
+        [switch]$HostModelControl
     )
-    if ($Model -ne $SmokeModel) { throw 'model escaped the shared smoke target binding' }
+    if ($HostModelControl) {
+        if (-not $ResumeSession -or $Model -notin @($InitialRootModel, $HostIntentModel)) { throw 'invalid native root-model control target' }
+    }
+    elseif ($Model -ne $SmokeModel -or $Effort -ne $SmokeEffort) { throw 'model escaped the shared smoke target binding' }
     $lastMessage = Join-Path $RawRoot (([guid]::NewGuid().ToString('N')) + '.last.txt')
     if ($ResumeSession) {
-        $arguments = @('exec', '--dangerously-bypass-approvals-and-sandbox', '-c', ('model_reasoning_effort=' + $SmokeEffort), 'resume', '--json', '-o', $lastMessage, '-m', $Model, $ResumeSession, $Prompt)
+        $arguments = @('exec', '--dangerously-bypass-approvals-and-sandbox', '-c', ('model_reasoning_effort=' + $Effort), 'resume', '--json', '-o', $lastMessage, '-m', $Model, $ResumeSession, $Prompt)
     }
     else {
-        $arguments = @('exec', '--dangerously-bypass-approvals-and-sandbox', '-c', ('model_reasoning_effort=' + $SmokeEffort), '--json', '-o', $lastMessage, '-C', $WorkingProject, '-m', $Model, $Prompt)
+        $arguments = @('exec', '--dangerously-bypass-approvals-and-sandbox', '-c', ('model_reasoning_effort=' + $Effort), '--json', '-o', $lastMessage, '-C', $WorkingProject, '-m', $Model, $Prompt)
     }
     $result = Invoke-Process -FilePath 'codex' -ArgumentList $arguments -WorkingDirectory $WorkingProject
     $events = [Collections.Generic.List[object]]::new()
@@ -278,6 +286,21 @@ function Read-CodexSessionTrace {
     return @($entries)
 }
 
+function Get-McpTraceTool {
+    param([Parameter(Mandatory = $true)]$Entry)
+    if ((Get-NestedPropertyValue -InputObject $Entry -Path @('type')) -ne 'event_msg') { return $null }
+    $type = Get-NestedPropertyValue -InputObject $Entry -Path @('payload', 'type')
+    if ($type -eq 'mcp_tool_call_end') {
+        return Get-NestedPropertyValue -InputObject $Entry -Path @('payload', 'invocation', 'tool')
+    }
+    # Codex 0.153.4 persists the completed native item instead of the legacy
+    # mcp_tool_call_end event. Inspect that original item without rewriting it.
+    if ($type -eq 'item_completed' -and (Get-NestedPropertyValue -InputObject $Entry -Path @('payload', 'item', 'type')) -eq 'McpToolCall' -and (Get-NestedPropertyValue -InputObject $Entry -Path @('payload', 'item', 'status')) -eq 'completed') {
+        return Get-NestedPropertyValue -InputObject $Entry -Path @('payload', 'item', 'tool')
+    }
+    return $null
+}
+
 function Read-BoundedSubagentExecution {
     param(
         [Parameter(Mandatory = $true)][string]$ParentContext,
@@ -305,10 +328,43 @@ function Read-BoundedSubagentExecution {
         -not [string]::IsNullOrWhiteSpace([string](Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'effort')))
     })
     if ($turnContexts.Count -lt 1) { throw 'bounded-subagent execution trace lacks model and effort metadata' }
+    $completed = @($matches[0] | Where-Object {
+        (Get-NestedPropertyValue -InputObject $_ -Path @('type')) -eq 'event_msg' -and
+        (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'task_complete'
+    })
+    $messages = @($matches[0] | Where-Object {
+        (Get-NestedPropertyValue -InputObject $_ -Path @('type')) -eq 'response_item' -and
+        (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'message' -and
+        (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'role')) -eq 'assistant'
+    })
+    if ($completed.Count -eq 0 -or $messages.Count -eq 0) { throw 'bounded-subagent trace lacks a completed final response' }
+    $finalMessage = @((Get-NestedPropertyValue -InputObject $messages[-1] -Path @('payload', 'content')) | ForEach-Object {
+        [string](Get-NestedPropertyValue -InputObject $_ -Path @('text'))
+    }) -join ''
+    if ([string]::IsNullOrWhiteSpace($finalMessage)) { throw 'bounded-subagent final response is empty' }
     return [pscustomobject]@{
         Model = [string](Get-NestedPropertyValue -InputObject $turnContexts[-1] -Path @('payload', 'model'))
         Effort = [string](Get-NestedPropertyValue -InputObject $turnContexts[-1] -Path @('payload', 'effort'))
+        FinalMessage = $finalMessage
     }
+}
+
+function Get-BoundedLifecyclePositions {
+    param([Parameter(Mandatory=$true)][object[]]$Trace, [Parameter(Mandatory=$true)][string]$AgentPath)
+    $started = @(); $completed = @()
+    for ($index=0; $index -lt $Trace.Count; $index++) {
+        $entry=$Trace[$index]
+        if ((Get-NestedPropertyValue -InputObject $entry -Path @('type')) -ne 'event_msg' -or (Get-NestedPropertyValue -InputObject $entry -Path @('payload','type')) -ne 'item_completed') { continue }
+        $item=Get-NestedPropertyValue -InputObject $entry -Path @('payload','item')
+        if ((Get-NestedPropertyValue -InputObject $item -Path @('type')) -ne 'SubAgentActivity' -or (Get-NestedPropertyValue -InputObject $item -Path @('agent_path')) -ne $AgentPath) { continue }
+        $id=[string](Get-NestedPropertyValue -InputObject $item -Path @('agent_thread_id'))
+        if ([string]::IsNullOrWhiteSpace($id)) { throw 'native subagent lifecycle lacks child identity' }
+        $kind=Get-NestedPropertyValue -InputObject $item -Path @('kind')
+        if ($kind -eq 'started') { $started += [pscustomobject]@{Index=$index;Id=$id} }
+        if ($kind -eq 'completed') { $completed += [pscustomobject]@{Index=$index;Id=$id} }
+    }
+    if ($started.Count -ne 1 -or $completed.Count -ne 1 -or $started[0].Id -ne $completed[0].Id -or $started[0].Index -ge $completed[0].Index) { throw 'native subagent start and completion do not identify one finished child' }
+    return [pscustomobject]@{Started=$started[0].Index;Completed=$completed[0].Index}
 }
 
 function Get-NewRoutes {
@@ -362,6 +418,8 @@ function Assert-CandidateGateFiles {
     $pairs = @(
         @((Join-Path $PSScriptRoot 'windows-smoke.ps1'), (Join-Path $Source 'scripts\windows-smoke.ps1')),
         @((Join-Path $PSScriptRoot 'invoke-command-shim.ps1'), (Join-Path $Source 'scripts\invoke-command-shim.ps1')),
+        @((Join-Path $PSScriptRoot 'smoke-host-model-target.mjs'), (Join-Path $Source 'scripts\smoke-host-model-target.mjs')),
+        @((Join-Path $PSScriptRoot 'stop-windows-smoke-router-processes.ps1'), (Join-Path $Source 'scripts\stop-windows-smoke-router-processes.ps1')),
         @((Join-Path $PSScriptRoot 'validate-smoke-evidence.mjs'), (Join-Path $Source 'scripts\validate-smoke-evidence.mjs')),
         @((Join-Path $PSScriptRoot '..\docs\release-evidence\schema-v1.json'), (Join-Path $Source 'docs\release-evidence\schema-v1.json'))
     )
@@ -383,8 +441,84 @@ function Assert-InstalledCandidate {
 
 function Invoke-Wrapper {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    Stop-SmokeRouterProcesses
     $installer = Join-Path $Source 'install.ps1'
     return Invoke-Process -FilePath 'pwsh' -ArgumentList (@('-NoProfile', '-File', $installer) + $Arguments) -WorkingDirectory $Source
+}
+
+function Stop-SmokeRouterProcesses {
+    # Every disposable CLI turn has returned and its bounded result has been
+    # settled before lifecycle work. Stop only cache-bound Router Node processes;
+    # the persistent Desktop and coordinator remain alive.
+    Invoke-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-File', (Join-Path $Source 'scripts\stop-windows-smoke-router-processes.ps1'), '-CodexHome', $DedicatedCodexHome) -WorkingDirectory $Source | Out-Null
+}
+
+function Invoke-NativePluginLifecycle {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    Stop-SmokeRouterProcesses
+    Invoke-Process -FilePath 'codex' -ArgumentList $Arguments | Out-Null
+}
+
+function Read-NativeRootBinding {
+    $trace = @(Read-CodexSessionTrace -Context $SessionId)
+    $turns = @($trace | Where-Object { $_.type -eq 'turn_context' })
+    if ($turns.Count -eq 0) { throw 'native root-model evidence is missing' }
+    $payload = $turns[-1].payload
+    $effort = Get-NestedPropertyValue -InputObject $payload -Path @('effort')
+    if (-not $effort) { $effort = Get-NestedPropertyValue -InputObject $payload -Path @('collaboration_mode', 'settings', 'reasoning_effort') }
+    if (-not $effort) { throw 'native root reasoning effort is unavailable' }
+    return [pscustomobject]@{ Model = [string]$payload.model; Effort = [string]$effort }
+}
+
+function Invoke-HostModelIntentSmoke {
+    $initialBinding = Read-NativeRootBinding
+    if ($initialBinding.Model -ne $InitialRootModel) { throw 'initial native root model differs from the Hook baseline' }
+    $selection = Invoke-Process -FilePath 'node' -ArgumentList @((Join-Path $Source 'scripts\smoke-host-model-target.mjs'), "--initial-model=$InitialRootModel", ("--effort=" + $initialBinding.Effort)) -WorkingDirectory $Project
+    $selected = $selection.Stdout | ConvertFrom-Json
+    $HostIntentModel = [string]$selected.model
+    if (-not $HostIntentModel -or $HostIntentModel -eq $InitialRootModel -or $selected.source -ne 'native-model-list') { throw 'native host-model override capability is unavailable' }
+    $projections = [Collections.Generic.List[object]]::new()
+    try {
+        foreach ($case in @(
+            @{ Model = $HostIntentModel; Previous = $InitialRootModel; Decision = 'keep_automatic'; Mode = 'automatic'; Choice = '保持自动' },
+            @{ Model = $InitialRootModel; Previous = $HostIntentModel; Decision = 'manual_root'; Mode = 'manual_root'; Choice = '本任务手动' }
+        )) {
+            Invoke-CodexTurn -Prompt 'router: status' -Model $case.Model -Effort $initialBinding.Effort -ResumeSession $SessionId -HostModelControl | Out-Null
+            $native = Read-NativeRootBinding
+            $pending = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
+            if ($native.Model -ne $case.Model -or $native.Effort -ne $initialBinding.Effort -or $pending.rootTask.modelVisibility -ne 'hook_observed' -or $pending.rootTask.model -ne $case.Model -or $pending.rootTask.changedByRouter -ne $false) { throw 'native host override and trusted Hook disagree' }
+            if ($pending.taskMode -ne 'pending_confirmation' -or $pending.pendingHostModelChange.fromModel -ne $case.Previous -or $pending.pendingHostModelChange.toModel -ne $case.Model) { throw 'host-model change did not create the expected pending intent' }
+            $projections.Add($pending)
+            $before = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+            $pendingTurn = Invoke-CodexTurn -Prompt 'This is the native host-model intent smoke. Call route_stage exactly once for a review stage with goal "Observe pending host-model intent". Leave the pending intent unresolved. Do not create a subagent, change files, record an outcome, or ask a human to operate the host; the smoke orchestrator will provide the next explicit decision. Return only the redacted action and reason codes.' -Model $case.Model -Effort $initialBinding.Effort -ResumeSession $SessionId -HostModelControl
+            $after = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+            $routes = @(Get-NewRoutes -Before $before -After $after)
+            if ($routes.Count -ne 1 -or $routes[0].action -ne 'continue' -or @($routes[0].reasonCodes) -notcontains 'HOST_MODEL_INTENT_PENDING') { throw 'pending host intent did not prevent delegation' }
+            Assert-NoDelegatedWork -Turn $pendingTurn -Route $routes[0]
+            $decisionPrompt = "$($case.Choice). For this native smoke I explicitly select decision $($case.Decision) for the currently observed changeId $($pending.pendingHostModelChange.changeId). Call resolve_host_model_intent exactly once with that changeId and decision, using the trusted context. Do not call route_stage, create a subagent, change files, or record an outcome. Return only the redacted resolved state."
+            $resolvedTurn = Invoke-CodexTurn -Prompt $decisionPrompt -Model $case.Model -Effort $initialBinding.Effort -ResumeSession $SessionId -HostModelControl
+            if (@(Get-ToolCallItems -Events $resolvedTurn.Events -Tool 'resolve_host_model_intent').Count -ne 1) { throw 'host intent was not resolved through the native Router tool exactly once' }
+            $resolved = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
+            if ($resolved.taskMode -ne $case.Mode -or $null -ne $resolved.pendingHostModelChange -or $resolved.pendingOutcomes -ne 0) { throw 'explicit host-model decision did not settle as requested' }
+            $projections.Add($resolved)
+        }
+        $beforeManual = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+        $manualTurn = Invoke-CodexTurn -Prompt 'For the native host-model intent smoke, call route_stage exactly once for a review stage with goal "Observe manual root mode". Do not create a subagent, change files, or record an outcome. Return only the redacted action and reason codes.' -Model $InitialRootModel -Effort $initialBinding.Effort -ResumeSession $SessionId -HostModelControl
+        $manualHistory = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+        $manualRoutes = @(Get-NewRoutes -Before $beforeManual -After $manualHistory)
+        if ($manualRoutes.Count -ne 1 -or $manualRoutes[0].action -ne 'continue' -or @($manualRoutes[0].reasonCodes) -notcontains 'MANUAL_ROOT_SELECTED') { throw 'manual-root intent did not prevent delegation' }
+        Assert-NoDelegatedWork -Turn $manualTurn -Route $manualRoutes[0]
+        $projections.Add($manualHistory)
+    }
+    finally {
+        # The host orchestrator restores both settings, including after a failed check.
+        Invoke-CodexTurn -Prompt 'router: auto session' -Model $InitialRootModel -Effort $initialBinding.Effort -ResumeSession $SessionId -HostModelControl | Out-Null
+        $restored = Read-NativeRootBinding
+        $restoredStatus = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
+        if ($restored.Model -ne $initialBinding.Model -or $restored.Effort -ne $initialBinding.Effort -or $restoredStatus.rootTask.model -ne $initialBinding.Model -or $restoredStatus.taskMode -ne 'automatic' -or $null -ne $restoredStatus.pendingHostModelChange -or $restoredStatus.pendingOutcomes -ne 0) { throw 'native root-model cleanup did not restore the initial settled state' }
+        $projections.Add($restoredStatus)
+    }
+    Assert-PrivateProjection -Values @($projections)
 }
 
 function Write-SmokeFixture {
@@ -539,9 +673,11 @@ try {
     Invoke-Process -FilePath 'npm' -ArgumentList @('test') -WorkingDirectory $candidatePluginRoot | Out-Null
     Invoke-Process -FilePath 'npm' -ArgumentList @('run', 'validate') -WorkingDirectory $candidatePluginRoot | Out-Null
     Invoke-Process -FilePath 'npm' -ArgumentList @('run', 'eval') -WorkingDirectory $candidatePluginRoot | Out-Null
+    Invoke-Process -FilePath 'node' -ArgumentList @('--test', 'scripts/test/windows-smoke.test.mjs') -WorkingDirectory $Source | Out-Null
     Add-SmokeCheck -Id 'candidate-automated-gate' -Blocking $true -Status 'PASS'
 
     $manager = Join-Path $Source 'plugins\adaptive-model-router\scripts\manage-install.mjs'
+    Stop-SmokeRouterProcesses
     Invoke-Process -FilePath 'node' -ArgumentList @($manager, 'install', '--non-interactive', "--ref=$CandidateRef") -WorkingDirectory $Source | Out-Null
     Add-SmokeCheck -Id 'native-install' -Blocking $true -Status 'PASS'
     Assert-InstalledCandidate -ExpectedRef $CandidateRef -ExpectedCommit $CandidateCommit
@@ -575,13 +711,25 @@ try {
     # intentionally unfinished live delegation.
     Add-SmokeCheck -Id 'hook-trust-and-global-on' -Blocking $true -Status 'PASS'
 
+    # A fresh task must prove the native no-tool lifecycle before ordinary
+    # work. Keep this qualification separate from the single review delegate.
+    $qualificationBefore = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+    $qualificationPrompt = @'
+Perform only the native lifecycle qualification required by the trusted Adaptive Model Router skill in this fresh task. Call route_stage exactly once with phase=review, evidence review=true, workProduct=true, requirementsSettled=true, strongVerification=true, and the actual direct bounded-subagent capabilities. The bounded goal is solely to validate the native no-tool lifecycle before a later review. If HOST_LIFECYCLE_QUALIFICATION is returned, follow its exact one-shot carrier with direct spawn_agent, the returned model/effort and fork_turns=none. Wait for that exact no-tool child to finish and call record_outcome once with the strict structured-check contract; the source-owned server audits the complete child transcript. Do not retry a failed qualification or route the later review in this turn. Do not modify files or run tests. Return only a redacted qualification status; never expose identifiers, carriers, prompts, paths or logs.
+'@
+    Invoke-CodexTurn -Prompt $qualificationPrompt -Model $SmokeModel -ResumeSession $SessionId | Out-Null
+    $qualificationHistory = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
+    $qualificationRoutes = @(Get-NewRoutes -Before $qualificationBefore -After $qualificationHistory)
+    $qualifiedStatus = Read-RouterState -Command 'status' -Context $SessionId -WorkingProject $Project
+    if ($qualificationRoutes.Count -ne 1 -or $qualificationRoutes[0].action -ne 'delegate' -or @($qualificationRoutes[0].reasonCodes) -notcontains 'HOST_LIFECYCLE_QUALIFICATION' -or $qualificationRoutes[0].outcome.status -ne 'passed' -or $qualificationRoutes[0].outcome.source -ne 'record_outcome' -or $qualifiedStatus.pendingOutcomes -ne 0 -or $qualifiedStatus.delegationGate.state -ne 'available') { throw 'native lifecycle qualification did not complete and release its gate' }
+
     Write-SmokeFixture -Root $Project
     $fixtureHashBefore = Get-SmokeFixtureHash -Root $Project
     $reviewHistoryBefore = Read-RouterState -Command 'history' -Context $SessionId -WorkingProject $Project
     $sessionTraceBeforeCount = @(Read-CodexSessionTrace -Context $SessionId).Count
     $reviewStartedAt = [DateTime]::UtcNow
     $implementationPrompt = @'
-Review the existing dependency-free Node.js 24 line-normalization utility and tests in this temporary project without modifying files. Follow the trusted fixed-context automatic-router instruction injected for this turn. Call route_stage exactly once for a bounded review stage with phase=review and evidence review=true, workProduct=true, requirementsSettled=true, strongVerification=true, batchSize=2 plus the host's actual bounded-subagent capabilities. A GPT-6-only host must omit Luna. The root task and exactly one bounded subagent must independently inspect the existing source and tests against this fixed checklist: CRLF normalization, CR normalization, trailing spaces/tabs removal, exactly one final LF for non-empty input, empty input preservation, existing final newline handling, Chinese text preservation, and no runtime dependencies. When the route delegates, call the spawn_agent collaboration tool exactly once using target.model and target.effort; the subagent must return only its structured checklist and must not route recursively or own record_outcome. The root must complete its own checklist, call wait_agent until the subagent's final checklist is available, compare both results, and call record_outcome exactly once using the returned structured-check gate. Pass only when both reviews pass and agree. Do not run Node tests or any write command; the native runner performs the executable test immediately after this read-only review. Then call status, history, diagnose, and learning status. Return only one redacted JSON object with exactly rootReview, subagentReview, agreement, and testExecution. Each review must contain exactly verdict and checks; verdict must be passed, and checks must contain exactly the boolean keys crlf, cr, trailingWhitespace, nonEmptyFinalLf, emptyInput, existingFinalNewline, chineseText, dependencyFree. Set agreement to true and testExecution to deferred-to-native-runner. Never expose source, prompt text, environment values, secrets, paths, session/context identifiers, or raw logs.
+Review the existing dependency-free Node.js 24 line-normalization utility and tests in this temporary project without modifying files. Follow the trusted fixed-context automatic-router instruction injected for this turn. Call route_stage exactly once for a bounded review stage with phase=review and evidence review=true, workProduct=true, requirementsSettled=true, strongVerification=true, batchSize=2 plus the host's actual bounded-subagent capabilities. A GPT-6-only host must omit Luna. Use exactly this route_stage goal, without appending the reporting instructions: <bounded-review-goal>Review the existing dependency-free Node.js 24 normalizeLines utility and its tests without modifying files or executing tests. Check CRLF, CR, trailing spaces/tabs, exactly one final LF for non-empty input, empty input, existing final newlines, Chinese text, and runtime dependency absence. Return only JSON with verdict set to passed when every check passes and checks containing these eight boolean keys: crlf, cr, trailingWhitespace, nonEmptyFinalLf, emptyInput, existingFinalNewline, chineseText, dependencyFree. Work only on this review; do not call Router or create another agent.</bounded-review-goal>. The root task and exactly one bounded subagent must independently inspect the existing source and tests against this fixed checklist: CRLF normalization, CR normalization, trailing spaces/tabs removal, exactly one final LF for non-empty input, empty input preservation, existing final newline handling, Chinese text preservation, and no runtime dependencies. When the route delegates, call the spawn_agent collaboration tool exactly once using target.model and target.effort; the subagent must return only its structured checklist and must not route recursively or own record_outcome. The root must complete its own checklist, call wait_agent until the subagent's final checklist is available, compare both results, and call record_outcome exactly once using the returned structured-check gate. Pass only when both reviews pass and agree. Do not run Node tests or any write command; the native runner performs the executable test immediately after this read-only review. Then call status, history, diagnose, and learning status. Return only one redacted JSON object with exactly rootReview, subagentReview, agreement, and testExecution. Each review must contain exactly verdict and checks; verdict must be passed, and checks must contain exactly the boolean keys crlf, cr, trailingWhitespace, nonEmptyFinalLf, emptyInput, existingFinalNewline, chineseText, dependencyFree. Set agreement to true and testExecution to deferred-to-native-runner. Never expose source, prompt text, environment values, secrets, paths, session/context identifiers, or raw logs.
 '@
     $implementationTurn = Invoke-CodexTurn -Prompt $implementationPrompt -Model $SmokeModel -ResumeSession $SessionId
     $implementationTrace = @(Read-CodexSessionTrace -Context $SessionId | Select-Object -Skip $sessionTraceBeforeCount)
@@ -611,31 +759,36 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     $retryTotal = [int]$retryBreakdown.reasoning + [int]$retryBreakdown.environment + [int]$retryBreakdown.information + [int]$retryBreakdown.tooling
     if ($retryTotal -ne [int]$route.outcome.retries) { throw 'verified outcome retry breakdown does not sum to retries' }
     $outcomeCalls = @(Get-ToolCallItems -Events $implementationTurn.Events -Tool 'record_outcome')
-    $routeTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'mcp_tool_call_end' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'invocation', 'tool')) -eq 'route_stage' })
+    $routeTrace = @($implementationTrace | Where-Object { (Get-McpTraceTool -Entry $_) -eq 'route_stage' })
     $spawnTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'namespace')) -eq 'collaboration' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'name')) -eq 'spawn_agent' })
     $waitTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'namespace')) -eq 'collaboration' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'name')) -eq 'wait_agent' })
-    $recordTrace = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'mcp_tool_call_end' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'invocation', 'tool')) -eq 'record_outcome' })
-    if ($routeTrace.Count -ne 1 -or $spawnTrace.Count -ne 1 -or $waitTrace.Count -ne 1 -or $recordTrace.Count -ne 1 -or $outcomeCalls.Count -ne 1) { throw 'managed review lifecycle call cardinality differs from one route, spawn, wait, and outcome' }
+    $recordTrace = @($implementationTrace | Where-Object { (Get-McpTraceTool -Entry $_) -eq 'record_outcome' })
+    if ($routeTrace.Count -ne 1 -or $spawnTrace.Count -ne 1 -or $waitTrace.Count -lt 1 -or $recordTrace.Count -ne 1 -or $outcomeCalls.Count -ne 1) { throw 'managed review requires one route, spawn and outcome plus a completed wait' }
     $spawnCallId = [string](Get-NestedPropertyValue -InputObject $spawnTrace[0] -Path @('payload', 'call_id'))
-    $waitCallId = [string](Get-NestedPropertyValue -InputObject $waitTrace[0] -Path @('payload', 'call_id'))
+    $waitCallId = [string](Get-NestedPropertyValue -InputObject $waitTrace[-1] -Path @('payload', 'call_id'))
     $spawnOutput = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call_output' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'call_id')) -eq $spawnCallId })
     $waitOutput = @($implementationTrace | Where-Object { (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'type')) -eq 'function_call_output' -and (Get-NestedPropertyValue -InputObject $_ -Path @('payload', 'call_id')) -eq $waitCallId })
     if ($spawnOutput.Count -ne 1 -or $waitOutput.Count -ne 1) { throw 'managed review collaboration calls did not complete exactly once' }
     try { $spawnResult = (Get-NestedPropertyValue -InputObject $spawnOutput[0] -Path @('payload', 'output')) | ConvertFrom-Json -Depth 20 } catch { throw 'bounded-subagent spawn result is invalid' }
     try { $waitResult = (Get-NestedPropertyValue -InputObject $waitOutput[0] -Path @('payload', 'output')) | ConvertFrom-Json -Depth 20 } catch { throw 'bounded-subagent wait result is invalid' }
     $agentPath = [string](Get-NestedPropertyValue -InputObject $spawnResult -Path @('task_name'))
-    if ([string]::IsNullOrWhiteSpace($agentPath) -or (Get-NestedPropertyValue -InputObject $waitResult -Path @('timed_out')) -ne $false -or [string](Get-NestedPropertyValue -InputObject $waitResult -Path @('message')) -notmatch 'finished|completed|final') { throw 'bounded subagent was not observed to finish before outcome recording' }
+    if ([string]::IsNullOrWhiteSpace($agentPath)) { throw 'bounded-subagent spawn result lacks its path' }
+    # wait_agent observes new mailbox activity, so it may time out after the
+    # child's completion was already delivered. Bind completion to the actual
+    # native child event and independently read that child's final checklist.
+    $childLifecycle = Get-BoundedLifecyclePositions -Trace $implementationTrace -AgentPath $agentPath
     $tracePositions = [ordered]@{}
     for ($traceIndex = 0; $traceIndex -lt $implementationTrace.Count; $traceIndex += 1) {
         $entry = $implementationTrace[$traceIndex]
         $payloadType = Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'type')
-        $toolName = Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'invocation', 'tool')
-        if ($payloadType -eq 'mcp_tool_call_end' -and $toolName -eq 'route_stage') { $tracePositions.route = $traceIndex }
+        $toolName = Get-McpTraceTool -Entry $entry
+        if ($toolName -eq 'route_stage') { $tracePositions.route = $traceIndex }
         if ($payloadType -eq 'function_call' -and (Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'namespace')) -eq 'collaboration' -and (Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'name')) -eq 'spawn_agent') { $tracePositions.spawn = $traceIndex }
         if ($payloadType -eq 'function_call_output' -and (Get-NestedPropertyValue -InputObject $entry -Path @('payload', 'call_id')) -eq $waitCallId) { $tracePositions.waited = $traceIndex }
-        if ($payloadType -eq 'mcp_tool_call_end' -and $toolName -eq 'record_outcome') { $tracePositions.outcome = $traceIndex }
+        if ($toolName -eq 'record_outcome') { $tracePositions.outcome = $traceIndex }
     }
     if (-not ($tracePositions['route'] -lt $tracePositions['spawn'] -and $tracePositions['spawn'] -lt $tracePositions['waited'] -and $tracePositions['waited'] -lt $tracePositions['outcome'])) { throw 'managed review lifecycle order is not route, spawn, wait completion, outcome' }
+    if (-not ($tracePositions['spawn'] -lt $childLifecycle.Started -and $childLifecycle.Completed -lt $tracePositions['outcome'])) { throw 'native subagent completion did not precede outcome recording' }
     $RouteEvidence.action = 'delegate'
     $RouteEvidence.targetFamily = Get-ModelFamily -Model ([string]$route.target.model)
     $RouteEvidence.targetEffort = [string]$route.target.effort
@@ -647,6 +800,9 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     if ($RouteEvidence.targetFamily -notin @('astra')) { throw 'automatic bounded target escaped the GPT-6 capability set' }
     $subagentExecution = Read-BoundedSubagentExecution -ParentContext $SessionId -AgentPath $agentPath -StartedAfter $reviewStartedAt
     if ($subagentExecution.Model -ne [string]$route.target.model -or $subagentExecution.Effort -ne [string]$route.target.effort) { throw 'bounded-subagent execution did not use the routed target model and effort' }
+    $reportedSummary = $implementationTurn.LastMessage | ConvertFrom-Json -Depth 20
+    $observedSummary = [ordered]@{ rootReview=$reportedSummary.rootReview; subagentReview=($subagentExecution.FinalMessage | ConvertFrom-Json -Depth 20); agreement=$reportedSummary.agreement; testExecution=$reportedSummary.testExecution }
+    Assert-StructuredReviewSummary -Text ($observedSummary | ConvertTo-Json -Depth 20 -Compress)
     if ($route.rootTask.changedByRouter -ne $false -or [string]::IsNullOrWhiteSpace([string]$route.rootTask.model)) { throw 'history did not preserve the root versus bounded-target boundary' }
     if ($DiagnosticEvidence.databaseHealth -ne 'ok' -or $DiagnosticEvidence.classifierState -ne 'closed') { throw 'router diagnostics are not healthy' }
     Assert-PrivateProjection -Values @($status, $history, $doctor, $learningBeforeIntent)
@@ -688,9 +844,9 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     if ([string]::IsNullOrWhiteSpace([string]$shadowStatusAfter.scoringProfile.profileId) -or [int]$shadowStatusAfter.scoringProfile.profileVersion -lt 1) { throw 'active scoring profile identity/version is missing' }
     Add-SmokeCheck -Id 'learning-and-shadow' -Blocking $true -Status 'PASS'
 
-    # A GPT-6-only scope must never run a second model to fabricate slug coverage.
-    Invoke-Process -FilePath 'node' -ArgumentList @('--test', 'test/host-model.test.mjs', 'test/hook.test.mjs') -WorkingDirectory $candidatePluginRoot | Out-Null
-    Add-WarningCode -Code 'HOST_MODEL_INTENT_OFFLINE_ONLY'
+    # Only the native smoke orchestrator changes the root model. Bounded
+    # delegation remains on the shared GPT-6 target throughout the gate.
+    Invoke-HostModelIntentSmoke
     Add-SmokeCheck -Id 'host-model-intent' -Blocking $true -Status 'PASS'
 
     Invoke-CodexTurn -Prompt 'router: off' -Model $InitialRootModel -ResumeSession $SessionId | Out-Null
@@ -703,14 +859,14 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
     Invoke-CodexTurn -Prompt 'router: auto session' -Model $InitialRootModel -ResumeSession $SessionId | Out-Null
     Add-SmokeCheck -Id 'negative-control' -Blocking $true -Status 'PASS'
 
-    Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'marketplace', 'upgrade', 'adaptive-model-router') | Out-Null
-    Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'add', 'adaptive-model-router@adaptive-model-router') | Out-Null
-    Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'remove', 'adaptive-model-router@adaptive-model-router') | Out-Null
-    Invoke-Process -FilePath 'codex' -ArgumentList @('plugin', 'marketplace', 'remove', 'adaptive-model-router') | Out-Null
+    Invoke-NativePluginLifecycle -Arguments @('plugin', 'marketplace', 'upgrade', 'adaptive-model-router')
+    Invoke-NativePluginLifecycle -Arguments @('plugin', 'add', 'adaptive-model-router@adaptive-model-router')
+    Invoke-NativePluginLifecycle -Arguments @('plugin', 'remove', 'adaptive-model-router@adaptive-model-router')
+    Invoke-NativePluginLifecycle -Arguments @('plugin', 'marketplace', 'remove', 'adaptive-model-router')
     $wrapperInstall = Invoke-Wrapper -Arguments @('-PatchAgents', '-Ref', $CandidateRef)
     $wrapperUpgrade = Invoke-Wrapper -Arguments @('-Action', 'Upgrade', '-PatchAgents', '-VerifyTaskTools', '-Ref', $CandidateRef)
     foreach ($wrapperResult in @($wrapperInstall, $wrapperUpgrade)) {
-        if ($wrapperResult.Stdout -notmatch 'v0\.3\.x' -or $wrapperResult.Stdout -notmatch 'Compatible v0\.4\.x\+' -or $wrapperResult.Stdout -notmatch 'upgrades preserve this setting') {
+        if ($wrapperResult.Stdout -notmatch 'no replacement task is required' -or $wrapperResult.Stdout -notmatch 'Compatible v0\.4\.x\+' -or $wrapperResult.Stdout -notmatch 'upgrades preserve this setting') {
             throw 'wrapper lifecycle did not emit the required upgrade and persistence guidance'
         }
     }
@@ -749,11 +905,7 @@ Review the existing dependency-free Node.js 24 line-normalization utility and te
         $shadowStatusAfter,
         $shadowDoctorAfter,
         $shadowLearningAfter,
-        $pendingHistory,
-        $postKeepAutomatic,
-        $secondPendingStatus,
-        $secondPendingHistory,
-        $manualHistory,
+        $qualificationHistory,
         $disabledHistory,
         $secondStatus
     )

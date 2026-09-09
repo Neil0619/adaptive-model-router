@@ -171,6 +171,40 @@ test("a substantive route lifecycle with trailing reports is not isolated as ins
   }
 });
 
+test("explicit skill use receives trusted context without enabling automatic routing", async () => {
+  const project = await temporaryProject("adaptive explicit skill Unicode 显式 ");
+  try {
+    const base = { cwd: project.root, session_id: "explicit-session", model: "gpt-6-astra" };
+    for (const reset of [null, "router: global off"]) {
+      if (reset) assert.equal(runHook("prompt", { ...base, prompt: reset }, project.home).status, 0);
+      const explicit = runHook("prompt", {
+        ...base,
+        prompt: "Use $adaptive-model-router for this read-only post-install smoke. "
+          + "Call diagnose_router exactly once, then call route_stage with workProduct=false.",
+      }, project.home);
+      assert.equal(explicit.status, 0, explicit.stderr);
+      assert.ok(explicit.stdout, "explicit skill use must receive the trusted task identity");
+      const context = JSON.parse(explicit.stdout).hookSpecificOutput.additionalContext;
+      assert.match(context, /Use "explicit-session" as the contextId/);
+      assert.doesNotMatch(context, /global automatic activation is enabled|Read-only router inspection is active/);
+      await withRouterEnvironment(project, async () => {
+        const store = new RouterStore();
+        try {
+          const identity = store.context({ cwd: project.root, contextId: base.session_id });
+          assert.equal(store.getSettings(identity).autoActivate, false);
+          assert.equal(store.inspectionGuardActive(identity), false);
+          assert.equal(store.db.prepare("SELECT count(*) AS n FROM routes").get().n, 0);
+        } finally { store.close(); }
+      });
+    }
+    for (const prompt of ["Implement a parser.", "Use $adaptive-model-router-extra."]) {
+      const ordinary = runHook("prompt", { ...base, prompt }, project.home);
+      assert.equal(ordinary.status, 0, ordinary.stderr);
+      assert.equal(ordinary.stdout, "");
+    }
+  } finally { await project.cleanup(); }
+});
+
 test("global automatic activation is opt-in, crosses projects, and detects later root-model changes", async () => {
   const project = await temporaryProject("adaptive auto Unicode 自动 ");
   try {

@@ -254,7 +254,7 @@ plugin Hooks. It never accepts Hook trust automatically.
 All five results create no Agent, no delegation ticket, and no occupied gate.
 
 `HOST_LIFECYCLE_QUALIFICATION` is a distinct `delegate` result on supported
-native macOS builds, not ordinary work: launch its exact fixed no-tool carrier
+native macOS builds and Windows Codex 0.153.4: launch its exact fixed no-tool carrier
 once, verify the child, and record the outcome through MCP. The server audits
 the native lifecycle and complete raw transcript itself; a caller's passed
 flag is insufficient. After success, route the original stage again.
@@ -262,7 +262,10 @@ flag is insufficient. After success, route the original stage again.
 self-test. A changed binding can receive a fresh fixed qualification only when
 the previous source-verified proof, original route, and successful outcome are
 intact, the current Hook inventory is trusted, and no child is unresolved. The
-old proof is archived atomically. Readiness also retains the parent/child Hook
+old proof is archived atomically, preserving its route and outcome. This applies
+to compatible runtime, Hook-cache, and supported host-build upgrades. The next
+`route_stage` admits only a fresh no-tool qualification, without an operator
+requalification grant or diagnostic capture. Readiness also retains the parent/child Hook
 shells actually observed by that proof, after checking that their current
 definitions are equivalent and their compatible runtime trees have no symbolic
 links. An open task may still use an older child shell after the configured
