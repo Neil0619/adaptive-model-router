@@ -575,52 +575,55 @@ test("source verification accepts a cache-cwd MCP only for its native bound task
   });
 });
 
-test("hot upgrade retains the separately observed child Hook shell and requires its equivalent definition", async () => {
-  await fixture(async (f) => {
-    const { recordHookIdentityDiagnostic } = await import("../scripts/lib/hook-diagnostics.mjs");
-    const identity = resolveHookIdentity({ hook_event_name: "UserPromptSubmit",
-      session_id: f.input.contextId, turn_id: "current-native-turn" });
-    recordHookIdentityDiagnostic(identity.audit, "context_emitted", process.env, identity);
-    const parentRoot = resolve(realpathSync(f.project.root), "cache", "parent-shell");
-    const childRoot = resolve(realpathSync(f.project.root), "cache", "child-shell");
-    const configuredRoot = resolve(realpathSync(f.project.root), "cache", "configured-shell");
-    for (const root of [parentRoot, childRoot, configuredRoot, resolve(realpathSync(f.project.root), "cache", "unobserved-shell")]) cpSync(SOURCE_ROOT, root, { recursive: true });
-    const host = { platform: "darwin", cliVersion: "0.153.0", executableDigest: "a".repeat(64) };
-    const inventory = (root) => {
-      const document = JSON.parse(readFileSync(resolve(root, "hooks", "hooks.json"), "utf8"));
-      return { data: [{ cwd: f.project.root, hooks: Object.entries(document.hooks).flatMap(([event, groups]) => groups.flatMap(group => group.hooks.map(hook => ({
-        eventName: event[0].toLowerCase() + event.slice(1), handlerType: "command", command: hook.command,
-        matcher: group.matcher ?? null, timeoutSec: hook.timeout, statusMessage: hook.statusMessage,
-        async: false, source: "plugin", sourcePath: resolve(root, "hooks", "hooks.json"),
-        pluginId: "adaptive-model-router@adaptive-model-router", currentHash: `sha256:${"a".repeat(64)}`, enabled: true, trustStatus: "trusted",
-      })))) }] };
-    };
-    Object.assign(f.binding, lifecycleBinding(inventory(childRoot).data[0].hooks, parentRoot, childRoot, host, f.project.root));
-    f.hookShells = { pre: parentRoot, post: parentRoot, start: childRoot, stop: childRoot };
-    const original = await completedQualification(f);
-    await callRouterTool("record_outcome", original.outcome, original.serviceOptions);
-    assert.deepEqual(provenQualificationShellRoots(f.store.db, f.context).sort(), [payloadHash(parentRoot), payloadHash(childRoot)].sort());
-    const inspect = () => inspectLifecycleHookReadiness({ cwd: f.project.root, pluginRoot: parentRoot,
-      store: f.store, context: f.context, contextId: f.input.contextId,
-      appServer: async (run) => run({ start: async () => {}, request: async (method) => method === "thread/turns/list"
-        ? { data: [{ id: "current-native-turn" }] } : { thread: { id: f.input.contextId, cwd: f.project.root } }, listHooks: async () => inventory(configuredRoot) }),
-      nativeHost: async () => host,
+for (const platform of ["darwin", "win32"]) {
+  test(`hot upgrade retains the separately observed child Hook shell and requires its equivalent definition (${platform})`, async () => {
+    await fixture(async (f) => {
+      const { recordHookIdentityDiagnostic } = await import("../scripts/lib/hook-diagnostics.mjs");
+      const identity = resolveHookIdentity({ hook_event_name: "UserPromptSubmit",
+        session_id: f.input.contextId, turn_id: "current-native-turn" });
+      recordHookIdentityDiagnostic(identity.audit, "context_emitted", process.env, identity);
+      const parentRoot = resolve(realpathSync(f.project.root), "cache", "parent-shell");
+      const childRoot = resolve(realpathSync(f.project.root), "cache", "child-shell");
+      const configuredRoot = resolve(realpathSync(f.project.root), "cache", "configured-shell");
+      for (const root of [parentRoot, childRoot, configuredRoot, resolve(realpathSync(f.project.root), "cache", "unobserved-shell")]) cpSync(SOURCE_ROOT, root, { recursive: true });
+      const host = { platform, cliVersion: platform === "win32" ? "0.153.4" : "0.153.0", executableDigest: "a".repeat(64) };
+      const commandField = platform === "win32" ? "commandWindows" : "command";
+      const inventory = (root) => {
+        const document = JSON.parse(readFileSync(resolve(root, "hooks", "hooks.json"), "utf8"));
+        return { data: [{ cwd: f.project.root, hooks: Object.entries(document.hooks).flatMap(([event, groups]) => groups.flatMap(group => group.hooks.map(hook => ({
+          eventName: event[0].toLowerCase() + event.slice(1), handlerType: "command", command: hook[commandField],
+          matcher: group.matcher ?? null, timeoutSec: hook.timeout, statusMessage: hook.statusMessage,
+          async: false, source: "plugin", sourcePath: resolve(root, "hooks", "hooks.json"),
+          pluginId: "adaptive-model-router@adaptive-model-router", currentHash: `sha256:${"a".repeat(64)}`, enabled: true, trustStatus: "trusted",
+        })))) }] };
+      };
+      Object.assign(f.binding, lifecycleBinding(inventory(childRoot).data[0].hooks, parentRoot, childRoot, host, f.project.root));
+      f.hookShells = { pre: parentRoot, post: parentRoot, start: childRoot, stop: childRoot };
+      const original = await completedQualification(f);
+      await callRouterTool("record_outcome", original.outcome, original.serviceOptions);
+      assert.deepEqual(provenQualificationShellRoots(f.store.db, f.context).sort(), [payloadHash(parentRoot), payloadHash(childRoot)].sort());
+      const inspect = () => inspectLifecycleHookReadiness({ cwd: f.project.root, pluginRoot: parentRoot, platform,
+        store: f.store, context: f.context, contextId: f.input.contextId,
+        appServer: async (run) => run({ start: async () => {}, request: async (method) => method === "thread/turns/list"
+          ? { data: [{ id: "current-native-turn" }] } : { thread: { id: f.input.contextId, cwd: f.project.root } }, listHooks: async () => inventory(configuredRoot) }),
+        nativeHost: async () => host,
+      });
+      const readiness = await inspect();
+      assert.equal(readiness.reasonCode, "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN");
+      assert.deepEqual(readiness.binding.shellRoots, [parentRoot, childRoot, configuredRoot].map(payloadHash).sort());
+      Object.assign(f.binding, readiness.binding);
+      const refreshed = await completedQualification(f);
+      await callRouterTool("record_outcome", refreshed.outcome, refreshed.serviceOptions);
+      assert.equal((await inspect()).ready, true);
+      const changed = JSON.parse(readFileSync(resolve(childRoot, "hooks", "hooks.json"), "utf8"));
+      changed.hooks.SubagentStart[0].hooks[0][commandField] += " unexpected";
+      writeFileSync(resolve(childRoot, "hooks", "hooks.json"), JSON.stringify(changed));
+      const rejected = await inspect();
+      assert.equal(rejected.ready, false);
+      assert.equal(rejected.qualificationBinding, undefined);
     });
-    const readiness = await inspect();
-    assert.equal(readiness.reasonCode, "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN");
-    assert.deepEqual(readiness.binding.shellRoots, [parentRoot, childRoot, configuredRoot].map(payloadHash).sort());
-    Object.assign(f.binding, readiness.binding);
-    const refreshed = await completedQualification(f);
-    await callRouterTool("record_outcome", refreshed.outcome, refreshed.serviceOptions);
-    assert.equal((await inspect()).ready, true);
-    const changed = JSON.parse(readFileSync(resolve(childRoot, "hooks", "hooks.json"), "utf8"));
-    changed.hooks.SubagentStart[0].hooks[0].command += " unexpected";
-    writeFileSync(resolve(childRoot, "hooks", "hooks.json"), JSON.stringify(changed));
-    const rejected = await inspect();
-    assert.equal(rejected.ready, false);
-    assert.equal(rejected.qualificationBinding, undefined);
   });
-});
+}
 
 async function completedFailedNoop(run) {
   await fixture(async (f) => {
