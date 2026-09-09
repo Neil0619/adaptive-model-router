@@ -20,7 +20,7 @@ All notable changes to this project are documented here.
   applying legacy offsets. GPT-6-only smoke covers root slug changes offline.
 - Keep route identifiers in status/history and diagnostics while routine
   notices show the stage, target, effort, and only directly observed service
-  tier information.
+  tier information. Omit the service tier field when the host provides none.
 
 ### Fixed
 
@@ -76,6 +76,7 @@ All notable changes to this project are documented here.
   preserving failed attempts and missing handshakes without inventing outcomes.
   Narrow metadata-only recovery auditing remains separate from the no-tool
   qualification contract.
+- Run the Windows smoke regression tests in both Windows CI matrix jobs.
 - Normalize explicit targets without mutating immutable policy objects.
 - Support the separately audited native macOS CLI `0.153.3` lifecycle stream;
   unknown builds and legacy recovery receipts retain their existing boundaries.
