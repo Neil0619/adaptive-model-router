@@ -1,0 +1,51 @@
+import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+
+/** Child verification requires a stable whole file. Message reconciliation can
+ * instead pin a complete prefix while the active parent appends new events;
+ * that prefix is independently rehashed before it is accepted. */
+export function readStableRollout(path, accept, { allowAppend = false } = {}) {
+  const fd = openSync(path, "r");
+  try {
+    const before = fstatSync(fd);
+    if (!before.isFile() || before.size > 512 * 1024 * 1024) throw new Error("native transcript exceeds evidence bounds");
+    const hash = createHash("sha256");
+    let offset = 0, line = 0, fragment = Buffer.alloc(0);
+    while (offset < before.size) {
+      const chunk = Buffer.alloc(Math.min(64 * 1024, before.size - offset));
+      const count = readSync(fd, chunk, 0, chunk.length, offset);
+      if (!count) throw new Error("native transcript changed during evidence read");
+      offset += count;
+      hash.update(chunk.subarray(0, count));
+      fragment = Buffer.concat([fragment, chunk.subarray(0, count)]);
+      let end;
+      while ((end = fragment.indexOf(0x0a)) >= 0) {
+        if (end > 16 * 1024 * 1024) throw new Error("native transcript line exceeds evidence bounds");
+        accept(JSON.parse(fragment.subarray(0, end).toString("utf8")), ++line);
+        fragment = fragment.subarray(end + 1);
+      }
+      if (fragment.length > 16 * 1024 * 1024) throw new Error("native transcript line exceeds evidence bounds");
+    }
+    const after = fstatSync(fd);
+    const sameFile = (value) => value.dev === before.dev && value.ino === before.ino && value.size >= before.size;
+    if (!sameFile(after) || !sameFile(statSync(path))) throw new Error("native transcript changed during evidence read");
+    if (!allowAppend && !["size", "mtimeMs", "ctimeMs"].every((key) => before[key] === after[key])) throw new Error("native transcript changed during evidence read");
+    if (fragment.length || !line) throw new Error("native transcript has incomplete records");
+    const transcriptDigest = hash.digest("hex");
+    if (allowAppend) {
+      const verified = createHash("sha256");
+      let position = 0;
+      while (position < before.size) {
+        const chunk = Buffer.alloc(Math.min(64 * 1024, before.size - position));
+        const count = readSync(fd, chunk, 0, chunk.length, position);
+        if (!count) throw new Error("native transcript changed during evidence read");
+        verified.update(chunk.subarray(0, count)); position += count;
+      }
+      if (verified.digest("hex") !== transcriptDigest || !sameFile(fstatSync(fd)) || !sameFile(statSync(path))) {
+        throw new Error("native transcript changed during evidence read");
+      }
+    }
+    const allocated = Number.isSafeInteger(before.blocks) ? before.blocks * 512 : before.size;
+    return { transcriptDigest, transcriptBytes: Math.max(before.size, allocated) };
+  } finally { closeSync(fd); }
+}

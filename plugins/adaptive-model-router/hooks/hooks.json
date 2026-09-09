@@ -30,7 +30,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "^(?:Agent|spawn_agent|collaborationspawn_agent)$",
+        "matcher": ".*",
         "hooks": [
           {
             "type": "command",
@@ -44,7 +44,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "^(?:Agent|spawn_agent|collaborationspawn_agent)$",
+        "matcher": "^(?:Bash|Agent|(?:collaboration)?(?:spawn_agent|send_message|followup_task|list_agents|interrupt_agent))$",
         "hooks": [
           {
             "type": "command",

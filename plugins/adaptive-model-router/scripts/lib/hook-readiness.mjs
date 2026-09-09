@@ -6,6 +6,7 @@ import { lifecycleBinding, nativeQualificationHost, nativeTaskWorkingDirectory, 
 import { payloadHash } from "./io.mjs";
 import { discoverRuntimeCandidates } from "./runtime-loader.mjs";
 import { readHookIdentityDiagnostic } from "./hook-diagnostics.mjs";
+import { supportsResidencyHookMatcherUpgrade } from "./installation-surface.mjs";
 
 export const HOOK_READINESS_TIMEOUT_MS = 5_000;
 
@@ -185,7 +186,8 @@ function historicalHookShells(store, context, pluginRoot, inventoryRoot, platfor
     const hash = payloadHash(candidate.root);
     if (!required.has(hash)) continue;
     const actual = expectedHooks(candidate.root, platform);
-    if (!safeHistoricalTree(candidate.root) || !actual || payloadHash(actual.entries) !== payloadHash(expected.entries)) {
+    if (!safeHistoricalTree(candidate.root) || !actual || (payloadHash(actual.entries) !== payloadHash(expected.entries)
+      && !supportsResidencyHookMatcherUpgrade(actual.entries, expected.entries))) {
       throw new Error("previously observed Hook shell is no longer equivalent");
     }
     matched.push(candidate.root); required.delete(hash);
@@ -239,7 +241,8 @@ export async function inspectLifecycleHookReadiness({
         const pinned = expectedHooks(pluginRoot, platform);
         const configured = expectedHooks(roots[0], platform);
         if ((discovered.ready || discovered.reasonCode === "HOOK_TRUST_REQUIRED") && pinned && configured
-          && payloadHash(pinned.entries) === payloadHash(configured.entries)) {
+          && (payloadHash(pinned.entries) === payloadHash(configured.entries)
+            || supportsResidencyHookMatcherUpgrade(pinned.entries, configured.entries))) {
           inventory = discovered;
           inventoryRoot = roots[0];
         }

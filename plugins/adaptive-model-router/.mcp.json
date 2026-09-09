@@ -11,6 +11,7 @@
       "tools": {
         "route_stage": { "approval_mode": "approve" },
         "record_outcome": { "approval_mode": "approve" },
+        "manage_stage": { "approval_mode": "approve" },
         "get_route_status": { "approval_mode": "approve" },
         "get_route_history": { "approval_mode": "approve" },
         "list_policy_proposals": { "approval_mode": "approve" },

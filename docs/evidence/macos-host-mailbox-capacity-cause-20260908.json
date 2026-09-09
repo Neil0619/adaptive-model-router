@@ -1,0 +1,1233 @@
+{
+  "schemaVersion": 1,
+  "investigatedOn": "2026-09-08",
+  "scope": "Cause investigation only; no runtime repair, install, configuration change, Hosted action, or commit.",
+  "conclusion": "V2 completed residents with undrained QueueOnly mailbox items are ineligible for automatic eviction. Three such children exhausted the effective three-child resident capacity. Router subsequently retained a permanent root-only marker after reconciling its separate reservation.",
+  "nativeHost": {
+    "binary": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "version": "0.153.4",
+    "sha256": "a30ec314bbd0e3721632234d07db7c99855db3b9f1e32dbe8c791947f07e7629",
+    "mode": "multi_agent_v2",
+    "totalConcurrencyIncludingRoot": 4,
+    "effectiveResidentChildCapacity": 3,
+    "configPath": "/Users/niuzhenya/.codex/config.toml",
+    "configLine": 84,
+    "legacyMaxThreads": 3,
+    "mainAppServerPid": 11292,
+    "mainAppServerStartedAt": "2026-09-08T01:44:40.011Z",
+    "historicalEffectiveLimitEvidence": "Native developer context declared four slots including root; current configuration agrees."
+  },
+  "source": {
+    "repository": "https://github.com/openai/codex",
+    "tag": "rust-v0.153.4",
+    "commit": "3d2ee51ca2d5db578f328aa75e20aa22c0197c9a",
+    "files": [
+      {
+        "path": "codex-rs/core/src/agent/control/residency.rs",
+        "lineAnchors": [
+          80,
+          157,
+          233,
+          239
+        ],
+        "sha256": "019818bed8a57225d084e850fb2b471c2e4d4c21d263869c9ed49a2815fa8691"
+      },
+      {
+        "path": "codex-rs/core/src/session/input_queue.rs",
+        "lineAnchors": [
+          211,
+          231
+        ],
+        "sha256": "449287b2cefa2577fb17275e0bc39d804c79bb7685ff7cfd83dc8ffd2dc1724c"
+      },
+      {
+        "path": "codex-rs/core/src/tools/handlers/multi_agents_v2/send_message.rs",
+        "lineAnchors": [
+          39,
+          47
+        ],
+        "sha256": "0c3f9ca77ac63b7f3bb38a2e85aa932d6891937970ebf39957d1463f6aaa3f46"
+      },
+      {
+        "path": "codex-rs/core/src/config/mod.rs",
+        "lineAnchors": [
+          1562,
+          1574,
+          2691,
+          2702
+        ],
+        "sha256": "b3eb0a9751522f7f6f7a7bd1b21253f2fcb4e669955819bfb6d0a7425e1fed9e"
+      }
+    ]
+  },
+  "incident": {
+    "taskId": "01a07b17-5336-7172-b6ec-2e82ea6fb882",
+    "title": "完成 Hosted 验收并上线生产",
+    "parentRollout": "/Users/niuzhenya/.codex/sessions/2026/09/07/rollout-2026-09-07T16-58-41-01a07b17-5336-7172-b6ec-2e82ea6fb882.jsonl",
+    "rejectionAt": "2026-09-08T05:56:11.552Z",
+    "rejectionLine": 6306,
+    "rejectionCallLine": 6304,
+    "rejection": "collab spawn failed: agent thread limit reached",
+    "beforeRejection": {
+      "spawnAttempts": 42,
+      "spawnSuccesses": 40,
+      "earlierProfileMismatch": 1,
+      "distinctCompletedChildren": 40,
+      "visibleActiveChildrenAtRejection": 0
+    },
+    "queueOnlyMessagesInCurrentRuntime": [
+      {
+        "parentLine": 3871,
+        "sentAt": "2026-09-08T02:10:07.328Z",
+        "target": "/root/router_80be2a5e4c859cb7968467edcb5c4770",
+        "callId": "call_vHztnLkZcbuxH8R8UG58FV5f",
+        "messageDigest": "69c27591c25bbba7aa0cd858b548510be8bd89c1f0df969a3add10cfbb4affd0",
+        "received": null,
+        "accepted": "",
+        "childId": "01a07ec4-901e-7d23-89cc-192a75dc95eb",
+        "childName": "Ptolemy",
+        "rolloutPath": "/Users/niuzhenya/.codex/sessions/2026/09/08/rollout-2026-09-08T10-06-46-01a07ec4-901e-7d23-89cc-192a75dc95eb.jsonl",
+        "lastState": {
+          "kind": "completed",
+          "line": 3876,
+          "ts": "2026-09-08T02:10:08.831Z"
+        }
+      },
+      {
+        "parentLine": 4573,
+        "sentAt": "2026-09-08T03:07:49.775Z",
+        "target": "/root/router_f60002ce6ee70d0df5c0b53ec4b3101a",
+        "callId": "call_AqWXADjCZX0UGFncI5Nt39se",
+        "messageDigest": "b0fb6cdd9261f5f31fed78d6eb1f2662d9880a64026a2e7ef0ca0da6422d690c",
+        "received": null,
+        "accepted": "",
+        "childId": "01a07efa-b4b3-7c71-86c8-ebf4ad6e4a46",
+        "childName": "Avicenna",
+        "rolloutPath": "/Users/niuzhenya/.codex/sessions/2026/09/08/rollout-2026-09-08T11-05-54-01a07efa-b4b3-7c71-86c8-ebf4ad6e4a46.jsonl",
+        "lastState": {
+          "kind": "completed",
+          "line": 4587,
+          "ts": "2026-09-08T03:08:15.001Z"
+        }
+      },
+      {
+        "parentLine": 6257,
+        "sentAt": "2026-09-08T05:48:27.119Z",
+        "target": "/root/router_3850847827954d139b3a16db857689dc",
+        "callId": "call_mupHxKAJqGWKy8y9SBgGEca7",
+        "messageDigest": "7b190da424855a86ff49a89720e815ed2ac46195425e808a06f9c293a5f5996a",
+        "received": {
+          "line": 100,
+          "ts": "2026-09-08T05:57:24.270Z"
+        },
+        "accepted": "",
+        "childId": "01a07f8b-ee3e-7cf1-8e6b-b15b19de6ebc",
+        "childName": "Kuhn",
+        "rolloutPath": "/Users/niuzhenya/.codex/sessions/2026/09/08/rollout-2026-09-08T13-44-32-01a07f8b-ee3e-7cf1-8e6b-b15b19de6ebc.jsonl",
+        "lastState": {
+          "kind": "completed",
+          "line": 6264,
+          "ts": "2026-09-08T05:49:10.910Z"
+        }
+      }
+    ],
+    "messageMatchingMethod": "SHA256 equality of opaque host-encrypted parent message and child agent_message encrypted_content; no decryption or message body retained. Absent child delivery before cutoff was checked against original child rollouts.",
+    "kuhnFollowup": {
+      "parentLine": 6321,
+      "at": "2026-09-08T05:57:24.234Z",
+      "oldQueueDeliveryChildLine": 100,
+      "oldQueueDeliveryAt": "2026-09-08T05:57:24.270Z"
+    },
+    "excludedEarlierRuntimePendingMessageCount": 2
+  },
+  "priorAcceptance": [
+    {
+      "path": "/Users/niuzhenya/.codex/sessions/2026/09/06/rollout-2026-09-06T17-53-01-01a07622-b473-7962-b5a4-9c33e6df396f.jsonl",
+      "taskId": "01a07622-b473-7962-b5a4-9c33e6df396f",
+      "cliVersion": "0.153.4",
+      "spawnCount": 2,
+      "sendMessageCount": 0,
+      "spawnResults": [
+        {
+          "callLine": 471,
+          "outputLine": 474,
+          "timestamp": "2026-09-06T11:02:50.859Z",
+          "success": true,
+          "error": null
+        },
+        {
+          "callLine": 510,
+          "outputLine": 513,
+          "timestamp": "2026-09-06T11:04:23.635Z",
+          "success": true,
+          "error": null
+        }
+      ]
+    },
+    {
+      "path": "/Users/niuzhenya/.codex/sessions/2026/09/06/rollout-2026-09-06T18-06-07-01a0762e-b561-7662-9e24-ab3122bf8105.jsonl",
+      "taskId": "01a0762e-b561-7662-9e24-ab3122bf8105",
+      "cliVersion": "0.153.4",
+      "spawnCount": 2,
+      "sendMessageCount": 1,
+      "spawnResults": [
+        {
+          "callLine": 331,
+          "outputLine": 334,
+          "timestamp": "2026-09-06T10:47:25.373Z",
+          "success": true,
+          "error": null
+        },
+        {
+          "callLine": 360,
+          "outputLine": 363,
+          "timestamp": "2026-09-06T10:48:36.747Z",
+          "success": true,
+          "error": null
+        }
+      ]
+    }
+  ],
+  "routerSourceComparison": {
+    "functionsUnchangedAcrossFiveComparedCopies": {
+      "inspectRouterChildBudget": {
+        "old_worktree": "497ec21580a35619801447a2d50bead1e83480b2ceda3fb971dc1ed4d6bc1315",
+        "old_installed_cache": "497ec21580a35619801447a2d50bead1e83480b2ceda3fb971dc1ed4d6bc1315",
+        "7fc6955": "497ec21580a35619801447a2d50bead1e83480b2ceda3fb971dc1ed4d6bc1315",
+        "5b2c4b4": "497ec21580a35619801447a2d50bead1e83480b2ceda3fb971dc1ed4d6bc1315",
+        "current": "497ec21580a35619801447a2d50bead1e83480b2ceda3fb971dc1ed4d6bc1315"
+      },
+      "finalizeIfSafe": {
+        "old_worktree": "77106b7d73014033d675debf7afafa461e9334226e0475388e4b1d08f255e4aa",
+        "old_installed_cache": "77106b7d73014033d675debf7afafa461e9334226e0475388e4b1d08f255e4aa",
+        "7fc6955": "77106b7d73014033d675debf7afafa461e9334226e0475388e4b1d08f255e4aa",
+        "5b2c4b4": "77106b7d73014033d675debf7afafa461e9334226e0475388e4b1d08f255e4aa",
+        "current": "77106b7d73014033d675debf7afafa461e9334226e0475388e4b1d08f255e4aa"
+      },
+      "observeAgentResult": {
+        "old_worktree": "9c216dd3dff8b3a324b7b44245486d2325cf1b54dcdb0d8e4f57bb3dcb6442d2",
+        "old_installed_cache": "9c216dd3dff8b3a324b7b44245486d2325cf1b54dcdb0d8e4f57bb3dcb6442d2",
+        "7fc6955": "9c216dd3dff8b3a324b7b44245486d2325cf1b54dcdb0d8e4f57bb3dcb6442d2",
+        "5b2c4b4": "9c216dd3dff8b3a324b7b44245486d2325cf1b54dcdb0d8e4f57bb3dcb6442d2",
+        "current": "9c216dd3dff8b3a324b7b44245486d2325cf1b54dcdb0d8e4f57bb3dcb6442d2"
+      },
+      "observeSubagentStop": {
+        "old_worktree": "b4b4b248517558d96e2e48cada9ce0f8960a17d8c1fa0ebd8e3d0f715be24d13",
+        "old_installed_cache": "b4b4b248517558d96e2e48cada9ce0f8960a17d8c1fa0ebd8e3d0f715be24d13",
+        "7fc6955": "b4b4b248517558d96e2e48cada9ce0f8960a17d8c1fa0ebd8e3d0f715be24d13",
+        "5b2c4b4": "b4b4b248517558d96e2e48cada9ce0f8960a17d8c1fa0ebd8e3d0f715be24d13",
+        "current": "b4b4b248517558d96e2e48cada9ce0f8960a17d8c1fa0ebd8e3d0f715be24d13"
+      }
+    },
+    "currentPersistentRootOnlyRead": "plugins/adaptive-model-router/scripts/lib/router.mjs:221",
+    "currentPersistentRootOnlyWrite": "plugins/adaptive-model-router/scripts/lib/delegation-recovery.mjs:214"
+  },
+  "controlledNativeExperiment": {
+    "artifactDirectory": "/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-native-capacity-probe-vjg597ns",
+    "runnerPath": "/tmp/router-native-capacity-probe.py",
+    "runnerSha256": "cec67effb0a5446087a7d672eaf7795b7d2a2aac9c61cfd7fc6c6b67ab74b920",
+    "modelResponseProvider": "Loopback synthetic Responses SSE; native collaboration handlers, residency, scheduler, mailbox and unloading are real. No paid model inference.",
+    "isolation": {
+      "ignoreUserConfig": true,
+      "ephemeral": true,
+      "temporarySqliteHome": true,
+      "routerPluginAbsentFromNativeBaseline": true,
+      "totalConcurrencyIncludingRoot": 4,
+      "persistedConfigEdited": false,
+      "hookTrustBypassed": false
+    },
+    "summary": {
+      "exitCode": 0,
+      "rootRequests": 43,
+      "childResponses": 11,
+      "errors": []
+    },
+    "assertions": {
+      "baselineSixSequentialSpawnsAllSucceeded": true,
+      "allActionBoundariesAfterNativeCompleted": true,
+      "maxObservedRunningChildren": 1,
+      "residentChildrenNeverExceededThree": true,
+      "threeCompletedQueuedChildrenCausedExactRejection": true,
+      "drainOneWithoutRaisingLimitAllowedNewSpawn": true,
+      "drainedChildEvictedWhileOtherQueuedChildrenRetained": true
+    },
+    "trace": [
+      {
+        "callId": "call_probe_1",
+        "tool": "spawn_agent",
+        "arguments": {
+          "task_name": "capacity_probe_1",
+          "message": "CAPACITY_CHILD_PROBE_1. Return exactly CHILD_DONE.",
+          "fork_turns": "none",
+          "model": "gpt-6-astra",
+          "reasoning_effort": "low"
+        },
+        "nativeResult": {
+          "task_name": "/root/capacity_probe_1"
+        }
+      },
+      {
+        "callId": "call_probe_2",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_1",
+              "agent_status": "running"
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_4",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_1",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_5",
+        "tool": "spawn_agent",
+        "arguments": {
+          "task_name": "capacity_probe_2",
+          "message": "CAPACITY_CHILD_PROBE_2. Return exactly CHILD_DONE.",
+          "fork_turns": "none",
+          "model": "gpt-6-astra",
+          "reasoning_effort": "low"
+        },
+        "nativeResult": {
+          "task_name": "/root/capacity_probe_2"
+        }
+      },
+      {
+        "callId": "call_probe_6",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_1",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_2",
+              "agent_status": "running"
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_8",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_1",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_2",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_9",
+        "tool": "spawn_agent",
+        "arguments": {
+          "task_name": "capacity_probe_3",
+          "message": "CAPACITY_CHILD_PROBE_3. Return exactly CHILD_DONE.",
+          "fork_turns": "none",
+          "model": "gpt-6-astra",
+          "reasoning_effort": "low"
+        },
+        "nativeResult": {
+          "task_name": "/root/capacity_probe_3"
+        }
+      },
+      {
+        "callId": "call_probe_10",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_1",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_2",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_3",
+              "agent_status": "running"
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_12",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_1",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_2",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_3",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_13",
+        "tool": "spawn_agent",
+        "arguments": {
+          "task_name": "capacity_probe_4",
+          "message": "CAPACITY_CHILD_PROBE_4. Return exactly CHILD_DONE.",
+          "fork_turns": "none",
+          "model": "gpt-6-astra",
+          "reasoning_effort": "low"
+        },
+        "nativeResult": {
+          "task_name": "/root/capacity_probe_4"
+        }
+      },
+      {
+        "callId": "call_probe_14",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_2",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_3",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_4",
+              "agent_status": "running"
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_16",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_2",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_3",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_4",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_17",
+        "tool": "spawn_agent",
+        "arguments": {
+          "task_name": "capacity_probe_5",
+          "message": "CAPACITY_CHILD_PROBE_5. Return exactly CHILD_DONE.",
+          "fork_turns": "none",
+          "model": "gpt-6-astra",
+          "reasoning_effort": "low"
+        },
+        "nativeResult": {
+          "task_name": "/root/capacity_probe_5"
+        }
+      },
+      {
+        "callId": "call_probe_18",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_3",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_4",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_5",
+              "agent_status": "running"
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_20",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_3",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_4",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_5",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_21",
+        "tool": "spawn_agent",
+        "arguments": {
+          "task_name": "capacity_probe_6",
+          "message": "CAPACITY_CHILD_PROBE_6. Return exactly CHILD_DONE.",
+          "fork_turns": "none",
+          "model": "gpt-6-astra",
+          "reasoning_effort": "low"
+        },
+        "nativeResult": {
+          "task_name": "/root/capacity_probe_6"
+        }
+      },
+      {
+        "callId": "call_probe_22",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_4",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_5",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_6",
+              "agent_status": "running"
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_23",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_4",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_5",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_6",
+              "agent_status": "running"
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_24",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_4",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_5",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_6",
+              "agent_status": "running"
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_26",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_4",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_5",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_6",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_27",
+        "tool": "spawn_agent",
+        "arguments": {
+          "task_name": "capacity_probe_7",
+          "message": "CAPACITY_CHILD_PROBE_7. Return exactly CHILD_DONE.",
+          "fork_turns": "none",
+          "model": "gpt-6-astra",
+          "reasoning_effort": "low"
+        },
+        "nativeResult": {
+          "task_name": "/root/capacity_probe_7"
+        }
+      },
+      {
+        "callId": "call_probe_28",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_5",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_6",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_7",
+              "agent_status": "running"
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_29",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_5",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_6",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_7",
+              "agent_status": "running"
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_31",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_5",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_6",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_7",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_32",
+        "tool": "send_message",
+        "arguments": {
+          "target": "capacity_probe_7",
+          "message": "PENDING_PROBE_MESSAGE. No external actions."
+        },
+        "nativeResult": ""
+      },
+      {
+        "callId": "call_probe_33",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_5",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_6",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_7",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_34",
+        "tool": "spawn_agent",
+        "arguments": {
+          "task_name": "capacity_probe_8",
+          "message": "CAPACITY_CHILD_PROBE_8. Return exactly CHILD_DONE.",
+          "fork_turns": "none",
+          "model": "gpt-6-astra",
+          "reasoning_effort": "low"
+        },
+        "nativeResult": {
+          "task_name": "/root/capacity_probe_8"
+        }
+      },
+      {
+        "callId": "call_probe_35",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_6",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_7",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_8",
+              "agent_status": "running"
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_37",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_6",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_7",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_8",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_38",
+        "tool": "send_message",
+        "arguments": {
+          "target": "capacity_probe_8",
+          "message": "PENDING_PROBE_MESSAGE. No external actions."
+        },
+        "nativeResult": ""
+      },
+      {
+        "callId": "call_probe_39",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_6",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_7",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_8",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_40",
+        "tool": "spawn_agent",
+        "arguments": {
+          "task_name": "capacity_probe_9",
+          "message": "CAPACITY_CHILD_PROBE_9. Return exactly CHILD_DONE.",
+          "fork_turns": "none",
+          "model": "gpt-6-astra",
+          "reasoning_effort": "low"
+        },
+        "nativeResult": {
+          "task_name": "/root/capacity_probe_9"
+        }
+      },
+      {
+        "callId": "call_probe_41",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_7",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_8",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_9",
+              "agent_status": "running"
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_43",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_7",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_8",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_9",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_44",
+        "tool": "send_message",
+        "arguments": {
+          "target": "capacity_probe_9",
+          "message": "PENDING_PROBE_MESSAGE. No external actions."
+        },
+        "nativeResult": ""
+      },
+      {
+        "callId": "call_probe_45",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_7",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_8",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_9",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_46",
+        "tool": "spawn_agent",
+        "arguments": {
+          "task_name": "capacity_probe_10",
+          "message": "CAPACITY_CHILD_PROBE_10. Return exactly CHILD_DONE.",
+          "fork_turns": "none",
+          "model": "gpt-6-astra",
+          "reasoning_effort": "low"
+        },
+        "nativeResult": "collab spawn failed: agent thread limit reached"
+      },
+      {
+        "callId": "call_probe_47",
+        "tool": "followup_task",
+        "arguments": {
+          "target": "capacity_probe_9",
+          "message": "DRAIN_PROBE_MAILBOX. Return exactly CHILD_DONE."
+        },
+        "nativeResult": ""
+      },
+      {
+        "callId": "call_probe_49",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_7",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_8",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_9",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_50",
+        "tool": "spawn_agent",
+        "arguments": {
+          "task_name": "capacity_probe_11",
+          "message": "CAPACITY_CHILD_PROBE_11. Return exactly CHILD_DONE.",
+          "fork_turns": "none",
+          "model": "gpt-6-astra",
+          "reasoning_effort": "low"
+        },
+        "nativeResult": {
+          "task_name": "/root/capacity_probe_11"
+        }
+      },
+      {
+        "callId": "call_probe_51",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_11",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_7",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_8",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "callId": "call_probe_53",
+        "tool": "list_agents",
+        "arguments": {},
+        "nativeResult": {
+          "agents": [
+            {
+              "agent_name": "/root",
+              "agent_status": "running"
+            },
+            {
+              "agent_name": "/root/capacity_probe_11",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_7",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            },
+            {
+              "agent_name": "/root/capacity_probe_8",
+              "agent_status": {
+                "completed": "CHILD_DONE"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "warnings": [
+      "Ephemeral CLI target emitted missing-parent-rollout hook warnings. Native tool dispatch proceeded. This test does not qualify Router hook lifecycle or prove recovery of the original Desktop task."
+    ]
+  },
+  "verificationBoundary": {
+    "protectedPreExistingFilesHashMatched": 516,
+    "nativeExperimentExitCode": 0,
+    "routerDiagnosticRouteGate": "available",
+    "routerDiagnosticPendingOutcomes": 0,
+    "sourceBuiltFromScratch": false,
+    "originalHostedRuntimeMutated": false,
+    "fullRouterRegressionSuiteRerun": false,
+    "reason": "No runtime code changed. Independent native control test and original raw timeline are the relevant diagnosis checks."
+  }
+}

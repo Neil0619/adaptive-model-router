@@ -13,6 +13,9 @@ import { readTaskQualification } from "./lifecycle-qualification.mjs";
 import { qualificationTargetMatches } from "./qualification-policy.mjs";
 import { auditNativeUnconsumed1534Transcript, isMetadataRecoveryAudit } from "./native-metadata-recovery-audit.mjs";
 import { inspectNativePredispatchRejection, isPredispatchRecoveryReceipt } from "./native-predispatch-audit.mjs";
+import { inspectNativeHostCapacityRejection } from "./native-host-capacity-audit.mjs";
+import { CAPACITY_RECOVERY_SCHEMA, CAPACITY_REASON, capacityStateKey, hostCapacityRecoverySubject,
+  isHostCapacityRecoveryReceipt, capacityWasRecovered, invalidateCapacityList, rememberCapacityRefusal } from "./host-capacity-recovery.mjs";
 
 const PREFIX = "native_recovery:";
 const SCHEMA = "native-thread-delegation-recovery/2";
@@ -34,7 +37,8 @@ export function readNativeRecoveryReceipt(db, context, routeId) {
   if (!row) return null;
   try {
     const receipt = JSON.parse(row.value);
-    if (isPredispatchRecoveryReceipt(receipt, context, routeId)) return receipt;
+    if (isPredispatchRecoveryReceipt(receipt, context, routeId)
+      || isHostCapacityRecoveryReceipt(receipt, context, routeId)) return receipt;
     const supported = receipt.schemaVersion === SCHEMA
       ? Object.hasOwn(UNCONSUMED_AUDITORS, receipt.cliVersion)
         && (receipt.rawAuditAdapter === UNCONSUMED_AUDITORS[receipt.cliVersion].adapter || isMetadataRecoveryAudit(receipt))
@@ -171,6 +175,8 @@ function eligible(attempt) {
 }
 
 function recoverySubject(store, context, attempt, cwd) {
+  const capacity = hostCapacityRecoverySubject(store.db, context, attempt);
+  if (capacity) return capacity;
   if (eligible(attempt)) {
     const qualification = readTaskQualification(store.db, context);
     const route = store.db.prepare("SELECT * FROM routes WHERE route_id=? AND project_id=? AND context_key=?")
@@ -205,6 +211,12 @@ function finishRecovery(store, context, input, stateDigest, receipt, cwd) {
     const saved = { ...receipt, recordedAt };
     store.db.prepare("INSERT INTO meta(key, value) VALUES(?, ?)")
       .run(`${PREFIX}${input.routeId}`, canonicalJson(saved));
+    if (receipt.schemaVersion === CAPACITY_RECOVERY_SCHEMA) {
+      store.db.prepare("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        .run(capacityStateKey(context), input.routeId);
+      invalidateCapacityList(store.db, context);
+      rememberCapacityRefusal(store.db, context, input.routeId);
+    }
     // Preserve every missing original lifecycle field. This separate recovery
     // receipt is not a retroactive Pre/Post/Stop observation or normal outcome.
     store.db.prepare(`
@@ -264,9 +276,13 @@ export async function recoverDelegation(input, {
     // A separate, exact native adapter covers ordinary launches rejected by
     // PreToolUse before dispatch. Qualification recovery keeps its own proof
     // and retry contracts; generic errors never enter this branch.
-    if (subject.schemaVersion === SCHEMA && subject.receiptFields.recoveryKind === undefined) {
+    const capacity = subject.schemaVersion === CAPACITY_RECOVERY_SCHEMA;
+    if (capacity || (subject.schemaVersion === SCHEMA && subject.receiptFields.recoveryKind === undefined)) {
       let denial = null;
-      try {
+      if (capacity) {
+        denial = await inspectNativeHostCapacityRejection({ parent, read, attempt,
+          contextId: input.contextId, cwd, readParentTranscript });
+      } else try {
         denial = await inspectNativePredispatchRejection({ parent, read, attempt,
           contextId: input.contextId, cwd, readParentTranscript });
       } catch { /* Existing child recovery remains available for its own case. */ }
@@ -275,12 +291,13 @@ export async function recoverDelegation(input, {
         const evidenceDigest = payloadHash({ subjectDigest, attemptDigest, projection: denial.projection });
         if (input.apply !== true) return { status: "recoverable", evidenceDigest, gateReleased: false,
           disposition: "reconciled_failure", failureType: "tooling", transcriptBytes: 0,
-          recoveryKind: "rejected_before_dispatch" };
+          recoveryKind: denial.projection.recoveryKind };
         if (input.expectedEvidenceDigest !== evidenceDigest) return unresolved("RECOVERY_EVIDENCE_CHANGED");
         return finishRecovery(store, context, input, attemptDigest, {
           ...denial.projection, subjectDigest, evidenceDigest, sourceBytes: denial.sourceBytes,
           sourceDigest: denial.sourceDigest, status: "reconciled_failure", failureType: "tooling",
-          source: "native_thread_read", originalHandshakeProven: false, transcriptBytes: 0,
+          source: "native_thread_read", originalHandshakeProven: capacity, transcriptBytes: 0,
+          ...subject.receiptFields,
         }, cwd);
       }
     }
@@ -320,4 +337,36 @@ export async function recoverDelegation(input, {
   } finally {
     client?.close();
   }
+}
+
+// Historical capacity evidence is retained after reservation recovery. A later
+// native list and bounded admission reassess this root; a proven successful
+// spawn ends the temporary fallback without deleting the incident receipt.
+export function readHostCapacityRejection(db, context) {
+  const marker = db.prepare("SELECT value FROM meta WHERE key=?").get(capacityStateKey(context));
+  if (!marker) return null;
+  const receipt = readNativeRecoveryReceipt(db, context, marker.value);
+  if (!receipt || receipt.schemaVersion !== CAPACITY_RECOVERY_SCHEMA) {
+    return { reasonCode: "HOST_CAPACITY_EVIDENCE_UNPROVEN", source: "retained_capacity_marker" };
+  }
+  return { reasonCode: CAPACITY_REASON, source: receipt.source, recordedAt: receipt.recordedAt,
+    state: capacityWasRecovered(db, context) ? "recovered" : "recheck_required",
+    nextAction: capacityWasRecovered(db, context) ? "normal_routing" : "native_list_then_finish_pending_work_or_bounded_maintenance" };
+}
+
+// The mutation surface may close this exact native failure after storing the
+// caller's failed/tooling outcome. Read-only status/history never repair state.
+export async function recoverFailedHostCapacityDelegation(input, options) {
+  if (input.status !== "failed" || input.failureType !== "tooling") return null;
+  const { store, cwd } = options;
+  const context = store.context({ cwd, contextId: input.contextId, create: false });
+  const attempt = store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=? AND project_id=? AND context_key=?")
+    .get(input.routeId, context.projectId, context.contextKey);
+  if (!hostCapacityRecoverySubject(store.db, context, attempt)) return null;
+  const subject = { contextId: input.contextId, routeId: input.routeId };
+  const inspected = await recoverDelegation(subject, options);
+  if (inspected.status !== "recoverable" || inspected.recoveryKind !== "host_agent_limit_rejected") return null;
+  const applied = await recoverDelegation({ ...subject, apply: true, expectedEvidenceDigest: inspected.evidenceDigest }, options);
+  return { status: applied.status, gateReleased: applied.gateReleased,
+    reasonCode: applied.gateReleased ? CAPACITY_REASON : applied.reasonCode };
 }

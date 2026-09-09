@@ -13,6 +13,7 @@ import { lifecycleBinding, observeQualificationHook, provenQualificationShellRoo
 import { inspectLifecycleHookReadiness } from "../scripts/lib/hook-readiness.mjs";
 import { authorizeRequalification } from "../scripts/lib/qualification-retry.mjs";
 import { resolveHookIdentity } from "../scripts/lib/hook-identity.mjs";
+import { registerManagedChild, observeManagedMessage } from "../scripts/lib/stage-closure.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -111,7 +112,7 @@ async function completedQualification(value, admitted = null) {
     assert.match(claim.contextPackage, /Do not call tools/u);
     assert.equal(claim.contextPackage.includes("SECRET_ORIGINAL_WORK"), false);
     observeAgentResult(store.db, context, { turnId, toolUseId, toolInput, toolResponse: { agent_id: childId } });
-    observeSubagentStop(store.db, context, route.carrier.taskName, childId, 4096);
+    if (!value.managedChild) observeSubagentStop(store.db, context, route.carrier.taskName, childId, 4096);
     for (const event of ["pre", "post", "start", "stop"]) observeQualificationHook(store.db, context, route.routeId, event, value.hookShells?.[event] || SOURCE_ROOT);
   });
   const agentPath = `/root/${route.carrier.taskName}`;
@@ -132,6 +133,22 @@ async function completedQualification(value, admitted = null) {
     { type: "response_item", payload: { type: "message", id: "final", role: "assistant", phase: "final_answer", content: [{ type: "output_text", text: marker }] } },
     { type: "event_msg", payload: { type: "task_complete", turn_id: "child-turn" } },
   ];
+  if (value.managedChild) {
+    child.path = resolve(project.root, "managed-child.jsonl");
+    Object.assign(records[0].payload, { session_id: input.contextId, cwd: project.root, agent_path: agentPath,
+      source: { subagent: { thread_spawn: { parent_thread_id: input.contextId, depth: 1, agent_path: agentPath } } } });
+    records.splice(1, 0,
+      { type: "inter_agent_communication_metadata", payload: { trigger_turn: true } },
+      { type: "response_item", payload: { type: "agent_message", id: "activation", author: "/root", recipient: agentPath,
+        content: [{ type: "input_text", text: "native qualification activation" }],
+        internal_chat_message_metadata_passthrough: { turn_id: "child-turn" } } });
+    records.find((row) => row.payload.type === "message").payload.internal_chat_message_metadata_passthrough = { turn_id: "child-turn" };
+    writeFileSync(child.path, records.map(JSON.stringify).join("\n") + "\n");
+    registerManagedChild(store.db, context, route.routeId, { taskName: route.carrier.taskName, childId,
+      parentContextId: input.contextId, agentPath, transcriptPath: child.path });
+    observeSubagentStop(store.db, context, route.carrier.taskName, childId, 4096,
+      { turnId: "child-turn", lastAssistantMessage: marker });
+  }
   const outcome = { routeId: route.routeId, contextId: input.contextId, status: "passed", gate: route.verificationGate,
     failureType: null, retries: 0, retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
     escalations: 0, userCorrection: false };
@@ -141,6 +158,58 @@ async function completedQualification(value, admitted = null) {
   } };
   return { ...value, route, parent, child, records, outcome, serviceOptions };
 }
+
+test("managed qualification verifies current closure before minting and consuming its proof", async () => {
+  await fixture(async (value) => {
+    value.binding.cliVersion = "0.153.4";
+    const f = await completedQualification({ ...value, managedChild: true });
+    assert.equal(f.store.status(f.context).stageClosure.state, "ready");
+    assert.equal(f.store.db.prepare("SELECT stop_observed FROM delegation_attempts WHERE route_id=?").get(f.route.routeId).stop_observed, 0);
+    // Force the outcome transaction to repeat verification on a later clock
+    // tick. It must not invalidate the already source-owned proof by rewriting
+    // an unchanged attempt timestamp.
+    const read = f.serviceOptions.qualificationOptions.readNative;
+    f.serviceOptions.qualificationOptions.readNative = async (...args) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return read(...args);
+    };
+    assert.equal((await callRouterTool("record_outcome", f.outcome, f.serviceOptions)).recorded, true);
+    assert.equal(readTaskQualification(f.store.db, f.context).state, "passed");
+    assert.equal(f.store.status(f.context).delegationGate.state, "available");
+    assert.equal((await callRouterTool("record_outcome", f.outcome, f.serviceOptions)).idempotent, true);
+    assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM outcomes").get().n, 1);
+  });
+});
+
+test("a pending managed requirement prevents qualification proof without poisoning its retry state", async () => {
+  await fixture(async (value) => {
+    value.binding.cliVersion = "0.153.4";
+    const f = await completedQualification({ ...value, managedChild: true });
+    const accepted = observeManagedMessage(f.store.db, f.context, { tool_name: "followup_task",
+      turn_id: "next-root-turn", tool_use_id: "new-input", tool_input: { target: f.parent.turns[0].items[0].agentPath, message: "pending native input" } });
+    assert.equal(accepted.allowed, true);
+    await assert.rejects(callRouterTool("record_outcome", f.outcome, f.serviceOptions), /Stage closure is pending/);
+    assert.equal(readTaskQualification(f.store.db, f.context).state, "pending");
+    assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM outcomes").get().n, 0);
+  });
+});
+
+test("new managed input after proof preparation still invalidates outcome admission", async () => {
+  await fixture(async (value) => {
+    value.binding.cliVersion = "0.153.4";
+    const f = await completedQualification({ ...value, managedChild: true });
+    const before = f.serviceOptions.qualificationOptions.inspectBinding;
+    let reads = 0;
+    f.serviceOptions.qualificationOptions.inspectBinding = async () => {
+      if (++reads === 2) observeManagedMessage(f.store.db, f.context, { tool_name: "followup_task",
+        turn_id: "next-root-turn", tool_use_id: "racing-input", tool_input: { target: f.parent.turns[0].items[0].agentPath, message: "new native input" } });
+      return before();
+    };
+    await assert.rejects(callRouterTool("record_outcome", f.outcome, f.serviceOptions), /Stage closure is pending/);
+    assert.equal(readTaskQualification(f.store.db, f.context).state, "pending");
+    assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM outcomes").get().n, 0);
+  });
+});
 
 async function passedQualification(run) {
   await fixture(async (value) => {

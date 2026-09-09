@@ -1,11 +1,12 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { statfsSync } from "node:fs";
 import { canonicalJson, payloadHash } from "./io.mjs";
+import { openPrivateState as openContextPackage, sealPrivateState as sealContextPackage } from "./private-state.mjs";
+import { managedStageCanFinalize, markManagedStageSettled, observeManagedStop } from "./stage-closure.mjs";
 
 export const CARRIER_TYPE = "adaptive-model-router/delegation-ticket-v2";
 export const CONTEXT_PACKAGE_BYTE_LIMIT = 64 * 1024;
 export const MINIMUM_FREE_DISK_BYTES = 4 * 1024 * 1024 * 1024;
-export const ROUTER_CHILD_BYTE_LIMIT = 1024 * 1024 * 1024;
 export const ROUTER_CHILD_RESERVATION_BYTES = 256 * 1024 * 1024;
 export const ROUTER_GLOBAL_PENDING_LIMIT = 4;
 export const TERMINAL_ATTEMPT_HISTORY_LIMIT = 64;
@@ -20,32 +21,6 @@ const ROUTER_ACTIVATION_MESSAGE = [
 
 function sha256(value) {
   return createHash("sha256").update(String(value)).digest("hex");
-}
-
-function contextKey(db) {
-  const salt = db.prepare("SELECT value FROM meta WHERE key = 'local_salt'").get()?.value;
-  if (typeof salt !== "string" || !salt) throw new Error("router context encryption key is unavailable");
-  return createHash("sha256").update(`adaptive-router-context\0${salt}`).digest();
-}
-
-function sealContextPackage(db, value) {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", contextKey(db), iv);
-  const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
-  return ["enc-v1", iv.toString("base64url"), cipher.getAuthTag().toString("base64url"), encrypted.toString("base64url")].join(":");
-}
-
-function openContextPackage(db, value) {
-  const [version, iv, tag, encrypted, ...extra] = String(value || "").split(":");
-  if (version !== "enc-v1" || !iv || !tag || !encrypted || extra.length) {
-    throw new Error("router context package encoding is invalid");
-  }
-  const decipher = createDecipheriv("aes-256-gcm", contextKey(db), Buffer.from(iv, "base64url"));
-  decipher.setAuthTag(Buffer.from(tag, "base64url"));
-  return Buffer.concat([
-    decipher.update(Buffer.from(encrypted, "base64url")),
-    decipher.final(),
-  ]).toString("utf8");
 }
 
 function nowIso() {
@@ -88,12 +63,17 @@ export function inspectFreeDisk(cwd, {
           const stats = statfsSync(cwd, { bigint: true });
           return stats.bavail * stats.bsize;
         })();
-    const freeBytes = typeof raw === "bigint" ? raw : BigInt(Math.trunc(Number(raw)));
-    const reservation = BigInt(Math.trunc(Number(reservedBytes)));
-    if (freeBytes < 0n || reservation < 0n) throw new Error("free disk bytes must not be negative");
+    const bytes = (value) => {
+      if (typeof value !== "bigint" && !Number.isSafeInteger(value)) throw new Error("disk bytes must be exact integers");
+      const integer = BigInt(value);
+      if (integer < 0n) throw new Error("disk bytes must not be negative");
+      return integer;
+    };
+    const freeBytes = bytes(raw);
+    const reservation = bytes(reservedBytes);
     return {
       trusted: true,
-      allowed: freeBytes - reservation >= BigInt(minimumFreeBytes),
+      allowed: freeBytes - reservation >= bytes(minimumFreeBytes),
       freeBytes,
       reservedBytes: reservation,
     };
@@ -180,7 +160,9 @@ export function unresolvedAttempt(db, context) {
 }
 
 export function inspectRouterChildBudget(db, _context, {
-  maximumBytes = ROUTER_CHILD_BYTE_LIMIT,
+  // Optional explicit admission override for isolated callers. The installed
+  // default uses actual free disk, not lifetime audit bytes as a hard ceiling.
+  maximumBytes = null,
   reservationBytes = ROUTER_CHILD_RESERVATION_BYTES,
   maximumPending = ROUTER_GLOBAL_PENDING_LIMIT,
 } = {}) {
@@ -201,11 +183,15 @@ export function inspectRouterChildBudget(db, _context, {
     || pending < 0
     || !Number.isSafeInteger(reservationBytes)
     || reservationBytes < 0
+    || !Number.isSafeInteger(maximumPending) || maximumPending < 0
+    || (maximumBytes !== null && (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0))
   ) return { trusted: false, allowed: false };
   const nextReservationBytes = (pending + 1) * reservationBytes;
+  if (!Number.isSafeInteger(nextReservationBytes)) return { trusted: false, allowed: false };
   return {
     trusted: true,
-    allowed: pending < maximumPending && usedBytes + nextReservationBytes <= maximumBytes,
+    allowed: pending < maximumPending && (maximumBytes === null
+      || BigInt(usedBytes) + BigInt(nextReservationBytes) <= BigInt(maximumBytes)),
     usedBytes,
     pending,
     nextReservationBytes,
@@ -216,13 +202,15 @@ function finalizeIfSafe(db, row) {
   const childTerminal = row.post_observed === 1
     && ((row.no_child === 1 && row.transcript_bytes === 0)
       || (row.stop_observed === 1 && row.agent_id && Number.isSafeInteger(row.transcript_bytes)));
-  if (row.ambiguous !== 0 || row.outcome_recorded !== 1 || !childTerminal || row.finalized_at) return false;
+  if (row.ambiguous !== 0 || row.outcome_recorded !== 1 || !childTerminal || row.finalized_at
+    || !managedStageCanFinalize(db, row.route_id)) return false;
   const timestamp = nowIso();
   db.prepare(`
     UPDATE delegation_attempts
     SET finalized_at = ?, updated_at = ?, ticket_hash = NULL, context_package = NULL
     WHERE route_id = ? AND finalized_at IS NULL
   `).run(timestamp, timestamp, row.route_id);
+  markManagedStageSettled(db, row.route_id);
   db.prepare(`
     INSERT INTO delegation_usage(project_id, context_key, total_transcript_bytes, untrusted, updated_at)
     VALUES(?, ?, ?, 0, ?)
@@ -568,7 +556,7 @@ export function observeAgentResult(db, context, {
   };
 }
 
-export function observeSubagentStop(db, context, taskName, agentId, transcriptBytes) {
+export function observeSubagentStop(db, context, taskName, agentId, transcriptBytes, turn = {}) {
   const parsed = parseCarrierTaskName(taskName);
   if (!parsed.valid || typeof agentId !== "string" || !agentId.trim()) return { matched: false };
   const agentKey = sha256(agentId.normalize("NFC"));
@@ -581,6 +569,11 @@ export function observeSubagentStop(db, context, taskName, agentId, transcriptBy
   if (rows.length === 0) return { matched: false };
   if (rows.length !== 1) return { matched: false };
   const row = rows[0];
+  if (observeManagedStop(db, row.route_id, turn)) {
+    // Stop runs before native completion. Persist the precise turn/result fact;
+    // outcome verification later checks its completed transcript and all inputs.
+    return { matched: true, routeId: row.route_id, finalized: false, reason: "awaiting_current_result_verification" };
+  }
   if (!Number.isSafeInteger(transcriptBytes) || transcriptBytes < 0) {
     db.prepare("UPDATE delegation_attempts SET ambiguous = 1, stop_observed = 1, updated_at = ? WHERE route_id = ?")
       .run(nowIso(), row.route_id);

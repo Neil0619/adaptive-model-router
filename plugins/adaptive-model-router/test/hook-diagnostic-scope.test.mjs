@@ -61,6 +61,46 @@ test("a real prompt Hook persists a receipt for the emitted context and exact tu
   } finally { await p.cleanup(); }
 });
 
+test("an ordinary root tool Hook establishes the exact automatic turn without a prompt", async () => {
+  const p = await temporaryProject("router-automatic-turn-receipt-");
+  const env = { ...process.env, ADAPTIVE_ROUTER_HOME: p.home };
+  try {
+    recordHookIdentityDiagnostic({ ...audit, hookEvent: "Stop" }, "identity_accepted", env,
+      { contextId: "automatic-task", turnId: "previous-turn" });
+    const input = { session_id: "automatic-task", turn_id: "automatic-turn", tool_use_id: "actual-tool-call",
+      tool_name: "exec_command", tool_input: { cmd: "PRIVATE_COMMAND_MUST_NOT_BE_RECORDED" }, cwd: p.root };
+    const result = spawnSync(process.execPath, [join(pluginRoot, "scripts/hook.mjs"), "pre-tool-use"], {
+      encoding: "utf8", env, input: JSON.stringify(input),
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "", "recording dispatch must not change the native tool input or result");
+    const receipt = readHookIdentityDiagnostic(env, { contextId: input.session_id, turnId: input.turn_id });
+    assert.equal(receipt.available, true);
+    assert.equal(receipt.lastObservation.hookEvent, "PreToolUse");
+    assert.equal(receipt.lastObservation.boundedSubagent, false);
+    assert.equal(JSON.stringify(receipt).includes("PRIVATE_COMMAND"), false);
+    assert.equal(readHookIdentityDiagnostic(env, { contextId: input.session_id, turnId: "previous-turn" }).available, false);
+    assert.equal(readHookIdentityDiagnostic(env, { contextId: "another-task", turnId: input.turn_id }).available, false);
+  } finally { await p.cleanup(); }
+});
+
+test("incomplete or bounded tool Hooks cannot manufacture a root-turn dispatch receipt", async () => {
+  for (const change of [{ session_id: undefined }, { turn_id: undefined }, { tool_use_id: undefined },
+    { tool_name: undefined }, { agent_id: "bounded-child", agent_type: "worker" }]) {
+    const p = await temporaryProject("router-invalid-tool-receipt-");
+    const env = { ...process.env, ADAPTIVE_ROUTER_HOME: p.home };
+    try {
+      const input = { session_id: "root-task", turn_id: "root-turn", tool_use_id: "tool-call",
+        tool_name: "exec_command", tool_input: { cmd: "inert test input" }, cwd: p.root, ...change };
+      const result = spawnSync(process.execPath, [join(pluginRoot, "scripts/hook.mjs"), "pre-tool-use"], {
+        encoding: "utf8", env, input: JSON.stringify(input),
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(readHookIdentityDiagnostic(env, { contextId: "root-task", turnId: "root-turn" }).available, false);
+    } finally { await p.cleanup(); }
+  }
+});
+
 test("turnless compaction keeps the real turn receipt without inventing another turn", async () => {
   const p = await temporaryProject("router-compact-receipt-");
   const env = { ...process.env, ADAPTIVE_ROUTER_HOME: p.home };

@@ -35,6 +35,13 @@ files, or Codex credentials into a public issue.
    registration and restores indexed historical paths that Codex cache
    reconciliation pruned. Codex may resolve later `mcp list` queries to the
    staged sibling; this does not alter an existing task's fixed tool inventory.
+   The reviewed residency repair has a narrowly scoped in-place path:
+   `node scripts/manage-install.mjs repair --non-interactive --refresh-host-surface --verify-task-tools`
+   from its candidate plugin root. It permits only the reviewed Hook matcher
+   expansions and additive maintenance interface. Existing tasks use the stdio
+   bridge if their tool inventory is frozen. Refreshing files does not certify
+   live Hook dispatch; review any changed Hook hashes and verify the existing
+   task before reporting recovery.
    If it reports `HOST_RELOAD_REQUIRED`, fully exit
    Desktop and all other Codex CLI processes, then run the exact cold
    replacement command it prints from a fresh terminal. Review Hooks and create
@@ -161,9 +168,11 @@ remain on the default protected `stable` branch.
 ## Hooks are installed but do not run
 
 Plugin installation does not automatically trust command hooks. In Codex, open
-`/hooks`, review the installed definitions, and trust all seven handlers:
+`/hooks`, review the installed definitions, and trust the handlers whose current
+hashes are not already trusted. The seven Router handlers are:
 `SessionStart(source=compact)`, `SubagentStart`, `SubagentStop`,
-`PreToolUse(Agent)`, `PostToolUse(Agent)`, `UserPromptSubmit`, and `Stop`.
+`PreToolUse` (managed child tools and messages), `PostToolUse` (spawn, message,
+followup, list and interrupt receipts), `UserPromptSubmit`, and `Stop`.
 Trust is tied to the definition hash, so changed hooks require review again.
 
 If a task reports that no trusted `contextId` is available after compaction,
@@ -306,6 +315,47 @@ The persisted route class also guards this boundary: missing, invalid, or
 mismatched qualification metadata cannot make a self-test eligible for ordinary
 recovery. The final transaction rechecks that route and qualification state.
 
+### Recover a native agent-count rejection after dispatch
+
+The exact Desktop `0.153.4` response
+`collab spawn failed: agent thread limit reached` has a separate recovery path.
+Here PreToolUse has consumed the ticket but the host may provide no PostToolUse
+callback or child identity. A failed outcome alone cannot free the reservation.
+
+The MCP `record_outcome` mutation automatically audits this case after storing
+an ordinary failed/tooling outcome. If it reports `delegationRecovery` with
+`gateReleased: true`, check status. Existing stuck attempts, or attempts without
+an outcome, use the current installed `reconcile-delegation.mjs` command above.
+Inspect first and apply only `recoveryKind: host_agent_limit_rejected` with its
+fresh evidence digest; preserve a database backup before operator application.
+
+The adapter binds the original direct call, five exact arguments, trusted
+PreToolUse input digest, exact native refusal, full parent projection, route
+class and retained outcome. It audits complete native source snapshots twice,
+streaming at most one JSON record at a time. Bounds are 512 MiB per parent,
+16 MiB per record and 100,000 records; larger or partial logs fail closed.
+It tolerates unrelated parent progress but rejects replay, conflicting child
+activity, unknown builds/records, file replacement and changed database state.
+The transaction preserves existing outcomes and missing lifecycle observations,
+records a separate recovery receipt, revokes the ticket and frees its reservation.
+Neither a fake PostToolUse nor a new outcome is needed to release that attempt.
+
+Status then distinguishes an available `delegationGate` from a task-scoped
+`hostCapacityRejection`. The refusal remains history, not a permanent ban on
+delegation. At the next real stage, `HOST_CAPACITY_RECHECK_REQUIRED` requests
+one native `list_agents` observation. Complete current work or use bounded old
+child maintenance when required, then request a new ticket for the same
+still-needed stage. One recovery startup per stage and native root turn is
+allowed; do not retry the failed ticket or duplicate its outcome.
+
+`HOST_CAPACITY_TEMPORARY_BUSY` and `HOST_CAPACITY_RETRY_EXHAUSTED` leave the
+current work with the root until a later real delegation rechecks capacity.
+Required independent review remains pending for an actual child, and active
+maintenance blocks conflicting admission. No timeout, marker deletion, higher
+native limit or reuse of a settled child for new business proves recovery.
+A malformed retained receipt remains guarded with
+`HOST_CAPACITY_EVIDENCE_UNPROVEN`; routing for other root trees is unaffected.
+
 ### Inspect a failed qualification without resetting it
 
 The operator-only `scripts/reconcile-delegation.mjs` defaults to inspection.
@@ -404,6 +454,63 @@ verification, not as a substitute for waiting for that verification.
 Closing capture never re-arms authorization or changes a qualification result.
 The diagnostic facility remains inactive by default and automatically expires;
 retained redacted evidence lives under the plugin data `diagnostics/` directory.
+
+## A child has finished but its stage still has pending work
+
+Inspect `get_route_status.stageClosure` first. A final reply, successful
+`followup_task`, or completed outer code cell does not close an underlying
+process or acknowledge an omitted requirement. Follow its specific next action:
+continue the same stage, wait for the existing operation, or reconcile its
+original message call. Native Bash completion and matching command/patch
+terminal events normally settle execution automatically, including nonzero
+results; the root must still verify the task result.
+
+For a missing or conflicting execution receipt, call `manage_stage` with
+`action: "read_operations"`, the exact route and current `expectedRevision`.
+It returns operation identities, source references and `snapshotDigest`.
+This inspection is strictly read-only. Adopt an unregistered historical child
+only through explicit `reconcile_messages` with its exact native identity.
+An older opaque code-mode call without proven command coverage stays unknown
+after its outer cell completes; inspect its actual inner operations instead of
+polling a guessed handle. A late poll result cannot settle a newer operation
+that happens to reuse the old process handle.
+After inspecting the original evidence and any necessary actual verification,
+use `reconcile_operations` with `operationReview`: the snapshot, individually
+named operations, original and verification references, conclusion, basis and
+result review. A verified root judgment may establish `not_started`,
+`completed` or `stopped`. `unresolved` retains its source, owner, next step and
+resume condition. An existing handle or execution result cannot become
+`not_started`; cancelling the stage or submitting an empty pending array cannot
+clear execution. Changed inputs, receipts or commands require a new snapshot.
+
+The action appends a private review and invalidates old verification; it does
+not create an outcome or claim business success. Inspect closure again and
+verify the current result before settlement. Frozen tool inventories can call
+these additive actions through the installed `stdio-tool.mjs` bridge. A new
+bounded maintenance cycle after verified collection preserves earlier
+dispositions and accounting and requires a fresh followup and final result.
+Use normal routing and a new child for a new business stage.
+
+Repeated maintenance must preserve the previous verified dispositions. Resolve
+completed or explicitly changed responsibilities through `resolve_requirements`;
+another collection cannot silently turn transferred work into `no_work`.
+While maintenance is active, ordinary admission remains paused. An exact native
+Pre refusal of a message is recorded as rejected and stays with its sender;
+generic or uncorrelated errors remain pending until their actual result is known.
+
+For native final replies containing memory citations, the raw message and Stop
+can contain different text representations. The reader requires the same child,
+turn and message identity, exact citation metadata, and matching native completed
+text before accepting the alternate Stop digest. The complete response remains
+bound into result verification. Do not edit the transcript, strip citations,
+manufacture Hook records or send another final solely to mask this difference.
+
+If the installed runtime and trusted inventory are current but an old task
+still emits no required tool callback, record that actual failed self-test and
+use the existing plugin reload mechanism before retesting. Fresh-process Hook
+trust and an MCP hot upgrade alone do not prove that an old task loaded its
+new Hook definitions. Do not repeatedly create children to test a known stale
+loaded definition, erase its reservation, or claim an independent review ran.
 
 ## A child fails with an encrypted-content decode error
 

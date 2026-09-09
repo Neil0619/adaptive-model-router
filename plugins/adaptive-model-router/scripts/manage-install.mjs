@@ -40,6 +40,9 @@ const SOURCE_RUNTIME = parseRuntimeDescriptor(
   JSON.parse(readFileSync(join(PLUGIN_ROOT, "runtime.json"), "utf8")),
 );
 const SOURCE_COMPATIBILITY = readCompatibilityDescriptor(PLUGIN_ROOT);
+import { supportsResidencySurfaceRefresh } from "./lib/installation-surface.mjs";
+let refreshResidencySurface = false;
+
 const INSTALL_VERSION = SOURCE_MANIFEST.version;
 const REQUIRED_TASK_TOOLS = Object.freeze(["diagnose_router", "record_outcome", "route_stage"]);
 const LIVE_TASK_SMOKE_TOOLS = Object.freeze(["diagnose_router", "route_stage"]);
@@ -57,6 +60,10 @@ const LIVE_BRIDGE_FILES = Object.freeze([
   "compatibility.json",
   "scripts/lib/runtime-loader.mjs",
   "scripts/lib/plugin-data.mjs",
+  "scripts/lib/tool-contract-compatibility.mjs",
+  "scripts/lib/operation-contract.mjs",
+  "scripts/mcp-server.mjs",
+  "scripts/runtime-probe.mjs",
   "scripts/stdio-tool.mjs",
   "skills/adaptive-model-router/SKILL.md",
 ]);
@@ -99,6 +106,7 @@ function parseArgs(values) {
     nonInteractive: false,
     verifyTaskTools: false,
     pinLocalMarketplace: false,
+    refreshHostSurface: false,
     yes: false,
     ref: DEFAULT_REF,
   };
@@ -107,6 +115,7 @@ function parseArgs(values) {
     else if (value === "--patch-agents") parsed.patchAgents = true;
     else if (value === "--non-interactive") parsed.nonInteractive = true;
     else if (value === "--verify-task-tools") parsed.verifyTaskTools = true;
+    else if (value === "--refresh-host-surface") parsed.refreshHostSurface = true;
     else if (value === "--pin-local-marketplace") parsed.pinLocalMarketplace = true;
     else if (value === "--yes") parsed.yes = true;
     else if (value.startsWith("--ref=")) parsed.ref = value.slice("--ref=".length);
@@ -418,7 +427,7 @@ function compatibleRuntimeRoots(root) {
 }
 
 function refreshLiveBridgeFiles(root) {
-  for (const relative of LIVE_BRIDGE_FILES) {
+  for (const relative of [...LIVE_BRIDGE_FILES, ...(refreshResidencySurface ? [".mcp.json", "hooks/hooks.json"] : [])]) {
     const source = join(PLUGIN_ROOT, relative);
     const target = join(root, relative);
     mkdirSync(dirname(target), { recursive: true });
@@ -837,7 +846,7 @@ function archiveRuntimeRoot(vaultRoot, root) {
     compareRuntimeVersions(directory, INSTALL_VERSION) > 0 ||
     !sameRuntimeContract(health.descriptor, SOURCE_RUNTIME) ||
     !sameLiveCompatibility(health.compatibility, SOURCE_COMPATIBILITY) ||
-    !sameHostSurface(root)
+    !sameHostSurface(root) && !reviewedResidencyRefresh(root)
   ) {
     throw new InstallError(
       "RUNTIME_VAULT_ARCHIVE_FAILED: a verified runtime could not be bound to its immutable directory",
@@ -862,7 +871,7 @@ function archiveRuntimeRoot(vaultRoot, root) {
       stagedHealth?.version !== directory ||
       !sameRuntimeContract(stagedHealth.descriptor, SOURCE_RUNTIME) ||
       !sameLiveCompatibility(stagedHealth.compatibility, SOURCE_COMPATIBILITY) ||
-      !sameHostSurface(staged)
+      !sameHostSurface(staged) && !reviewedResidencyRefresh(staged)
     ) {
       throw new Error("archived runtime failed integrity validation");
     }
@@ -1275,6 +1284,15 @@ function sameHostSurface(installedRoot, referenceRoot = PLUGIN_ROOT) {
   }
 }
 
+function reviewedResidencyRefresh(root) {
+  if (!refreshResidencySurface) return false;
+  try {
+    return supportsResidencySurfaceRefresh(
+      Object.fromEntries(HOST_SURFACE_FILES.map((file) => [file, normalizedHostSurface(root, file).toString("utf8")])),
+      Object.fromEntries(HOST_SURFACE_FILES.map((file) => [file, normalizedHostSurface(PLUGIN_ROOT, file).toString("utf8")])));
+  } catch { return false; }
+}
+
 function assertCompatibleHotUpgrade(beforeHealth) {
   if (!sameRuntimeContract(beforeHealth.descriptor, SOURCE_RUNTIME)) {
     throw new InstallError(
@@ -1290,7 +1308,7 @@ function assertCompatibleHotUpgrade(beforeHealth) {
       "HOST_RELOAD_REQUIRED",
     );
   }
-  if (!sameHostSurface(beforeHealth.root)) {
+  if (!sameHostSurface(beforeHealth.root) && !reviewedResidencyRefresh(beforeHealth.root)) {
     throw new InstallError(
       `HOST_RELOAD_REQUIRED: the update changes Router MCP registration, Hooks, or Skill instructions and cannot preserve the current Desktop task tool inventory; fully exit Codex Desktop and other Codex sessions, run "codex plugin add ${PLUGIN_ID}" from a fresh terminal, review Hooks, then start a genuinely new non-forked task`,
       6,
@@ -1722,8 +1740,8 @@ function hotUpgradeWithIntegrityCheck(beforeHealth) {
     runtimeMutationStarted = true;
     for (const entry of runtimeSnapshot.entries) {
       assertDirectoryIdentity(entry.root, entry.rootIdentity);
-      materializeLaunchCommands(entry.root);
       refreshLiveBridgeFiles(entry.root);
+      materializeLaunchCommands(entry.root);
     }
     verifyMcpRegistration(beforeHealth, roots);
     verifyInstalledToolContract(beforeHealth, expectedRuntimeVersion);
@@ -2101,6 +2119,7 @@ async function installOrUpgrade(args, state) {
       `Adaptive Model Router runtime ${INSTALL_VERSION} was staged and activated without invoking Codex plugin re-registration.\n`,
     );
     process.stdout.write("Existing tasks that still expose Router tools keep their host tool inventory.\n");
+    if (refreshResidencySurface) process.stdout.write("Reviewed residency definitions were refreshed. Native Hook reload/trust and existing-child guard acceptance remain required; use the stdio bridge for frozen tool inventories. No task replacement is required by this update.\n");
   } else {
     process.stdout.write(`Adaptive Model Router ${INSTALL_VERSION} is installed and its MCP is registered for new tasks.\n`);
   }
@@ -2142,6 +2161,7 @@ async function repairInstallation(args, state) {
   process.stdout.write(
     `Adaptive Model Router runtime ${INSTALL_VERSION} was repaired without plugin re-registration${args.pinLocalMarketplace || managed ? "; its managed marketplace source was refreshed" : " or marketplace mutation"}.\n`,
   );
+  if (refreshResidencySurface) process.stdout.write("Reviewed residency definitions were refreshed. Native Hook reload/trust and existing-child guard acceptance remain required; a refreshed file is not live acceptance.\n");
   if (args.verifyTaskTools) {
     process.stdout.write(
       "Pinned in-place MCP, Hook, and stdio bridge probes passed; repair did not create a disposable Codex CLI task.\n",
@@ -2166,6 +2186,7 @@ function uninstall(args, state) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  refreshResidencySurface = args.refreshHostSurface;
   preflight();
   const lifecycleLock = acquireInstallerLifecycleLock();
   try {

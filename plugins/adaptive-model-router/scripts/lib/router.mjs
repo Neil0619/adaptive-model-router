@@ -1,3 +1,4 @@
+import { capacityAdmissionDecision } from "./host-capacity-recovery.mjs";
 import { randomUUID } from "node:crypto";
 import { getModelCatalog, selectDelegateCatalog } from "./catalog.mjs";
 import { classifyBorderline } from "./classifier.mjs";
@@ -242,6 +243,13 @@ async function routeWithStore(input, options, store) {
       throw error;
     }
     stageKey = previous.stage_key;
+  }
+  const capacity = capacityAdmissionDecision(store.db, context, stageKey);
+  if (!capacity.allowed) {
+    const route = contextualRoute(store, context, { action: "continue", codes: [capacity.reasonCode] });
+    route.stageKey = stageKey;
+    store.commitRoute(context, route, null);
+    return publicRoute(route);
   }
   let evidence = input.evidence;
   const prior = store.db.prepare(`SELECT r.*, o.status AS final_status, o.failure_type AS final_failure

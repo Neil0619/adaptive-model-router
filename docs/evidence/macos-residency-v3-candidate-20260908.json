@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-08T15:35:03.872Z",
+  "scope": "plugin-side macOS residency repair candidate; full live acceptance pending",
+  "candidateVersion": "0.4.0+codex.20260908152938",
+  "sourceDigest": "e2ddcc1d57bcd148e9b316353a11a28f65636e71586f48250c4aaef2ffcbda65",
+  "installedDigest": "e2ddcc1d57bcd148e9b316353a11a28f65636e71586f48250c4aaef2ffcbda65",
+  "installedRoot": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260908152938",
+  "entrypoints": [
+    {
+      "path": "scripts/mcp-server.mjs",
+      "source": "d97b4d2e4023d3636434f6877ecf61f12fb6842a84d31650a7046ae8b39621fa",
+      "installed": "d97b4d2e4023d3636434f6877ecf61f12fb6842a84d31650a7046ae8b39621fa"
+    },
+    {
+      "path": "scripts/runtime-probe.mjs",
+      "source": "c944c9cbefb7723cb28fc01ca625c0b91ee688820d104cc35edc2450a8794d1a",
+      "installed": "c944c9cbefb7723cb28fc01ca625c0b91ee688820d104cc35edc2450a8794d1a"
+    },
+    {
+      "path": "scripts/hook.mjs",
+      "source": "69a97ed0b64222f5f5359cbe19e6d70ddfa6e7602a985ef6c306910054d93f81",
+      "installed": "69a97ed0b64222f5f5359cbe19e6d70ddfa6e7602a985ef6c306910054d93f81"
+    },
+    {
+      "path": "runtime.json",
+      "source": "716cc2554e57bf2201df7c33149a416d5fbacc34c4995a066a5dc9d29cdb90e2",
+      "installed": "716cc2554e57bf2201df7c33149a416d5fbacc34c4995a066a5dc9d29cdb90e2"
+    }
+  ],
+  "checks": {
+    "fullTests": {
+      "tests": 387,
+      "pass": 386,
+      "fail": 0,
+      "skipped": 1
+    },
+    "validator": "passed",
+    "policyEvaluation": {
+      "cases": 232,
+      "mismatches": 0
+    },
+    "diffCheck": "passed",
+    "installation": "passed",
+    "nativePreflight": {
+      "ready": false,
+      "reasonCode": "HOOK_TRUST_REQUIRED"
+    },
+    "live100Stages": "not_run",
+    "realModelQuality": "not_run",
+    "existingTaskRecovery": "not_run",
+    "independentCandidateReview": "not_run"
+  },
+  "hooks": [
+    {
+      "eventName": "preToolUse",
+      "enabled": true,
+      "trustStatus": "modified",
+      "currentHash": "sha256:0df4bff3f5331889e6c4a65acae10b2ea5d6630c8f91e9c346f2d3a68c18084c",
+      "matcher": ".*",
+      "sourcePath": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260908152938/hooks/hooks.json"
+    },
+    {
+      "eventName": "postToolUse",
+      "enabled": true,
+      "trustStatus": "modified",
+      "currentHash": "sha256:a22d835866e5bdf416dfc1c28142c4ee3a7e93af8ee3ef472f60960c9aa64b92",
+      "matcher": "^(?:Agent|(?:collaboration)?(?:spawn_agent|send_message|followup_task|list_agents|interrupt_agent))$",
+      "sourcePath": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260908152938/hooks/hooks.json"
+    },
+    {
+      "eventName": "sessionStart",
+      "enabled": true,
+      "trustStatus": "trusted",
+      "currentHash": "sha256:f4df68347e9e9a703ce55cbfdb285cad39004e2d0002f03fa0acaa553cd7c7d4",
+      "matcher": "^compact$",
+      "sourcePath": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260908152938/hooks/hooks.json"
+    },
+    {
+      "eventName": "userPromptSubmit",
+      "enabled": true,
+      "trustStatus": "trusted",
+      "currentHash": "sha256:a6107a2e117be5abe5bf82f11a2c07da6896f41156aa521bcfa02fb62a6e4eb4",
+      "matcher": null,
+      "sourcePath": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260908152938/hooks/hooks.json"
+    },
+    {
+      "eventName": "subagentStart",
+      "enabled": true,
+      "trustStatus": "trusted",
+      "currentHash": "sha256:b5579abc5c692ddf94b0337d1d7b229aa71a5a26de6e907ebfd7323d7f1807c3",
+      "matcher": null,
+      "sourcePath": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260908152938/hooks/hooks.json"
+    },
+    {
+      "eventName": "subagentStop",
+      "enabled": true,
+      "trustStatus": "trusted",
+      "currentHash": "sha256:b1d0748b7ffc6647a065fe488dd0d3d8c5d74510cd58561359b13bc78d2606c8",
+      "matcher": null,
+      "sourcePath": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260908152938/hooks/hooks.json"
+    },
+    {
+      "eventName": "stop",
+      "enabled": true,
+      "trustStatus": "trusted",
+      "currentHash": "sha256:b2bae719fb2e2fd78518726e96d79554506ae91bb52c14fc876b1e691f284347",
+      "matcher": null,
+      "sourcePath": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router/0.4.0+codex.20260908152938/hooks/hooks.json"
+    }
+  ],
+  "nativeProbe": {
+    "modelTurnsStarted": 0,
+    "childAgentsCreated": 0,
+    "execution": "current candidate live probe not run; fresh native Hook inventory preflight requires trust"
+  },
+  "logs": [
+    {
+      "path": "/tmp/router-residency-v3-final-candidate-tests.txt",
+      "sha256": "3681cb20a9544dc677aee815aeac896739b728f1bd038f72dc7e6ed8ae92733b"
+    },
+    {
+      "path": "/tmp/router-residency-v3-install-final.txt",
+      "sha256": "ef220b77a22e76fe2a718f0ba2021db9070dcf0ae0bdd6e63650c4c95283d097"
+    },
+    {
+      "path": "/tmp/router-residency-v3-native-preflight.txt",
+      "sha256": "700da3d3eaa28ad4502e62c3e2624a484cfaaaeaf9d840184291fb5f4501ec05",
+      "scope": "Earlier candidate protocol preflight stopped before model startup; current Hook inventory was separately rechecked after the final installation"
+    },
+    {
+      "path": "/tmp/router-residency-v3-eval.txt",
+      "sha256": "4bee6e63f199f906e87e7b9b1a11600dee0728e86b5ff2751657f0e0e575dcaa"
+    }
+  ],
+  "externalHostApiChange": false,
+  "externalHostRequestSent": false,
+  "committed": false
+}

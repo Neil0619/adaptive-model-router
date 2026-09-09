@@ -270,13 +270,21 @@ test("production readiness offers only qualification and binds the full ordered 
   } finally { await project.cleanup(); }
 });
 
-test("equivalent hot-shell paths allow an inert qualification, never an inventory-only pass", async () => {
+for (const upgrade of [false, true]) test(`hot-shell qualification preserves trust after a reviewed matcher upgrade: ${upgrade}`, async () => {
   const project = await temporaryProject("router-hot-qualification-");
   try {
     await withRouterEnvironment(project, async () => {
       const configured = join(project.root, "configured-plugin");
       await mkdir(join(configured, "hooks"), { recursive: true });
       await writeFile(join(configured, "hooks", "hooks.json"), readFileSync(join(pluginRoot, "hooks", "hooks.json")));
+      let pinnedRoot = pluginRoot;
+      if (upgrade) {
+        pinnedRoot = join(project.root, "pinned-plugin");
+        await mkdir(join(pinnedRoot, "hooks"), { recursive: true });
+        const old = JSON.parse(readFileSync(join(pluginRoot, "hooks", "hooks.json"), "utf8"));
+        for (const event of ["PreToolUse", "PostToolUse"]) old.hooks[event][0].matcher = "^(?:Agent|spawn_agent|collaborationspawn_agent)$";
+        await writeFile(join(pinnedRoot, "hooks", "hooks.json"), JSON.stringify(old));
+      }
       const inventory = fixture(project.root);
       for (const hook of inventory.data[0].hooks) hook.sourcePath = join(configured, "hooks", "hooks.json");
       assert.equal(evaluateLifecycleHookInventory(inventory, { cwd: project.root, pluginRoot }).reasonCode, "HOST_HOOK_SET_MISMATCH");
@@ -284,7 +292,7 @@ test("equivalent hot-shell paths allow an inert qualification, never an inventor
       try {
         const context = store.context({ cwd: project.root, contextId: "hot-binding" });
         observeCurrentHook("hot-binding");
-        const inspect = () => inspectLifecycleHookReadiness({ cwd: project.root, pluginRoot, store, context, contextId: "hot-binding",
+        const inspect = () => inspectLifecycleHookReadiness({ cwd: project.root, pluginRoot: pinnedRoot, store, context, contextId: "hot-binding",
           appServer: async (run) => run({ start: async () => {}, request: async (method) => nativeRead(method, "hot-binding", project.root), listHooks: async () => inventory }),
           nativeHost: async () => ({ platform: "darwin", cliVersion: "0.153.0" }),
         });
@@ -293,6 +301,9 @@ test("equivalent hot-shell paths allow an inert qualification, never an inventor
         assert.equal(result.qualificationBinding.shellRoots.length, 2);
         inventory.data[0].hooks[0].trustStatus = "modified";
         assert.deepEqual(await inspect(), { ready: false, reasonCode: "HOOK_TRUST_REQUIRED" });
+        inventory.data[0].hooks[0].trustStatus = "trusted";
+        inventory.data[0].hooks[0].command += " --unreviewed";
+        assert.deepEqual(await inspect(), { ready: false, reasonCode: "HOST_HOOK_SET_MISMATCH" });
       } finally { store.close(); }
     });
   } finally { await project.cleanup(); }

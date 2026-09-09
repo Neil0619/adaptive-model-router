@@ -8,6 +8,7 @@ import { AppServerClient, resolveCodexCommand } from "./app-server.mjs";
 import { canonicalJson, payloadHash } from "./io.mjs";
 import { auditNativeLifecycleNoop, NATIVE_LIFECYCLE_CLI_VERSIONS, supportsNativeLifecycleHost } from "./native-lifecycle-audit.mjs";
 import { activeRequalification, consumeRequalification } from "./qualification-retry.mjs";
+import { verifyStageClosure } from "./stage-closure.mjs";
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PROOFS = new WeakMap();
@@ -290,6 +291,11 @@ export async function prepareQualificationOutcome(input, {
   const context = store.context({ cwd, contextId: input.contextId });
   const value = readTaskQualification(store.db, context);
   if (!value || value.routeId !== input.routeId || value.state === "passed") return null;
+  // Managed Stop records a turn/result fact; only completed native evidence
+  // projects that fact into the legacy attempt. Do this before binding the
+  // qualification proof to the attempt. Pending work is recoverable and must
+  // not turn an otherwise valid qualification into a permanently failed audit.
+  store.transaction(() => verifyStageClosure(store.db, context, input.routeId, input.closureToken));
   const attempt = store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id = ?").get(input.routeId);
   try {
     requireFact(attempt?.ticket_consumed === 1);

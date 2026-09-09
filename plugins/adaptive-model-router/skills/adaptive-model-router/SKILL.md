@@ -177,6 +177,33 @@ stage-local suppression does not change the global or session Router setting.
    and is not a successful verification. Consumed or ambiguous attempts remain
    fail-closed. The root `Stop` hook never fabricates an `unknown` outcome.
 
+### Same-stage messages and final verification
+
+For supplemental work that the child must handle in the same unfinalized stage,
+use direct `followup_task`, even if the child currently appears running. Do not
+send courtesy acknowledgements to completed children. `send_message` queues input
+without ensuring an idle child starts; a necessary queued requirement remains
+work until its current result has been verified. Neither successful sending nor
+an earlier child Stop settles a later followup.
+
+Before the unique final `record_outcome`, inspect `get_route_status.stageClosure`.
+This read is part of verifying the existing stage, not a new route. Follow its
+`nextAction` and accurate `target`: wait for current execution, finish accepted
+requirements with same-stage followup, or reconcile the existing operation.
+When `state=ready`, verify the actual current result, then pass its `token` as
+`record_outcome.closureToken`. A token is a correlation of native inputs and the
+completed turn, not an assertion of semantic quality; the root still owns that
+verification. New input invalidates the old verification token. `pending` never
+authorizes a fabricated outcome, replacement child, or discarded requirement.
+
+If a frozen native outcome schema cannot accept the additive `closureToken`
+field, use the current installed plugin's one-shot stdio bridge described above
+for this same `record_outcome` call. Resolve its active source and exact Node
+command, preserve the Hook-provided contextId, and include the verified token in
+the literal JSON. Do not create a new task or retry a recorded outcome merely to
+refresh the tool schema. Closed children cannot take new business-stage work;
+historical pending input requires the separately authorized maintenance path.
+
 Before dispatch, check all five host parameters: `task_name = carrier.taskName`,
 `message = carrier.message`, `fork_turns = "none"`, `model = target.model`, and
 `reasoning_effort = target.effort`. None may be omitted, including when the
@@ -235,6 +262,141 @@ finished that stage, proceed to its next meaningful stage. If recovery cannot
 establish closure, continue root-only and explicitly report the occupied gate
 and retained reservation. Root-only continuation does not release resources
 or prove that the originally planned independent review ran.
+
+For the exact ordinary Desktop `0.153.4` direct-spawn error
+`collab spawn failed: agent thread limit reached`, use native capacity recovery.
+This happens after ticket consumption and has a distinct audit adapter. If a
+`failed` / `tooling` `record_outcome` call already returned
+`delegationRecovery.gateReleased: true`, confirm status and perform the bounded capacity recheck below.
+Otherwise resolve the active source and use the same inspection command above.
+Only `recoverable` with `recoveryKind: "host_agent_limit_rejected"` authorizes
+applying its exact digest with `--apply --expect-digest`. An existing failed
+outcome is retained; an absent outcome stays absent. Do not create another
+outcome after recovery or retry that ticket. Recovery verifies the complete
+native log in bounded streaming passes, its direct call and exact error, the
+trusted dispatch digest, the full parent projection, and unchanged database
+state. Generic errors, child activity and unsupported evidence retain the gate.
+
+After capacity recovery, `HOST_AGENT_LIMIT_REACHED` is retained incident history,
+not a permanent root-only mode. `HOST_CAPACITY_RECHECK_REQUIRED` asks the root to
+call the existing native `list_agents` once. The trusted Post Hook records that
+root's observation. Inspect `get_route_status.stageClosure`; finish any valid
+current-stage work or the bounded maintenance below before retrying admission.
+Use the original still-needed `stageId` and a **new** route ticket; never retry the
+rejected carrier or invent a probe task. The router permits at most one recovery
+startup after the first audited refusal for that stage in the current native
+root turn. `HOST_CAPACITY_RETRY_EXHAUSTED` ends this turn's recovery attempt;
+`HOST_CAPACITY_TEMPORARY_BUSY` leaves the work with the root until a new native
+completion or observation. Continue safe independent work and recheck at the
+next real delegation entrance. A required independent review remains pending
+until a real child performs it. Never claim the list or a local finalization
+proves physical slot release; the next actual native spawn decides. Its trusted
+successful Post ends the temporary fallback while retaining the audit history.
+
+### Existing-child maintenance and intent changes
+
+Use `manage_stage` for a closed child's historical backlog or an explicit
+cancellation, replacement or deferral. This is plugin bookkeeping around existing
+native tools; it needs no new host interface. When the tool inventory is frozen,
+use the installed `scripts/stdio-tool.mjs` bridge with `{ "name": "manage_stage",
+"arguments": ... }` and the current tool schema from the active source.
+
+1. Inspect the exact route and `stageClosure.revision`. For a legacy child,
+   supply its native `childId` and `childTranscriptPath`; the plugin checks its
+   immutable parent identity and retained route binding. An unknown identity is
+   a reconciliation item, not permission to guess or destroy a child.
+2. If a send's Post is missing, call `manage_stage` with
+   `action: "reconcile_messages"`, the exact route and `expectedRevision`.
+   A source-verified native pre-dispatch refusal is retained as `rejected`,
+   never as successful delivery. Its `rejectedCalls` receipt leaves the
+   undelivered requirement with the sender; resolve that responsibility in the
+   current work without resending to a closed child. Other errors remain pending.
+   The native root transcript proves the original call's acceptance. The Hook
+   normally retains its path; `parentTranscriptPath` can supply that same root's
+   exact transcript when migrating. Do not blindly resend an uncertain call.
+   If another same-tree agent sent the message, also supply its exact native
+   transcript in `senderTranscriptPaths` (at most three). Its immutable parent,
+   sender path, call, turn, original input and actual output must all match;
+   another task's evidence cannot acknowledge this message.
+3. Call `begin_maintenance` with the current revision and a disposition containing
+   `intent` (`collect`, `cancelled`, `superseded`, `deferred`), the concrete `basis`,
+   preserved `requirements` and `pendingOperations`. Change intent before
+   `interrupt_agent` when needed. Interrupt acceptance is only a request receipt;
+   verify any running or unknown operation with its real tool or service before
+   repeating work in the root.
+   After a verified maintenance cycle, a new explicitly bounded collection may
+   use `begin_maintenance` with its new concrete basis. Prior dispositions and
+   accounting remain; a fresh native followup and final are required. This is
+   never permission to give an old child a new business stage.
+4. Use native `followup_task` on the returned exact target to collect pending
+   inputs, original requirement references, partial progress and operation IDs.
+   The child's actual PreToolUse guard rejects all business tools, shell, file
+   access and delegation. It can return the collection in its final reply;
+   don't ask it to execute the old business or give it a new stage. This guard
+   works even when cached followups emit no Start or Prompt Hook.
+   If `stageClosure.pendingOperations` identifies a yielded native process or
+   code cell, active maintenance permits only its exact native `write_stdin`
+   with empty input or `wait` without termination. Wait for the actual terminal
+   receipt; a final reply does not end an operation. On code-mode hosts, use
+   `text(await tools.write_stdin({...}));` with JSON-style literal arguments,
+   the exact known session ID and empty input. The guard permits only this
+   source-checked single-tool forwarding operation, never arbitrary code.
+   The same unchanged forwarding form for `exec_command` retains a returned
+   process session after the outer code cell completes. Self-authored or
+   modified printed JSON is not a tool receipt. External jobs and opaque connector operations still need
+   root verification through their real service before overlapping work.
+   Normal Bash Pre/Post and matching native CommandExecution/FileChange results
+   close execution automatically, including nonzero or failed results. If an
+   actual receipt is missing or conflicting, use `read_operations` at the
+   current revision. Inspect each original operation and its readable native
+   evidence. This action is strictly read-only: if the historical child is not
+   registered, first use explicit `reconcile_messages` with its exact native
+   identity. An older opaque code-mode call without proven command coverage
+   remains unknown even when its outer cell completed. Do not poll a guessed
+   handle or treat one unrelated inner terminal as completion of the whole call.
+   Then `reconcile_operations` may record a root-owned judgment using
+   `operationReview.snapshotDigest`, exact original reference, actual result or
+   root verification references, conclusion, basis and resultReview. Conclusions
+   are `not_started`, `completed`, `stopped`, or `unresolved`; an unknown item
+   also needs source, owner, nextStep and resumeCondition. An existing handle,
+   a nonzero exit or a patch result must never be called "not started". Printed
+   model data, stage cancellation and `pendingOperations: []` are not receipts.
+   New inputs, commands or changed receipts invalidate the snapshot. This
+   action records evidence only: inspect closure again and verify the current
+   work before recording the one outcome. Keep unresolved items with the root;
+   do not repeatedly spawn replacements or ask the user to judge each child.
+5. Check the latest `stageClosure` result and all `inputReferences`. Root
+   verification must inspect the collected facts and relevant real results.
+   Use `verify_maintenance`, the exact `closureToken`, and a final disposition
+   with `resultReview`. Each native input after activation needs exactly one
+   requirement entry with `messageId`, `source`, `disposition`, `receipt` and
+   `owner`. Valid business transfers retain their content and receiving work;
+   cancellation needs its intent basis. `no_work` is for an actual non-business
+   message, never an escape hatch for unknown requirements. Resolve all
+   `pendingOperations` first; do not replace a missing receipt with optimism.
+   Native memory citations can be separated from Stop text. The reader checks
+   the exact native message, citation metadata and completed turn while keeping
+   the full result digest. Do not remove citations, invent a Stop, or send an
+   otherwise unnecessary followup to make those representations match.
+   Repeated collection must retain the previous verified dispositions exactly.
+   Record actual completion or changed intent with `resolve_requirements`;
+   another maintenance report cannot replace earlier pending work with `no_work`.
+6. The old outcome remains unchanged. A previously unfinalized terminated stage
+   gets its one failed outcome after verified maintenance, with the appropriate
+   failure type; it must not be labeled passed business execution. Deferred or
+   transferred work remains in `get_route_status.pendingStageWork`. On the next
+   root entry the Hook restores these references; use `read_disposition` before
+   resuming against current intent and workspace. After actual completion or an
+   explicit intent change, `resolve_requirements` records each message's verified
+   receipt and new disposition. Transferred work blocks normal completion until
+   resolved or explicitly deferred; deferred work remains visible for later.
+   A new business stage always gets normal routing and a new child.
+
+The plugin retains encrypted dispositions, exact native input identities and
+measured transcript growth beyond the recent-attempt history window. Status is
+read-only; root Stop checks actionable maintenance and current-stage obligations.
+Interrupted or abandoned roots retain these responsibilities for their next
+entry, without claiming a background process is running.
 
 Root, delegate and classifier capabilities are independent and all Router calls
 intersect the active model policy's exact allowed scope. Only direct

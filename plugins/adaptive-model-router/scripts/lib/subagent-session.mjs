@@ -3,6 +3,7 @@ import {
   fstatSync,
   openSync,
   readSync,
+  realpathSync,
 } from "node:fs";
 import { resolve } from "node:path";
 
@@ -10,6 +11,10 @@ export const SESSION_META_BYTE_LIMIT = 1024 * 1024;
 
 function nonEmptyString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function directoryIdentity(value) {
+  try { return realpathSync(value); } catch { return resolve(value); }
 }
 
 function readFirstLine(path, byteLimit = SESSION_META_BYTE_LIMIT) {
@@ -82,7 +87,7 @@ export function readThreadSpawnIdentity(input, {
     metaSessionMatches: metaSessionId === parentId, spawnParentMatches: spawnParentId === parentId,
     pathsMatch: agentPath === spawnAgentPath,
     pathShapeValid: Boolean(agentPath?.startsWith("/root/") && !taskName.includes("/")),
-    cwdMatches: !metaCwd || !hookCwd || resolve(metaCwd) === resolve(hookCwd),
+    cwdMatches: !metaCwd || !hookCwd || directoryIdentity(metaCwd) === directoryIdentity(hookCwd),
     taskNameValid: typeof taskName === "string" && /^[a-z0-9_]+$/u.test(taskName) };
   if (!Object.values(facts).every(Boolean)) { observe("identity_mismatch", facts); return null; }
   observe("identity_accepted", facts);

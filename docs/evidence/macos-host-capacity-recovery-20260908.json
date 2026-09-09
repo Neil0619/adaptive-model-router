@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "status": "installed_native_recovery_and_independent_review_passed",
+  "verifiedAt": "2026-09-08T08:45:04.761Z",
+  "platform": "macOS arm64",
+  "cliVersion": "0.153.4",
+  "runtimeVersion": "0.4.0+codex.20260908083042",
+  "runtimeDigest": "3eacdc31b4de64efbe42725bb3b4e2b887448909d2dd0d516212283931bf1d62",
+  "incident": {
+    "parentTaskId": "01a07b17-5336-7172-b6ec-2e82ea6fb882",
+    "routeId": "27a81021-ed83-4dce-8081-84950a5357ef",
+    "rejectedAt": "2026-09-08T05:56:11.552Z",
+    "hostError": "collab spawn failed: agent thread limit reached",
+    "model": "gpt-6-astra",
+    "effort": "xhigh",
+    "priorCreatedAndFinalized": 40,
+    "hostConfiguredLimit": "not_observed"
+  },
+  "recovery": {
+    "appliedBy": "referenced_parent_task_via_installed_native_recovery_cli",
+    "receipt": {
+      "cliVersion": "0.153.4",
+      "dispatchInputDigest": "1e74d733fb0f98d20bea4bdd6880e0cf36e5a58c4ba8b667d500a3d132f803f7",
+      "evidenceDigest": "603f8969174f14d7b6b80f1c21e4629c36740ba6e09453b6c35b23667575c0d7",
+      "failureType": "tooling",
+      "launchItemDigest": "3438a90f98e9ea6f65b6af335577366b5a97c40412a59b9089750baebf11bb9a",
+      "originalDispatchConsumed": true,
+      "originalHandshakeProven": true,
+      "parentTurnDigest": "789addffbd46a030907b1a5743435c1952be0994f1c86a657dae4a1124e9032d",
+      "rawAuditAdapter": "codex-0.153.4-parent-agent-limit-rejection-v1",
+      "rawAuditDigest": "abfc5b404ec1c189b106fb845a601fc0f4b7ee0d71881f2fba50761e80243039",
+      "recordedAt": "2026-09-08T08:34:18.772Z",
+      "recoveryKind": "host_agent_limit_rejected",
+      "rejectionCode": "HOST_AGENT_LIMIT_REACHED",
+      "rejectionItemDigest": "1383ccebf04f46decfb44f9ac03d4ea90beaa93ac4c9fa05746bf2192238c5e2",
+      "retainedOutcomeDigest": "4e4cca4d195d1319d382b7f8ef9c7811590327a19695f3ad0447e074f6db23bb",
+      "schemaVersion": "native-thread-host-capacity-rejection-recovery/1",
+      "source": "native_thread_read",
+      "sourceBytes": 214850710,
+      "sourceDigest": "cca6f1b47665d322e1897b0705995e002ef6813977c9d589bda69272085ba728",
+      "status": "reconciled_failure",
+      "subjectDigest": "3dce543a4e19f18a9db3c9ac4c3cdbf5bff1413d02e4b5bf724e0f7e0ecd6958",
+      "transcriptBytes": 0
+    },
+    "backupBeforeApplication": true,
+    "reservationBytesReleased": 268435456,
+    "lifecycleFieldsPreserved": true,
+    "existingFailedOutcomePreserved": true,
+    "otherPendingRecordsUnchanged": 2
+  },
+  "observedSubsequentNativeRoute": {
+    "routeId": "62dcb308-c455-4a42-81b0-c4215f30e7b6",
+    "action": "continue",
+    "reasonCodes": [
+      "HOST_AGENT_LIMIT_REACHED"
+    ],
+    "replacementChildCreated": false
+  },
+  "installedStatus": {
+    "delegationGate": {
+      "state": "available"
+    },
+    "hostCapacityRejection": {
+      "reasonCode": "HOST_AGENT_LIMIT_REACHED",
+      "source": "native_thread_read",
+      "recordedAt": "2026-09-08T08:34:18.772Z"
+    },
+    "rootTask": {
+      "modelVisibility": "hook_observed",
+      "model": "gpt-6-astra",
+      "reasoningEffortVisibility": "host_only",
+      "changedByRouter": false
+    }
+  },
+  "checks": {
+    "fullTests": {
+      "total": 352,
+      "passed": 351,
+      "failed": 0,
+      "skipped": 1,
+      "skipReason": "Windows cmd.exe/PowerShell test on macOS"
+    },
+    "ruleEvaluation": {
+      "cases": 232,
+      "mismatches": 0
+    },
+    "pluginValidation": "passed",
+    "repositoryValidation": "passed",
+    "sameSourceManagedAndCacheDigest": true,
+    "hookDefinitionsAndTrustUnchanged": 7,
+    "unrelatedConfigurationUnchanged": true,
+    "configurationChange": "Only the managed adaptive-model-router marketplace source was refreshed",
+    "protectedExistingFilesUnchanged": 346
+  },
+  "qualification": [
+    {
+      "routeId": "e96e980a-f4a9-4b2a-8516-d6812ac89e23",
+      "outcomeSeq": 1269,
+      "passed": true
+    },
+    {
+      "routeId": "58d7b6e7-d588-4086-adf8-f4a98b211628",
+      "outcomeSeq": 1270,
+      "passed": true,
+      "reason": "Native verification refresh after removing one obsolete historical shell root; runtime and configuration digests unchanged"
+    }
+  ],
+  "limits": [
+    "This repair releases the Router reservation; it does not increase the native host agent limit.",
+    "The affected task remains root-only without new reservations; other tasks may delegate.",
+    "Capacity recovery is pinned to the observed Desktop 0.153.4 native error and retains unknown or conflicting evidence.",
+    "Native parent audit limits: 512 MiB, 16 MiB per record, 100000 records.",
+    "No Windows native smoke ran in this macOS repair."
+  ],
+  "baseCommit": "5b2c4b4b5c8b6c1e0cde4014d7d35a75a533b17c",
+  "independentReview": {
+    "routeId": "ca7d53f9-a5d0-499e-8ae3-33e56889a7de",
+    "model": "gpt-6-astra",
+    "effort": "high",
+    "blockingFindings": 0,
+    "installedTests": {
+      "total": 12,
+      "passed": 12,
+      "failed": 0
+    },
+    "matchingReviewedFiles": 12,
+    "rootRepeatedInstalledTests": {
+      "total": 12,
+      "passed": 12,
+      "failed": 0
+    },
+    "outcomeSeq": 1271,
+    "nativeLifecycle": {
+      "ticketConsumed": true,
+      "postObserved": true,
+      "stopObserved": true,
+      "ambiguous": false,
+      "transcriptBytes": 675840
+    }
+  },
+  "rootFinalState": {
+    "model": "gpt-6-astra",
+    "changedByRouter": false,
+    "delegationGate": "available",
+    "pendingOutcomes": 0
+  }
+}

@@ -24,6 +24,33 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Retain unknown legacy code-mode execution until exact native or root evidence
+  verifies it; prospective command coverage never retroactively clears old work.
+  Late poll receipts remain bound to the original command and cannot close or
+  reopen a different operation that reuses its process handle.
+- Keep operation inspection read-only, preserve transferred responsibility
+  across maintenance cycles, and reject fresh admission while maintenance is
+  active. Exact native Pre refusals remain rejected messages owned by their
+  sender, with a preserving database v10 migration.
+- Correlate the native memory-citation representation with Stop using the same
+  child, turn, message, metadata and completed text. Preserve the full result
+  digest and reject mismatched content instead of repeatedly requesting finals.
+- Track same-stage followups and native command lifecycles through the latest
+  result before recording one outcome. Ordinary code-mode formatting, parallel
+  commands and intercepted patches no longer hide unfinished execution.
+- Reconcile exceptional operations against exact native evidence and current
+  message/operation snapshots. Preserve unresolved ownership, prior outcomes
+  and every disposition across repeated bounded maintenance cycles.
+- Base default child storage admission on actual free disk after reservations,
+  retaining the global pending cap and free-space floor. Accumulated audit
+  history no longer permanently prevents future delegation at 1 GiB.
+- Recover ordinary Desktop `0.153.4` agent-count refusals after ticket consumption
+  using exact native dispatch/error evidence and bounded streaming parent audits.
+  Failed/tooling outcome calls automatically reconcile this case; the installed
+  recovery CLI also handles existing stuck attempts without rewriting outcomes
+  or inventing missing lifecycle Hooks. Retain the historical refusal, recheck
+  current tree responsibility and permit bounded recovery with a new ticket;
+  temporary full capacity does not permanently disable later delegation.
 - Include all five required host parameters in automatic delegation guidance.
   A separately audited Desktop `0.153.4` recovery path closes ordinary launches
   rejected for a profile mismatch before dispatch, preserving the failure and

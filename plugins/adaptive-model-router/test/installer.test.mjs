@@ -1269,6 +1269,47 @@ test("a host-surface change refuses hot upgrade before plugin re-registration is
   }
 });
 
+test("an explicitly reviewed residency surface refresh keeps old tasks and installs the additive guard definitions", async () => {
+  const project = await temporaryProject("adaptive installer residency refresh ");
+  try {
+    const versionsRoot = join(project.root, "plugins", "cache", "adaptive-model-router", "adaptive-model-router");
+    const oldRoot = join(versionsRoot, "0.4.0+codex.20260812000000");
+    const newRoot = join(versionsRoot, runtimeVersion);
+    const installed = { pluginId: "adaptive-model-router@adaptive-model-router", name: "adaptive-model-router", marketplaceName: "adaptive-model-router", source: { source: "local", path: oldRoot } };
+    const fake = await fakeCodex(project, { pluginInstallRoot: oldRoot, nextPluginInstallRoot: newRoot,
+      marketplaces: [{ name: "adaptive-model-router", marketplaceSource: { sourceType: "git", source: "https://github.com/Neil0619/adaptive-model-router.git", ref: "stable" } }],
+      installed: [installed], available: [installed], desktopTaskTools: true, dropDesktopTaskToolsOnPluginAdd: true });
+    await writePluginFixture(oldRoot, "0.4.0+codex.20260812000000");
+    const oldMcp = JSON.parse(await readFile(join(oldRoot, ".mcp.json"), "utf8"));
+    delete oldMcp.mcpServers["adaptive-model-router"].tools.manage_stage;
+    await writeFile(join(oldRoot, ".mcp.json"), JSON.stringify(oldMcp));
+    const oldHooks = JSON.parse(await readFile(join(oldRoot, "hooks/hooks.json"), "utf8"));
+    for (const event of ["PreToolUse", "PostToolUse"]) oldHooks.hooks[event][0].matcher = "^(?:Agent|spawn_agent|collaborationspawn_agent)$";
+    await writeFile(join(oldRoot, "hooks/hooks.json"), JSON.stringify(oldHooks));
+    // Reproduce the actual pre-repair exported service contract, not just old
+    // hook matchers around a copy of the new TOOL_DEFINITIONS.
+    const servicePath = join(oldRoot, "scripts/lib/service.mjs");
+    let service = await readFile(servicePath, "utf8");
+    service = service.replace("export const TOOL_DEFINITIONS =", "const NEW_TOOL_DEFINITIONS =");
+    service += '\nexport const TOOL_DEFINITIONS = NEW_TOOL_DEFINITIONS.filter((t) => t.name !== "manage_stage").map((t) => { const old = structuredClone(t); if (old.name === "record_outcome") delete old.inputSchema.properties.closureToken; return old; });\n';
+    // The local tool map must be built after the exported compatibility view.
+    service = service.replace('const TOOLS = new Map(TOOL_DEFINITIONS', 'const TOOLS = new Map(NEW_TOOL_DEFINITIONS');
+    await writeFile(servicePath, service);
+    const result = runManager(project, fake, ["upgrade", "--non-interactive", "--refresh-host-surface"]);
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.match(result.stdout, /Native Hook reload\/trust.*remain required/);
+    const finalState = await state(fake);
+    assert.equal(finalState.desktopTaskTools, true);
+    assert.equal(finalState.mutations.some((args) => args[0] === "plugin" && args[1] === "add"), false);
+    for (const root of [oldRoot, newRoot]) {
+      const hooks = JSON.parse(await readFile(join(root, "hooks/hooks.json"), "utf8"));
+      assert.equal(hooks.hooks.PreToolUse[0].matcher, ".*");
+      const mcp = JSON.parse(await readFile(join(root, ".mcp.json"), "utf8"));
+      assert.equal(mcp.mcpServers["adaptive-model-router"].tools.manage_stage.approval_mode, "approve");
+    }
+  } finally { await project.cleanup(); }
+});
+
 test("a plugin manifest UI change refuses hot upgrade before plugin re-registration is invoked", async () => {
   const project = await temporaryProject("adaptive installer manifest reload ");
   try {
