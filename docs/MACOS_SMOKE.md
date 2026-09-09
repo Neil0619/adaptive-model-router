@@ -29,8 +29,10 @@ Do not create or push the release tag from this smoke task.
   override asks the user without starting a subagent.
 - Route and execution metadata keep the root boundary unchanged while recording
   the bounded target separately. A visible selector check is optional UX only.
-- Offline changed-model events stay root-only while pending; keep-automatic resumes on
-  the next stage, and current-task manual mode prevents delegation.
+- Native host-model overrides are observed through trusted Hooks and task
+  state. Pending and current-task manual mode prevent delegation;
+  keep-automatic restores automatic state. The initial model and exposed
+  reasoning effort are restored and verified even after failure.
 - Status, history, diagnostics, Hook output, and SQLite contain no prompt,
   source, secret, or absolute project path.
 - The auxiliary classifier initializes from the logged-in host store, keeps its
@@ -178,19 +180,49 @@ feedback, fabricate an `unknown` outcome, or replace the final user-facing reply
 
 ## 4. Exercise both host-model decisions
 
-For the GPT-6-only policy, root-model slug changes are covered by offline events:
+The persistent smoke orchestrator owns this native host-control check after
+Hook trust. Record the target task's initial root model and, when exposed, its
+reasoning effort. Choose a different model actually supported by the native
+task/thread control surface; preserve the initial effort when the host exposes
+it and require the chosen model to support it. Do not infer host capabilities
+from the Router's bounded-model allowlist.
+
+1. Wait until the target task is idle, then dispatch the next prompt to that
+   same task with a Codex-native model override. Verify the changed slug through
+   native task state, the trusted Hook, and Router status/history.
+2. Require a matching pending model-change event. A stage attempted while
+   pending must continue root-only with `HOST_MODEL_INTENT_PENDING`. Resolve
+   that exact change with `keep_automatic`, then verify automatic state and
+   that the pending event is cleared.
+3. After the task is idle, override back to the recorded initial model. Verify
+   a distinct pending change, resolve it with `manual_root`, and require a
+   subsequent stage to continue with `MANUAL_ROOT_SELECTED` and no subagent.
+4. In a `finally` cleanup, restore the initial root model and exposed effort
+   through the same native host surface, restore automatic task mode, and
+   verify the native binding, trusted Hook observation, and settled Router
+   status. Run this cleanup even when an earlier check fails.
+
+A task/thread override is a smoke-orchestrator host operation. It does not
+change the GPT-6 bounded policy, authorize an out-of-scope subagent, or mean the
+Router changed the root model. Router-owned calls remain within the active
+policy's allowed scope; ordinary smoke work uses the shared
+`model-target --purpose smoke` binding. If the host cannot perform
+or verify the override, report a host-capability failure. Do not substitute
+Computer Use, configuration edits, app restarts, or operator model selection.
+These are acceptance instructions, not a claim that the current candidate has
+already passed the live check.
+
+Keep the plugin-directory offline regressions as supplementary coverage:
 
 ```sh
 node --test test/host-model.test.mjs test/hook.test.mjs
 ```
 
-Run these from the plugin directory. They cover baseline, pending,
-keep-automatic, manual-root and restoration without model inference. Label
-this coverage `HOST_MODEL_INTENT_OFFLINE_ONLY`; do not describe it as a live
-cross-model test. Every logged-in invocation must use the shared allowed
-scope and actual execution capabilities. Use `model-target --purpose smoke`
-to resolve its target; never call Sol to complete a slug-change branch.
-The root remains host-managed throughout.
+They cover baseline, pending, both decisions, restoration, and delegation on
+the next ordinary stage after automatic mode resumes. If only these tests ran,
+label that evidence `HOST_MODEL_INTENT_OFFLINE_ONLY`; it does not satisfy the
+native host-model check. Keep this check separate from the compatible-upgrade
+continuity test, whose root model must remain unchanged throughout the upgrade.
 
 ## 5. Exercise scoring-evolution visibility
 
@@ -263,6 +295,12 @@ implementation-only upgrade needs a new task. It must also report matching
 automated `runtime-hot-upgrade.test.mjs` is the blocking same-process
 activation test for the implementation seam, but it does not replace the
 following host-continuity gate.
+
+With only one compatible runtime and no cross-version activation, the plugin
+data's `runtime/active.json` may be absent. Read the actual runtime binding in
+`diagnose_router`; see [runtime pointer diagnostics](TROUBLESHOOTING.md#runtime-pointer-is-absent).
+Neither a missing nor an existing pointer proves the compatible upgrade below.
+The automated tests still verify path-free serialization and rollback.
 
 Before invoking the compatible upgrade, keep one real Codex Desktop task open
 and record its task/thread identity, Hook-injected Router context, root-model

@@ -110,9 +110,10 @@ The smoke passes only when all of the following succeed:
 - root verification followed by one strict final outcome;
 - visible status/history that preserve the root-model versus bounded-target
   boundary and include the delegated route;
-- offline host-model slug transitions that stay root-only while pending, including
-  a distinct second event, keep-automatic, current-task manual-root behavior,
-  and restoration of the initial model;
+- native host-model overrides observed through trusted Hooks and task state,
+  including two distinct pending events, keep-automatic state restoration,
+  current-task manual-root behavior, and restoration of the initial model and
+  reasoning effort even when a check fails;
 - machine-verified route and execution metadata showing that the root-model
   boundary remains unchanged while the bounded target is recorded separately;
 - redacted status and diagnostics with no prompt, source, secret, or absolute
@@ -177,14 +178,29 @@ codex plugin marketplace list
 codex plugin list
 ```
 
-Before replacing an earlier candidate with the same plugin version, fully exit
-Codex Desktop and every Codex CLI session. An active plugin MCP process uses
-the cached plugin directory as its working directory on Windows, so the native
-`plugin add` backup step can otherwise fail with a file-in-use or access-denied
-error. If this runbook was handed to an active Codex task, checkpoint the task,
-exit Codex, run the native remove/add commands below from an external
-PowerShell window, then reopen the task. Run each mutating command separately;
-do not let a later list command hide an earlier nonzero exit status.
+Before any native add, upgrade, remove, or wrapper lifecycle operation, the
+persistent orchestrator must checkpoint the smoke target and wait for its
+bounded agents to finish and their results to settle. Stop Adaptive Router
+launcher/server processes whose working directory is inside the dedicated
+smoke Home's plugin cache, including MCP children started by the coordinator.
+Keep Codex Desktop, the coordinator, and unrelated Node/Codex processes alive.
+An active plugin MCP can otherwise make the native `plugin add` backup fail
+with a file-in-use or access-denied error.
+
+The canonical runner performs this cleanup before each native or wrapper
+lifecycle call through `Stop-SmokeRouterProcesses`. For the initial setup
+below, use the same scoped helper immediately before each lifecycle operation:
+
+```powershell
+pwsh -NoProfile -File (Join-Path $Source 'scripts/stop-windows-smoke-router-processes.ps1') -CodexHome $DedicatedCodexHome
+```
+
+The helper requires the marked dedicated Home and native Windows x64, verifies
+process identity and working directory, and fails if safe inspection is
+unavailable. Do not replace it with a broad process kill. The orchestrator owns
+resuming the smoke target after cold replacement; the compatible-upgrade task
+in section 9 must remain open throughout. Run each mutating command separately
+and check its exit status before continuing.
 
 If a same-name marketplace remains from this repository's earlier `stable`
 smoke, remove only that known plugin and marketplace before adding the
@@ -214,18 +230,19 @@ codex
 In the new task:
 
 1. Open `/hooks`.
-2. Review and trust the plugin's `SubagentStart` handler.
-3. Review and trust the plugin's `UserPromptSubmit` handler.
-4. Review and trust the plugin's `Stop` handler.
-5. Do not use `--dangerously-bypass-hook-trust`.
+2. Review and trust all seven current definitions: `SessionStart(source=compact)`,
+   `SubagentStart`, `SubagentStop`, `PreToolUse(Agent)`, `PostToolUse(Agent)`,
+   `UserPromptSubmit`, and `Stop`.
+3. Do not use `--dangerously-bypass-hook-trust`.
 
-If the plugin or hooks are not visible, restart the ChatGPT desktop app and
-start another new task. If they remain unavailable, stop and report the failure.
+If the plugin or hooks are not visible, stop and report the installed-candidate
+or Hook-discovery failure while keeping the coordinator available to diagnose it.
 
-After Hook trust is complete, exit the interactive trust task so the installed
-plugin cache is no longer active. Start the canonical runner from the external
-PowerShell window. The runner sends this exact-prefix control through its
-dedicated persistent CLI session:
+After Hook trust is complete, finish the interactive trust turn. Keep Desktop
+and the coordinator alive; the scoped cleanup above handles residual Router
+processes before lifecycle operations. The orchestrator starts the canonical
+runner from its external PowerShell session. The runner sends this exact-prefix
+control through its dedicated persistent CLI session:
 
 ```text
 router: global on
@@ -273,19 +290,48 @@ rejects the declared target and the documented tooling-failure flow runs.
 
 ## 6. Exercise host-model intent protection
 
-For the GPT-6-only policy, root-model slug changes are covered by offline events:
+`Invoke-HostModelIntentSmoke` in the canonical runner exercises real native
+host-model overrides in its dedicated CLI session. Ordinary smoke work still
+uses the shared `model-target --purpose smoke` binding, and all Router-owned
+calls remain within the active policy's allowed scope.
+The host-control check obtains a different root model supporting the initial
+effort from native `model/list` through `scripts/smoke-host-model-target.mjs`.
+This is an orchestrator-owned host operation, independent of the GPT-6 bounded
+allowlist; it neither changes that allowlist nor authorizes an out-of-scope
+subagent. The Router never changes the root model.
+
+The runner records the initial root model and reasoning effort and waits for
+each native turn to finish before dispatching the next override. It verifies:
+
+1. The native task binding and trusted Hook observation agree on the changed
+   model and unchanged effort. Status reports the matching pending change.
+2. A stage attempted while pending continues root-only with
+   `HOST_MODEL_INTENT_PENDING`. Resolving the exact change with
+   `keep_automatic` restores automatic state and clears the pending event.
+3. A second host override creates a distinct pending event. Resolving it with
+   `manual_root` makes a subsequent stage continue with `MANUAL_ROOT_SELECTED`.
+4. A `finally` cleanup restores the initial model and effort and verifies the
+   native binding, trusted Hook state, automatic mode, and zero pending outcomes,
+   even if an earlier check failed.
+
+If no alternate host model is supported, the override is rejected, or
+restoration cannot be verified, report a host-capability failure. Do not ask
+the operator to switch models manually or label the live check passed using
+only offline evidence.
+
+The following plugin-directory regression tests supplement the native check:
 
 ```sh
 node --test test/host-model.test.mjs test/hook.test.mjs
 ```
 
-Run these from the plugin directory. They cover baseline, pending,
-keep-automatic, manual-root and restoration without model inference. Label
-this coverage `HOST_MODEL_INTENT_OFFLINE_ONLY`; do not describe it as a live
-cross-model test. Every logged-in invocation must use the shared allowed
-scope and actual execution capabilities. Use `model-target --purpose smoke`
-to resolve its target; never call Sol to complete a slug-change branch.
-The root remains host-managed throughout.
+They cover baseline, pending, keep-automatic, manual-root, restoration, and
+delegation on the next ordinary stage after automatic mode resumes. The current
+runner checks keep-automatic state restoration without immediately launching
+another normal delegate. If only these offline tests ran, label that evidence
+`HOST_MODEL_INTENT_OFFLINE_ONLY`; it does not satisfy the logged-in gate. The
+CLI host-control check also does not replace the separate same-Desktop-task
+continuity receipt.
 
 ## 7. Verify an ordinary prompt does not act as a control
 
@@ -346,10 +392,12 @@ safety auto-rollback. Do not mutate the smoke project's active profile.
 
 ## 9. Exercise upgrade, uninstall, and wrappers
 
-The runner stops the smoke target and every Adaptive Router launcher/server,
-then executes the native lifecycle below as an explicitly destructive cold
-replacement test. These commands are not the compatible hot-upgrade path and
-the operator does not run them as separate smoke steps:
+The runner waits for the smoke target's work to settle and stops only Router
+launcher/server processes in the dedicated Home's plugin cache as described in
+section 3. Desktop and the persistent coordinator remain alive. It then executes
+the native lifecycle below as an explicitly destructive cold replacement test.
+These commands are not the compatible hot-upgrade path and the operator does
+not run them as separate smoke steps:
 
 ```powershell
 codex plugin marketplace upgrade adaptive-model-router
@@ -413,6 +461,12 @@ long-lived MCP process, concurrent old Hook shells, damaged-candidate
 quarantine, active-runtime rollback, and a path-free pointer. That
 implementation test is not same-task Desktop evidence.
 
+With only one compatible runtime and no cross-version activation, the plugin
+data's `runtime/active.json` may be absent. Read the actual runtime binding in
+`diagnose_router`; see [runtime pointer diagnostics](TROUBLESHOOTING.md#runtime-pointer-is-absent).
+Neither a missing nor an existing pointer proves the compatible upgrade below.
+The automated tests still verify path-free serialization and rollback.
+
 Before the compatible wrapper upgrade, keep one real Desktop task open and
 record its task/thread identity, Hook-injected Router context, root-model
 baseline, active runtime, and native-versus-frozen inventory state. Run the
@@ -458,7 +512,7 @@ Router context, root-model baseline, old/new runtime, transport, route ID, and
 recorded outcome for the same-Desktop-task continuity gate. The validator
 requires these bindings and rejects CLI-only evidence.
 
-Record that the four current Hook definitions were reviewed and trusted before
+Record that all seven current Hook definitions were reviewed and trusted before
 the run. An optional visual UX note may state whether the Desktop selector or
 CLI model status line was observed, but it is not part of the canonical
 artifact and cannot change the release gate.

@@ -16,14 +16,18 @@ All notable changes to this project are documented here.
   enhancements. Environment, information, and tooling failures retain the
   current target; explicit unavailable or out-of-scope targets fail visibly.
 - Apply the same model scope to routing, locks, optional classification, and
-  logged-in probes. Preserve legacy records and collect new outcomes without
-  applying legacy offsets. GPT-6-only smoke covers root slug changes offline.
+  ordinary logged-in probes. Preserve legacy records and collect new outcomes
+  without applying legacy offsets. Host-model intent smoke uses native host
+  controls separately from the bounded-model policy; offline tests supplement it.
 - Keep route identifiers in status/history and diagnostics while routine
   notices show the stage, target, effort, and only directly observed service
   tier information. Omit the service tier field when the host provides none.
 
 ### Fixed
 
+- Align smoke runbooks with scoped Windows Router-process cleanup, native
+  host-model intent checks and restoration, and runtime-pointer fallback
+  diagnostics. Preserve historical smoke evidence as historical evidence.
 - Retain unknown legacy code-mode execution until exact native or root evidence
   verifies it; prospective command coverage never retroactively clears old work.
   Late poll receipts remain bound to the original command and cannot close or

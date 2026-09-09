@@ -563,6 +563,28 @@ child to execute only its assigned scope. The child must not call
 `route_stage`, change model-intent state, or own `record_outcome`; the root
 task verifies and records the outcome.
 
+## Runtime pointer is absent
+
+A missing plugin-data `runtime/active.json` can be normal when only one
+compatible runtime exists and no cross-version trial has been activated. With
+no pointer, the loader reports `activePointerStatus=unset` and uses its current
+compatible runtime as the active baseline. A newer compatible sibling can
+still be tried; the missing file does not disable upgrades.
+
+Inspect `diagnose_router.runtime` for the actual `runtimeVersion`,
+`activeVersion`, `activePointerStatus`, and `activeSource`. A pointer that names
+an unavailable runtime instead reports `unavailable` and `fallback`; this is a
+different condition from a normal missing pointer. An `unset` result alone also
+does not prove the file was absent, because unreadable or malformed pointers
+are treated as empty. Investigate an unexpectedly lost activation record; do
+not manufacture or edit a pointer by hand.
+
+An existing pointer must contain only safe directory names, never absolute
+cache paths. Neither its presence nor its absence is same-task hot-upgrade
+evidence: the smoke still requires one unchanged Desktop task/context, an
+advancing runtime, an unchanged root model, a completed delegate/outcome, and
+the required transport/shim observations.
+
 ## An existing task still reports the old Router runtime
 
 Call `diagnose_router` in that task and inspect its redacted `runtime` object.
