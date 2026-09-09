@@ -130,5 +130,17 @@ offset 提案。辅助分类器默认 `local-only`；显式启用时，只影响
 首次原生预检曾因 Hook 未受信任而停止。用户完成当前哈希信任后，CLI `0.153.3` 上的
 正式 MCP 资格检查、正常委派、原始记录审计、结果入库、无效 ticket 拦截及新任务工具
 暴露均已通过，详见[安装核验记录](evidence/gpt6-installation-validation.zh-CN.md)。
-Windows 原生宿主本轮不可用；其烟测从共享策略取得允许目标，根 slug 变化使用离线
-事件测试，并标记 `HOST_MODEL_INTENT_OFFLINE_ONLY`，不会为覆盖分支实际调用 Sol。
+上述首次实现记录中，Windows 原生宿主不可用；当时根 slug 变化只做离线事件测试，
+标记为 `HOST_MODEL_INTENT_OFFLINE_ONLY`。保留该历史边界，不能把旧记录改称原生通过。
+
+当前普通烟测和 Router 自己发起的调用仍从共享策略取得允许目标。宿主模型意图验收
+另由持续存活的 smoke 协调任务通过 Codex 原生任务控制执行；这是宿主操作，
+不修改 Router 的 GPT-6 允许范围，也不允许范围外的子代理。Windows runner 的
+`smoke-host-model-target.mjs` 从原生 `model/list` 选择支持初始 effort 的不同根模型，
+当前优先选可用的 Sol，仅用于宿主控制步骤；普通烟测不能使用该通道绕过策略。
+
+按 [macOS 手册](MACOS_SMOKE.md#4-exercise-both-host-model-decisions)和
+[Windows 手册](WINDOWS_SMOKE.md#6-exercise-host-model-intent-protection)核验原生状态、
+可信 Hook、pending 和两种决定，并在失败时也恢复初始模型及宿主暴露的思考档位。
+能力不足应报告宿主能力失败，不能要求用户反复手工切换模型，或用离线回归替代原生
+验收。是否通过仍以当前候选的实际记录为准。

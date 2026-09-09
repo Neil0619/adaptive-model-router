@@ -11,12 +11,18 @@ node scripts/validate-smoke-evidence.mjs <evidence.json> --write-derivatives
 
 Evidence must be collected from the exact frozen candidate commit. A `PASS`
 is invalid unless all 17 canonical blocking checks pass, diagnostics are
-healthy, the bounded target is Sol/Terra, privacy passes, delegated/Stop
-outcome counts are settled, and the same real Desktop task completes a
-compatible upgrade lifecycle. Raw Codex events, prompts, source, logs,
+healthy, the bounded target matches the candidate's allowed scope, privacy
+passes, delegated/Stop outcome counts are settled, and the same real Desktop
+task completes a compatible upgrade lifecycle. Raw Codex events, prompts, source, logs,
 session/context identifiers, errors, secrets, and absolute paths are forbidden.
 Task, context, route, and outcome identities are stored only as SHA-256
 digests; the validator requires the before/after pairs to match.
+
+The schema accepts historical Sol/Terra targets as well as Astra; this preserves
+old records and does not authorize new work outside the active model policy.
+Host-model intent overrides are separate host-control observations, not a
+change to the recorded bounded target. Offline host-model tests alone do not
+satisfy the logged-in check in the platform runbooks.
 
 Reviewing and trusting the current Hook definitions remains the only required
 human prerequisite. The canonical artifact is the blocking functional evidence
