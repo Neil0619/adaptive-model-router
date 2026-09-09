@@ -2,7 +2,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { canonicalJson } from "./lib/io.mjs";
+import { compatibleToolDefinitions } from "./lib/tool-contract-compatibility.mjs";
 import { pluginRootFrom, readRuntimeDescriptor, runtimeModuleUrl } from "./lib/runtime-loader.mjs";
 
 const shellRoot = pluginRootFrom(import.meta.url);
@@ -22,9 +22,7 @@ try {
   if (!Array.isArray(service.TOOL_DEFINITIONS) || typeof service.createServiceStore !== "function") {
     throw new Error("runtime service contract is incomplete");
   }
-  const contract = (definitions) =>
-    canonicalJson(definitions.map(({ name, inputSchema }) => ({ name, inputSchema })));
-  if (contract(shell.TOOL_DEFINITIONS) !== contract(service.TOOL_DEFINITIONS)) {
+  if (!compatibleToolDefinitions(shell.TOOL_DEFINITIONS, service.TOOL_DEFINITIONS)) {
     throw new Error("runtime tool contract is incompatible");
   }
   const store = service.createServiceStore();

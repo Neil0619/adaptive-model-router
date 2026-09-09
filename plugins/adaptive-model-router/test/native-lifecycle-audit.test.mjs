@@ -66,7 +66,7 @@ test("CLI 0.153.3 uses its reviewed adapter without rebinding old receipts or ac
   }
 });
 
-test("native Windows 0.153.4 has a separate audit receipt and exact platform/build admission", () => {
+test("native macOS and Windows 0.153.4 share an exact-build audit while unknown hosts remain denied", () => {
   const { input, options } = fixture("0.153.4");
   const result = auditNativeLifecycleNoop(input, options);
   assert.equal(result.passed, true);
@@ -80,7 +80,7 @@ test("native Windows 0.153.4 has a separate audit receipt and exact platform/bui
     }
   }
   assert.equal(supportsNativeLifecycleHost("win32", "0.153.3"), false);
-  assert.equal(supportsNativeLifecycleHost("darwin", "0.153.4"), false);
+  assert.equal(supportsNativeLifecycleHost("darwin", "0.153.4"), true);
   assert.equal(supportsNativeLifecycleHost("linux", "0.153.4"), false);
 });
 

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { RouterStore, normalizeRootModel } from "../scripts/lib/database.mjs";
+import { DATABASE_VERSION } from "../scripts/lib/constants.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
 import { CATALOG, completeNoChildRoute, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
@@ -207,7 +208,7 @@ test("database v1 migrates transactionally through v6 without losing routes, out
       old.close();
 
       store = new RouterStore({ path: database });
-      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 6);
+      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), DATABASE_VERSION);
       assert.equal(store.db.prepare("SELECT count(*) AS count FROM routes").get().count, 1);
       assert.equal(store.db.prepare("SELECT count(*) AS count FROM outcomes").get().count, 1);
       assert.equal(store.db.prepare("SELECT active_revision_id FROM project_policy").get().active_revision_id, revisionId);

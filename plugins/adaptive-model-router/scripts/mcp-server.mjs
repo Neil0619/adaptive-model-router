@@ -2,7 +2,8 @@
 import { spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { ROUTER_VERSION } from "./lib/constants.mjs";
-import { canonicalJson, sanitizedError, writeJsonLine } from "./lib/io.mjs";
+import { sanitizedError, writeJsonLine } from "./lib/io.mjs";
+import { compatibleToolDefinitions } from "./lib/tool-contract-compatibility.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
 import {
   activateRuntimeTrial,
@@ -25,15 +26,8 @@ try {
 const shellService = await import("./lib/service.mjs");
 const TOOL_DEFINITIONS = shellService.TOOL_DEFINITIONS;
 const pluginRoot = pluginRootFrom(import.meta.url);
-const shellContract = canonicalJson(
-  TOOL_DEFINITIONS.map(({ name, inputSchema }) => ({ name, inputSchema })),
-);
-
 function contractMatches(service) {
-  if (!Array.isArray(service.TOOL_DEFINITIONS)) return false;
-  return canonicalJson(
-    service.TOOL_DEFINITIONS.map(({ name, inputSchema }) => ({ name, inputSchema })),
-  ) === shellContract;
+  return compatibleToolDefinitions(TOOL_DEFINITIONS, service.TOOL_DEFINITIONS);
 }
 
 function probeRuntime(resolution) {

@@ -268,6 +268,7 @@ const autoApprovedTools = [
   "get_route_history",
   "get_route_status",
   "list_policy_proposals",
+  "manage_stage",
   "preview_model_policy",
   "record_outcome",
   "resolve_host_model_intent",
@@ -322,8 +323,8 @@ for (const event of ["PreToolUse", "PostToolUse"]) {
   assert(matcher.test("Agent"), `${event} must retain the documented Agent alias`);
   assert(matcher.test("spawn_agent"), `${event} must match the canonical live tool name`);
   assert(matcher.test("collaborationspawn_agent"), `${event} must match the Codex 0.152 flattened collaboration namespace`);
-  assert(!matcher.test("collaboration.spawn_agent"), `${event} must not assume a separator in the flattened host name`);
-  assert(!matcher.test("send_message"), `${event} must not match unrelated collaboration tools`);
+  if (event === "PostToolUse") assert(!matcher.test("collaboration.spawn_agent"), `${event} must not assume a separator in the flattened host name`);
+  assert(matcher.test("send_message") && matcher.test("collaborationfollowup_task"), `${event} must observe managed messages and same-stage followups`);
 }
 const entry = marketplace.plugins?.find((plugin) => plugin.name === manifest.name);
 assert(entry?.source?.path === "./plugins/adaptive-model-router", "marketplace source path is invalid");

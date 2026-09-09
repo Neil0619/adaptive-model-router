@@ -200,6 +200,82 @@ test("quarantine wins over a later success for the same immutable cache director
   }
 });
 
+for (const [label, lineEnding] of [["LF", "\n"], ["CRLF", "\r\n"]]) {
+  test(`a frozen strict MCP shell survives the reviewed sender-evidence extension without quarantining the runtime (${label})`, { timeout: 60000 }, async () => {
+    const project = await temporaryProject("adaptive frozen MCP contract ");
+    const versionsRoot = join(project.root, "versions");
+    const oldRoot = join(versionsRoot, "0.4.1");
+    const nextRoot = join(versionsRoot, "0.4.2");
+    const pluginData = join(project.root, "plugin-data");
+    await createRuntime(oldRoot, "0.4.1");
+    const servicePath = join(oldRoot, "scripts", "lib", "service.mjs");
+    const service = (await readFile(servicePath, "utf8")).replaceAll("\r\n", "\n").replaceAll("\n", lineEnding);
+    assert.match(service, /        senderTranscriptPaths:/);
+    const legacyService = service.replace(/^        senderTranscriptPaths:[^\r\n]*\r?\n/mu, "");
+    assert.notEqual(legacyService, service);
+    assert.doesNotMatch(legacyService, /^        senderTranscriptPaths:/mu);
+    await writeFile(servicePath, legacyService);
+    const serverPath = join(oldRoot, "scripts", "mcp-server.mjs");
+    const sourceServer = (await readFile(serverPath, "utf8")).replaceAll("\r\n", "\n").replaceAll("\n", lineEnding);
+    // This is the previously shipped in-memory comparator, not the new helper.
+    const legacyImports = sourceServer.replace("{ sanitizedError, writeJsonLine }", "{ canonicalJson, sanitizedError, writeJsonLine }");
+    assert.notEqual(legacyImports, sourceServer);
+    const frozenServer = legacyImports.replace(/function contractMatches\(service\) \{[\s\S]*?\n\}/u, `const shellContract = canonicalJson(TOOL_DEFINITIONS.map(({ name, inputSchema }) => ({ name, inputSchema })));
+  function contractMatches(service) {
+    return canonicalJson(service.TOOL_DEFINITIONS.map(({ name, inputSchema }) => ({ name, inputSchema }))) === shellContract;
+  }`);
+    assert.notEqual(frozenServer, legacyImports);
+    await writeFile(serverPath, frozenServer);
+    const rpc = jsonRpcProcess(process.execPath, [serverPath], {
+      cwd: oldRoot,
+      env: { ...process.env, ADAPTIVE_ROUTER_HOME: pluginData, ADAPTIVE_ROUTER_LOCAL_ONLY: "1" },
+    });
+    try {
+      const initial = await rpc.send({ jsonrpc: "2.0", id: 1, method: "tools/call",
+        params: { name: "diagnose_router", arguments: { contextId: "frozen-contract" } } });
+      assert.equal(initial.result.structuredContent.runtime.runtimeVersion, "0.4.1");
+      const inventory = await rpc.send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+      assert.equal(inventory.result.tools.find((tool) => tool.name === "manage_stage").inputSchema.properties.senderTranscriptPaths, undefined);
+      // Updating the bootstrap on disk does not replace the comparator already
+      // executing in this process. The candidate must work with that comparator.
+      await writeFile(serverPath, sourceServer);
+      await createRuntime(nextRoot, "0.4.2");
+      const upgraded = await rpc.send({ jsonrpc: "2.0", id: 3, method: "tools/call",
+        params: { name: "diagnose_router", arguments: { contextId: "frozen-contract" } } });
+      assert.equal(upgraded.result.structuredContent.runtime.runtimeVersion, "0.4.2");
+      const after = await rpc.send({ jsonrpc: "2.0", id: 4, method: "tools/list" });
+      assert.deepEqual(after.result.tools, inventory.result.tools, "the existing host inventory remains unchanged");
+      const pointer = JSON.parse(await readFile(join(pluginData, "runtime", "active.json"), "utf8"));
+      assert.equal(pointer.activeVersion, "0.4.2");
+      assert.deepEqual(pointer.failedDirectories, []);
+      const modern = await runProcess(process.execPath, [join(nextRoot, "scripts", "mcp-server.mjs")], {
+        cwd: nextRoot,
+        env: { ...process.env, ADAPTIVE_ROUTER_HOME: pluginData, ADAPTIVE_ROUTER_LOCAL_ONLY: "1" },
+      }, `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n`);
+      assert.equal(modern.status, 0, modern.stderr);
+      assert.equal(JSON.parse(modern.stdout).result.tools.find((tool) => tool.name === "manage_stage")
+        .inputSchema.properties.senderTranscriptPaths.maxItems, 3, "fresh callers keep the complete current interface");
+
+      const incompatibleRoot = join(versionsRoot, "0.4.3");
+      await createRuntime(incompatibleRoot, "0.4.3");
+      const incompatiblePath = join(incompatibleRoot, "scripts", "lib", "service.mjs");
+      const incompatible = await readFile(incompatiblePath, "utf8");
+      const changed = incompatible.replace('required: ["contextId", "routeId", "action", "expectedRevision"]',
+        'required: ["contextId", "routeId", "action", "expectedRevision", "senderTranscriptPaths"]');
+      assert.notEqual(changed, incompatible);
+      await writeFile(incompatiblePath, changed);
+      const denied = await rpc.send({ jsonrpc: "2.0", id: 5, method: "tools/call",
+        params: { name: "diagnose_router", arguments: { contextId: "frozen-contract" } } });
+      assert.equal(denied.result.structuredContent.runtime.runtimeVersion, "0.4.2", "an unreviewed mandatory input still cannot activate");
+      const rejected = JSON.parse(await readFile(join(pluginData, "runtime", "active.json"), "utf8"));
+      assert.deepEqual(rejected.failedDirectories, ["0.4.3"]);
+    } finally {
+      await rpc.close();
+      await project.cleanup();
+    }
+  });
+}
+
 test("an existing MCP process and hook shell activate a compatible installed runtime without restarting", async () => {
   const project = await temporaryProject("adaptive hot runtime 空格 ");
   const versionsRoot = join(project.root, "plugins", "cache", "market", "adaptive-model-router");

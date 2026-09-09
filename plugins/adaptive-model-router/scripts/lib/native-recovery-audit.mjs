@@ -51,7 +51,7 @@ export function auditNativeLifecycle1533Transcript(bytes, child, parentId) {
   return auditNoWorkTranscript(bytes, child, parentId, "0.153.3", LIFECYCLE_1533_AUDIT_ADAPTER);
 }
 
-// The native Windows 0.153.4 host retains the reviewed 0.153.3 record/action
+// The native macOS and Windows 0.153.4 hosts retain the reviewed 0.153.3 record/action
 // vocabulary. Keep its receipt separately pinned; unknown actions fail closed.
 export function auditNativeLifecycle1534Transcript(bytes, child, parentId) {
   return auditNoWorkTranscript(bytes, child, parentId, "0.153.4", LIFECYCLE_1534_AUDIT_ADAPTER);

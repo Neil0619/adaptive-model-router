@@ -1,3 +1,4 @@
+import { capacityAdmissionDecision, createCapacitySchema } from "./host-capacity-recovery.mjs";
 import { randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -15,7 +16,7 @@ import {
 import { databasePath, legacyStatePresent, opaqueId, projectIdentityMaterial } from "./context.mjs";
 import { canonicalJson, isSqliteBusy, parseJson, payloadHash, sleepSync } from "./io.mjs";
 import { normalizeModelSlug } from "./model-slug.mjs";
-import { readNativeRecoveryReceipt } from "./delegation-recovery.mjs";
+import { readNativeRecoveryReceipt, readHostCapacityRejection } from "./delegation-recovery.mjs";
 import { reserveTaskQualification, consumeQualificationOutcome } from "./lifecycle-qualification.mjs";
 import {
   markPredispatchReconciliation,
@@ -29,6 +30,8 @@ import {
 
 import { readModelPolicy, retainModelPolicy, modelPolicyStatus } from "./model-policy-store.mjs";
 import { targetAllowed } from "./model-policy.mjs";
+import { createStageClosureSchema, createStageMessageSchema, stageClosureStatus, stageResponsibilities, verifyStageClosure } from "./stage-closure.mjs";
+import { createChildCommandSchema } from "./child-command-journal.mjs";
 
 const GLOBAL_PROJECT = "__global__";
 const GLOBAL_CONTEXT = "__global__";
@@ -104,6 +107,15 @@ const STORAGE_CONTRACT_SCHEMA = Object.freeze({
   delegation_usage: [
     "project_id", "context_key", "total_transcript_bytes", "untrusted", "updated_at",
   ],
+  delegation_children: ["route_id", "project_id", "context_key", "task_hash", "agent_hash", "locator",
+    "revision", "state", "verified_revision", "verified_digest", "accounted_bytes", "created_at", "updated_at"],
+  delegation_messages: ["route_id", "caller_turn_id", "call_id", "author", "kind", "input_digest",
+    "revision", "status", "source_order", "created_at", "updated_at"],
+  delegation_child_stops: ["route_id", "turn_id", "result_digest", "observed_at"],
+  delegation_child_commands: ["route_id", "call_id", "command_digest", "start_turn_id", "pre_seen", "post_seen", "conflicted", "verified"],
+  capacity_refusals: ["route_id", "project_id", "context_key", "stage_key", "epoch"],
+  delegation_stage_journal: ["route_id", "revision", "kind", "record", "created_at"],
+  delegation_maintenance: ["route_id", "intent", "state", "start_revision", "record", "verified_token", "accounted_bytes", "created_at", "updated_at"],
 });
 function nowIso() {
   return new Date().toISOString();
@@ -591,6 +603,25 @@ export class RouterStore {
           WHEN NEW.action = 'delegate' AND (NEW.schema_version != '6.0' OR NEW.decision_json IS NULL)
           BEGIN SELECT RAISE(ABORT, 'delegate route requires model policy decision'); END`);
       }
+      if (current < 7) {
+        createStageClosureSchema(this.db);
+        createCapacitySchema(this.db);
+      }
+      if (current < 8) createChildCommandSchema(this.db);
+      if (current < 9) {
+        // Keep conflicting receipts intact. Only current closure verification
+        // (including any checked exception record) can mark them verified.
+        this.db.exec("DROP TRIGGER IF EXISTS require_child_command_closure");
+        createChildCommandSchema(this.db);
+      }
+      if (current < 10 && !this.db.prepare("SELECT sql FROM sqlite_master WHERE name='delegation_messages'").get().sql.includes("'rejected'")) {
+        // Add a terminal non-delivery state without erasing prior message facts.
+        // Older additive-compatible readers remain conservative about it.
+        this.db.exec("ALTER TABLE delegation_messages RENAME TO delegation_messages_v9");
+        createStageMessageSchema(this.db);
+        this.db.exec("INSERT INTO delegation_messages SELECT * FROM delegation_messages_v9");
+        this.db.exec("DROP TABLE delegation_messages_v9");
+      }
       const policy = readModelPolicy(this.db);
       retainModelPolicy(this.db, policy);
       this.db.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES(?,?)").run("model_policy:active", policy.digest);
@@ -994,6 +1025,8 @@ export class RouterStore {
   commitRoute(context, route, onceId = null, admission = null) {
     return this.transaction(() => {
       if (route.action === "delegate") {
+        const capacity = capacityAdmissionDecision(this.db, context, route.stageKey);
+        if (!capacity.allowed) return { committed: false, retry: false, fallback: capacity.reasonCode };
         const modelPolicy = readModelPolicy(this.db);
         if (route.decision?.policyDigest !== modelPolicy.digest) return { committed: false, fallback: "MODEL_POLICY_CHANGED" };
         if (!targetAllowed(modelPolicy, route.target)) return { committed: false, fallback: "MODEL_SCOPE_DENIED" };
@@ -1114,6 +1147,7 @@ export class RouterStore {
 
   hasAuthoritativeToolingRejection(context, routeId) {
     if (!routeId) return false;
+    if (readNativeRecoveryReceipt(this.db, context, routeId)?.recoveryKind === "host_agent_limit_rejected") return true;
     return Boolean(this.db.prepare(`
       SELECT 1
       FROM delegation_attempts da
@@ -1126,6 +1160,10 @@ export class RouterStore {
         AND o.failure_type = 'tooling'
       LIMIT 1
     `).get(routeId, context.projectId, context.contextKey));
+  }
+
+  hostCapacityRejection(context) {
+    return readHostCapacityRejection(this.db, context);
   }
 
   findRoute(context, routeId) {
@@ -1312,6 +1350,10 @@ export class RouterStore {
         error.code = "OUTCOME_BEFORE_DISPATCH";
         throw error;
       }
+      verifyStageClosure(this.db, context, route.route_id, outcome.closureToken);
+      if (this.db.prepare("SELECT 1 FROM delegation_maintenance WHERE route_id=?").get(route.route_id) && outcome.status === "passed") {
+        throw new Error("A terminated or transferred stage must not be reported as passed business execution.");
+      }
       const qualificationConsumed = consumeQualificationOutcome(this.db, context, route.route_id, outcome, qualificationProof);
       if (parseJson(route.reason_codes_json, []).includes("HOST_LIFECYCLE_QUALIFICATION") && !qualificationConsumed) {
         throw new Error("native qualification requires source-owned verification");
@@ -1363,7 +1405,7 @@ export class RouterStore {
           return {
             action: "block",
             routeId: attempt.route_id,
-            reason: `Adaptive Router route ${attempt.route_id} has an ambiguous launch lifecycle. Do not create a replacement child or record an outcome; keep the delegation gate occupied for reconciliation.`,
+            reason: `Adaptive Router route ${attempt.route_id} requires native recovery after a rejected or ambiguous launch. Do not reuse its ticket, create a replacement child, or record an outcome. Follow the skill's native recovery inspection and apply only a verified, authorized recovery digest; otherwise retain the delegation gate and report the blocker.`,
             recordedUnknown: 0,
             gateRetained: true,
           };
@@ -1376,10 +1418,22 @@ export class RouterStore {
           gateRetained: true,
         };
       }
+      const closure = stageClosureStatus(this.db, context);
+      if (closure && !stopHookActive) {
+        return { action: "block", routeId: closure.routeId, recordedUnknown: 0, gateRetained: true,
+          reason: closure.maintenance
+            ? "Bounded child maintenance remains unfinished. Inspect get_route_status.stageClosure, run its required followup without business tools, verify all requirement dispositions and operation receipts, then use manage_stage verify_maintenance. Keep the original outcome unchanged."
+            : closure.state === "ready"
+            ? "The current Router child result still needs root verification and its unique outcome. Inspect get_route_status.stageClosure, verify that result, and record_outcome with its closureToken before ending this turn."
+            : `The Router child has unfinished work (${closure.reason}). Inspect its current result and pending messages. Use same-stage followup for accepted requirements that have not been handled, then verify the latest result. Do not reuse an earlier Stop, invent an outcome, or leave actionable child work without a next step.` };
+      }
+      const responsibility = stageResponsibilities(this.db, context).find((work) => work.unreadable || work.pending?.some((r) => r.disposition === "transferred"));
+      if (responsibility && !stopHookActive) return { action: "block", routeId: responsibility.routeId, recordedUnknown: 0,
+        gateRetained: Boolean(attempt || closure), reason: "Transferred or unreadable child work remains in get_route_status.pendingStageWork. Use manage_stage read_disposition, finish the still-authorized responsibility or record its explicit cancellation/deferment, and resolve_requirements with actual verification. Do not silently discard the handoff or claim a required independent review was performed by the root." };
       return {
         action: "allow",
         recordedUnknown: 0,
-        gateRetained: Boolean(attempt),
+        gateRetained: Boolean(attempt || closure),
       };
     });
   }
@@ -1901,8 +1955,11 @@ export class RouterStore {
       })(),
       modelPolicy: modelPolicyStatus(this.db, context),
       latestRoute: latestStatus,
+      stageClosure: stageClosureStatus(this.db, context),
+      pendingStageWork: stageResponsibilities(this.db, context),
       pendingOutcomes,
       pendingProposals,
+      ...(this.hostCapacityRejection(context) ? { hostCapacityRejection: this.hostCapacityRejection(context) } : {}),
       delegationGate: activeDelegation ? {
         state: "occupied",
         routeId: activeDelegation.route_id,

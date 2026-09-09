@@ -95,6 +95,23 @@ whose Desktop runtime directory was replaced by a Codex update:
 .\install.ps1 -Action Repair
 ```
 
+For a locally registered source checkout, preserve the reviewed package and
+installed launch definitions across host cache reconstruction with:
+
+```bash
+node plugins/adaptive-model-router/scripts/manage-install.mjs repair --pin-local-marketplace
+```
+
+This publishes a validated materialized marketplace under stable plugin data
+and switches only its source through Codex's native configuration API. Exact
+valid Hook definitions are retained, so a cache rebuild does not revert them
+to bare `node` or require renewed trust for unchanged definitions. Later
+`repair`, `upgrade`, and `install` operations refresh this source from the same
+original checkout; run them there, not from a retained generation or another
+worktree. Prior generations are retained, and a failed switch conditionally
+restores the previous source without overwriting concurrent configuration
+changes. Hook trust remains a separate host approval.
+
 ```bash
 codex plugin remove adaptive-model-router@adaptive-model-router
 codex plugin marketplace remove adaptive-model-router
@@ -138,7 +155,12 @@ not a hot-upgrade primitive.
 
 The vault contains only validated copies of the plugin package plus an index of
 runtime directory names. It is outside Codex's host-managed cache, never stores
-prompts or project data, and is not an alternate executable source. A restored
+prompts or project data. Hook and MCP bootstrap can read the exact activated
+runtime from its indexed vault entry when the host cache loses that version.
+They verify its package, entrypoints, compatibility and absence of symbolic
+links, never activate an unindexed or quarantined entry, and do not rewrite
+the cache. Diagnostics expose the requested version and any unavailable active
+pointer instead of hiding a fallback. A restored
 historical tree must match its own indexed host surface and the current shared
 runtime/storage compatibility contracts before an atomic directory rename; the
 current version must additionally match the complete current source surface.
@@ -202,16 +224,19 @@ round-trip proof returns `HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN`. All four continue
 root-only and issue no delegation ticket. The check never writes `config.toml`
 or accepts hook trust for the user.
 
-On the explicitly supported native macOS builds (`0.153.3`, `0.153.0`, and
-`0.153.0-alpha.5`), a task without prior proof can first receive
+On the explicitly supported native macOS builds (`0.153.4`, `0.153.3`, `0.153.0`, and
+`0.153.0-alpha.5`) and native Windows `0.153.4`, a task without prior proof can first receive
 `delegate / HOST_LIFECYCLE_QUALIFICATION`: exactly one policy-bound GPT-6/low child returning a
 fixed marker without tools or original task content. The server independently
 checks all four lifecycle events and the complete raw child transcript before
 accepting its outcome. Proof is task-scoped and bound to the executable, ordered
-Hook inventory, actual Hook shells, and runtime source. Failure or a changed
-binding keeps ordinary delegation disabled and never silently retries the
-self-test. Qualification neither consumes a once override nor enters learning;
-after success, route the original stage again normally.
+Hook inventory, actual Hook shells, and runtime source. A changed binding keeps
+ordinary delegation disabled. If the retained proof and its original outcome
+are valid successes and no child is unresolved, the next eligible stage can
+archive that proof and issue a fresh fixed self-test for the new binding.
+Failed, pending, invalid, or ambiguous attempts are never automatically retried.
+Qualification neither consumes a once override nor enters learning; after a
+new source-verified success, route the original stage again normally.
 
 Priority is: request override, once override, session override, project override, optional global override, then the quality-first model policy (default GPT-6/high). Unknown or hidden models are never chosen automatically. Explicit unavailable targets are never silently substituted.
 

@@ -21,8 +21,14 @@ import {
 } from "./lib/delegation-gate.mjs";
 import { readThreadSpawnIdentity } from "./lib/subagent-session.mjs";
 import { createLifecycleDiagnostic } from "./lib/lifecycle-diagnostics.mjs";
+import { childToolRestriction, isRouterChildTarget, observeManagedMessage, observeManagedStop, registerManagedChild, targetedChild } from "./lib/stage-closure.mjs";
+
+import { observeCapacityList, observeCapacitySpawn, observeCapacityTurn, invalidateCapacityList } from "./lib/host-capacity-recovery.mjs";
+import { rememberRootTranscript } from "./lib/stage-reconciliation.mjs";
+import { isChildCommand, observeChildCommand } from "./lib/child-command-journal.mjs";
 
 let RouterStore;
+let diagnosticIdentity;
 let lifecycleDiagnostic = () => {};
 
 function readInput() {
@@ -48,6 +54,7 @@ function additionalContext(message, hookEventName = "UserPromptSubmit") {
   writeJsonLine(process.stdout, {
     hookSpecificOutput: { hookEventName, additionalContext: message },
   });
+  if (diagnosticIdentity) recordIdentity(diagnosticIdentity, "context_emitted");
 }
 
 function preToolDecision(permissionDecision, fields = {}) {
@@ -118,7 +125,7 @@ function rejectedSubagentContext() {
 
 function recordIdentity(identity, contextInjection) {
   try {
-    recordHookIdentityDiagnostic(identity.audit, contextInjection);
+    recordHookIdentityDiagnostic(identity.audit, contextInjection, process.env, identity);
   } catch (error) {
     emitDiagnostic({ component: "hook", stage: "identity_diagnostic", error });
   }
@@ -126,6 +133,7 @@ function recordIdentity(identity, contextInjection) {
 
 function requireIdentity(input, event) {
   const identity = resolveHookIdentity(input, { event });
+  diagnosticIdentity = identity;
   if (identity.contextId) return identity;
   recordIdentity(identity, "blocked_missing_session_id");
   process.stderr.write("Adaptive Model Router hook skipped: trusted session identity unavailable.\n");
@@ -160,6 +168,10 @@ function managedSubagentState(input, {
       authoritative: true,
       create: false,
     });
+    const child = targetedChild(store.db, context, spawn.childId);
+    const maintenance = child && store.db.prepare("SELECT intent,state FROM delegation_maintenance WHERE route_id=?").get(child.route_id);
+    if (maintenance) return { marked: true, managed: true, state: { managed: true, trusted: true,
+      contextPackage: "This is an existing stage's bounded maintenance turn. Use no tools and execute no business work. Collect pending requirements, partial results and unresolved operation references for the root, then return a final reply. The original business authorization is closed." } };
     const state = claim
       ? store.transaction(() => {
           const result = claimDelegationSubagent(store.db, context, {
@@ -167,7 +179,11 @@ function managedSubagentState(input, {
             agentId: spawn.childId,
             model: input.model,
           });
-          if (result.allowed) observeQualificationHook(store.db, context, result.routeId, "start", resolveLifecyclePluginRoot());
+          if (result.allowed) {
+            registerManagedChild(store.db, context, result.routeId, spawn, { trackCommands: true });
+            observeCapacitySpawn(store.db, context, result.routeId);
+            observeQualificationHook(store.db, context, result.routeId, "start", resolveLifecyclePluginRoot());
+          }
           return result;
         })
       : inspectManagedSubagent(store.db, context, {
@@ -209,8 +225,12 @@ function automaticRoutingContext(rootTask, contextId) {
     "Only an actual host-tool rejection may prevent that launch; follow the skill's failed/tooling flow when it occurs.",
     "Declare hostCapabilities.delegation.invocation=direct only when spawn_agent is callable as a direct native tool. A spawn entry visible only inside functions.exec or another code-mode namespace is code_mode_nested, not a compatible delegation capability, and must remain root-only.",
     "Do not use list_agents, an empty agent list, or the absence of an existing child to decide whether spawn_agent is callable. Once this task has successfully created a Router child, do not downgrade direct delegation unless a later direct spawn_agent call returns an actual host rejection.",
-    "For delegate, call the direct native spawn_agent tool outside functions.exec, pass carrier.taskName as the exact task_name, carrier.message as the exact message, and fork_turns=none; trusted hooks validate the non-encrypted task name without rewriting host-encrypted input and inject the bounded context only into that child.",
+    "For delegate, call the direct native spawn_agent tool outside functions.exec, pass carrier.taskName as the exact task_name, carrier.message as the exact message, fork_turns=none, target.model as model, and target.effort as reasoning_effort. All five parameters are required; never rely on inherited model or effort. Trusted hooks validate the non-encrypted task name without rewriting host-encrypted input and inject the bounded context only into that child.",
+    "If PreToolUse rejects an ordinary Router launch for a model or reasoning-effort mismatch before ticket consumption, use the skill's native pre-dispatch recovery procedure. Do not retry that ticket or record an outcome; root-only continuation does not release its reservation.",
+    "If direct spawn_agent returns exactly 'collab spawn failed: agent thread limit reached', use the skill's native capacity-rejection recovery procedure. A failed/tooling record_outcome automatically audits this exact failure; if it has not reconciled, inspect and apply native recovery for that route. Do not retry the ticket, invent lifecycle events, duplicate an outcome, or reuse a finished Router child for a new stage. Verified recovery releases only that reservation. HOST_AGENT_LIMIT_REACHED is retained history: call native list_agents for HOST_CAPACITY_RECHECK_REQUIRED, finish current work or bounded old-child maintenance, then request a new ticket for the same still-needed stage. One recovery startup per stage and native root turn is allowed; busy or exhausted recovery is temporary and later real delegation rechecks. Never raise the limit or replace a required independent review with root self-review.",
     "Never call record_outcome for a delegate route before its matching spawn_agent dispatch handshake; an unlaunched route has no verification outcome.",
+    "Use manage_stage begin_maintenance for historical backlog or explicit cancellation/replacement/deferral before interrupting old business. Its actual child tool guard permits only a final collection reply; verify every input disposition and real pending operation before manage_stage verify_maintenance. Frozen inventories can call the installed stdio-tool.mjs bridge. The original outcome remains unchanged. On normal root exit and the next real stage, inspect stageClosure and complete its actionable responsibility.",
+    "Use followup_task for necessary supplemental work in the same unfinalized stage, including when the child still appears running. Do not send courtesy messages into completed child queues. Before the final outcome, inspect get_route_status.stageClosure, handle its nextAction, and verify the result of the current requirements. Pass a ready closure token as record_outcome.closureToken after followups; an old Stop or successful send is not completion. A frozen outcome schema can use the installed one-shot stdio bridge with the current schema, without reopening the task.",
     "If the guarded Stop re-entry arrives while that ticket is still unconsumed, the Router marks the launch lifecycle ambiguous and retains the gate; without an authoritative no-child result it never archives the attempt or permits a replacement child.",
     "For busy, do not create or retry an Agent and do not record an outcome for the busy decision; continue root-only, explain the pending delegation, and retain blockingRouteId internally.",
     `The active root-task model observed by the hook is ${rootLabel(rootTask)}; its reasoning effort remains visible only in the Codex composer.`,
@@ -290,6 +310,8 @@ async function promptHook(input) {
   const store = new RouterStore();
   try {
     const context = store.context({ cwd: input.cwd || process.cwd(), contextId, authoritative: true });
+    observeCapacityTurn(store.db, context, input.turn_id);
+    rememberRootTranscript(store.db, context, input.transcript_path);
     recordIdentity(identity, "identity_accepted");
     const inspection = control ? null : parseReadOnlyInspectionPrompt(prompt);
     if (inspection) store.setInspectionGuard(context);
@@ -333,7 +355,10 @@ async function promptHook(input) {
         additionalContext(disabledRoutingContext(rootTask, contextId));
         return;
       }
-      additionalContext(automaticRoutingContext(rootTask, contextId));
+      const pending = store.status(context);
+      const reminders = pending.stageClosure || pending.pendingStageWork?.length
+        ? `\nExisting child responsibilities: ${JSON.stringify({ stageClosure: pending.stageClosure, pendingStageWork: pending.pendingStageWork })}. Continue their concrete next actions in this task. Read preserved dispositions before resuming deferred work and check current user intent and workspace; do not redo completed operations.` : "";
+      additionalContext(automaticRoutingContext(rootTask, contextId) + reminders);
       return;
     }
     if (control.command === "status") {
@@ -474,6 +499,16 @@ function subagentStartHook(input) {
 }
 
 async function preToolUseHook(input) {
+  // Automatic continuations need not submit a new user prompt. An actually
+  // dispatched root tool Hook can establish this exact turn without borrowing
+  // an older receipt or inventing a UserPromptSubmit event.
+  if (!isBoundedSubagent(input) && typeof input.tool_use_id === "string" && input.tool_use_id.trim()
+    && typeof input.tool_name === "string" && input.tool_name.trim()) {
+    const identity = resolveHookIdentity(input, { event: "PreToolUse" });
+    if (identity.contextId && identity.turnId) recordIdentity(identity, "identity_accepted");
+  }
+  if (managedChildToolHook(input)) return;
+  if (managedMessageHook(input, false)) return;
   const parsed = parseCarrierTaskName(input.tool_input?.task_name);
   if (!parsed.marked) {
     if (parseLegacyCarrierMessage(input.tool_input?.message).marked) {
@@ -500,6 +535,8 @@ async function preToolUseHook(input) {
       create: false,
     });
     const result = store.transaction(() => {
+      rememberRootTranscript(store.db, context, input.transcript_path);
+      observeCapacityTurn(store.db, context, input.turn_id);
       const consumed = consumeDelegationTicket(store.db, context, {
         taskName: parsed.taskName,
         turnId: input.turn_id,
@@ -529,6 +566,19 @@ async function preToolUseHook(input) {
 }
 
 async function postToolUseHook(input) {
+  if (managedChildCommandResultHook(input)) return;
+  if (!isBoundedSubagent(input) && /^(?:collaboration)?list_agents$/u.test(input.tool_name || "")) {
+    if (existsSync(databasePath()) && input.session_id) {
+      const store = new RouterStore();
+      try {
+        const context = store.context({ cwd: input.cwd || process.cwd(), contextId: input.session_id, authoritative: true, create: false });
+        store.transaction(() => observeCapacityList(store.db, context, input));
+      } finally { store.close(); }
+    }
+    return;
+  }
+  if (managedMessageHook(input, true)) return;
+  if (!/^(?:Agent|(?:collaboration)?spawn_agent)$/u.test(input.tool_name || "")) return;
   const identity = resolveHookIdentity(input, { event: "PostToolUse" });
   if (!identity.contextId) return;
   if (!existsSync(databasePath())) return;
@@ -548,6 +598,7 @@ async function postToolUseHook(input) {
         toolResponse: input.tool_response,
       });
       if (observed.correlated) observeQualificationHook(store.db, context, observed.routeId, "post", resolveLifecyclePluginRoot());
+      if (observed.routeId) observeCapacitySpawn(store.db, context, observed.routeId);
       lifecycleDiagnostic("result", { correlated: observed.correlated === true });
     });
   } finally {
@@ -584,12 +635,16 @@ async function subagentStopHook(input) {
           create: false,
         });
         store.transaction(() => {
+          invalidateCapacityList(store.db, context);
+          const managed = targetedChild(store.db, context, spawn.childId);
+          if (managed) observeManagedStop(store.db, managed.route_id, { turnId: input.turn_id, lastAssistantMessage: input.last_assistant_message });
           const observed = observeSubagentStop(
             store.db,
             context,
             spawn.taskName,
             input.agent_id,
             trustedTranscriptBytes(input.agent_transcript_path),
+            { turnId: input.turn_id, lastAssistantMessage: input.last_assistant_message },
           );
           if (observed.routeId) observeQualificationHook(store.db, context, observed.routeId, "stop", resolveLifecyclePluginRoot());
           lifecycleDiagnostic("result", { stopped: Boolean(observed.routeId) });
@@ -602,6 +657,80 @@ async function subagentStopHook(input) {
     // Official SubagentStop hooks require JSON on stdout for an exit-0 no-op.
     writeJsonLine(process.stdout, {});
   }
+}
+
+function managedChildToolHook(input) {
+  if (!isBoundedSubagent(input)) return false;
+  const spawn = readThreadSpawnIdentity(input);
+  if (spawn && !isRouterChildTarget(spawn.taskName)) return false;
+  let store;
+  try {
+    store = new RouterStore();
+    const context = store.context({ cwd: input.cwd || process.cwd(), contextId: spawn?.parentContextId || input.session_id,
+      authoritative: true, create: false });
+    const restriction = store.transaction(() => {
+      const target = spawn?.childId || input.agent_id;
+      const restriction = childToolRestriction(store.db, context, target, input);
+      if (restriction.restricted || !isChildCommand(input)) return restriction;
+      const child = targetedChild(store.db, context, target);
+      const command = observeChildCommand(store.db, child.route_id, input);
+      return command.allowed ? restriction : { restricted: true, reason: command.reason };
+    });
+    if (!restriction.restricted) return false;
+    denyRouterAgent(restriction.reason);
+  } catch {
+    denyRouterAgent("This bounded child's Router state is unavailable. Preserve its work and return the missing evidence to the root; do not run business tools.");
+  } finally { store?.close(); }
+  return true;
+}
+
+function managedChildCommandResultHook(input) {
+  if (!isChildCommand(input) || !isBoundedSubagent(input)) return false;
+  const spawn = readThreadSpawnIdentity(input);
+  if (!spawn || !isRouterChildTarget(spawn.taskName)) return false;
+  let store;
+  try {
+    store = new RouterStore();
+    const context = store.context({ cwd: input.cwd || process.cwd(), contextId: spawn.parentContextId,
+      authoritative: true, create: false });
+    store.transaction(() => {
+      const child = targetedChild(store.db, context, spawn.childId);
+      if (child) observeChildCommand(store.db, child.route_id, input, { post: true });
+    });
+  } finally { store?.close(); }
+  return true;
+}
+
+function managedMessageHook(input, post) {
+  if (!/^(?:collaboration)?(?:send_message|followup_task|interrupt_agent)$/u.test(input.tool_name || "")) return false;
+  const marked = isRouterChildTarget(input.tool_input?.target) || /^[a-f0-9-]{36}$/u.test(input.tool_input?.target || "");
+  const denyUnavailable = () => {
+    if (!post) denyRouterAgent("Router message ownership or durable registration is unavailable. Preserve the requirement at the root and reconcile before native delivery.");
+    else writeJsonLine(process.stdout, {});
+    return true;
+  };
+  if (!existsSync(databasePath())) return marked ? denyUnavailable() : false;
+  const identity = resolveHookIdentity(input, { event: post ? "PostToolUse" : "PreToolUse" });
+  if (!identity.contextId) return marked ? denyUnavailable() : false;
+  const spawn = isBoundedSubagent(input) ? readThreadSpawnIdentity(input) : null;
+  const author = isBoundedSubagent(input) ? spawn?.agentPath || null : "/root";
+  let store;
+  try {
+    store = new RouterStore();
+    const context = store.context({ cwd: input.cwd || process.cwd(),
+      contextId: spawn?.parentContextId || identity.contextId, authoritative: true, create: false });
+    const result = store.transaction(() => {
+      if (author === "/root") rememberRootTranscript(store.db, context, input.transcript_path);
+      return observeManagedMessage(store.db, context, input, { post, author });
+    });
+    if (!result.matched) return false;
+    if (!post && !result.allowed) denyRouterAgent(result.reason);
+    else writeJsonLine(process.stdout, {});
+    return true;
+  } catch (error) {
+    if (marked) return denyUnavailable();
+    throw error;
+  } finally { store?.close(); }
 }
 
 const startedAt = Date.now();
@@ -647,7 +776,10 @@ try {
   if (
     process.argv[2] === "pre-tool-use"
     && (
-      parseCarrierTaskName(input?.tool_input?.task_name).marked
+      isBoundedSubagent(input)
+      || isRouterChildTarget(input?.tool_input?.target)
+      || /^[a-f0-9-]{36}$/u.test(input?.tool_input?.target || "")
+      || parseCarrierTaskName(input?.tool_input?.task_name).marked
       || parseLegacyCarrierMessage(input?.tool_input?.message).marked
     )
   ) {

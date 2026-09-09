@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-08T16:06:50.334Z",
+  "scope": "macOS candidate identity, native preflight and current task status; full acceptance remains pending",
+  "candidateVersion": "0.4.0+codex.20260908152938",
+  "candidateIdentity": {
+    "sourceDigest": "e2ddcc1d57bcd148e9b316353a11a28f65636e71586f48250c4aaef2ffcbda65",
+    "installedDigest": "e2ddcc1d57bcd148e9b316353a11a28f65636e71586f48250c4aaef2ffcbda65",
+    "entrypoints": [
+      {
+        "path": "runtime.json",
+        "source": "716cc2554e57bf2201df7c33149a416d5fbacc34c4995a066a5dc9d29cdb90e2",
+        "installed": "716cc2554e57bf2201df7c33149a416d5fbacc34c4995a066a5dc9d29cdb90e2"
+      },
+      {
+        "path": "scripts/hook.mjs",
+        "source": "69a97ed0b64222f5f5359cbe19e6d70ddfa6e7602a985ef6c306910054d93f81",
+        "installed": "69a97ed0b64222f5f5359cbe19e6d70ddfa6e7602a985ef6c306910054d93f81"
+      },
+      {
+        "path": "scripts/mcp-server.mjs",
+        "source": "d97b4d2e4023d3636434f6877ecf61f12fb6842a84d31650a7046ae8b39621fa",
+        "installed": "d97b4d2e4023d3636434f6877ecf61f12fb6842a84d31650a7046ae8b39621fa"
+      },
+      {
+        "path": "scripts/runtime-probe.mjs",
+        "source": "c944c9cbefb7723cb28fc01ca625c0b91ee688820d104cc35edc2450a8794d1a",
+        "installed": "c944c9cbefb7723cb28fc01ca625c0b91ee688820d104cc35edc2450a8794d1a"
+      }
+    ],
+    "matched": true
+  },
+  "nativePreflight": {
+    "schemaVersion": 1,
+    "recordedAt": "2026-09-08T16:01:52.058Z",
+    "passed": false,
+    "preflightOnly": true,
+    "realModelAcceptanceExecuted": false,
+    "modelTurnsStarted": 0,
+    "sourceDigest": null,
+    "readiness": {
+      "ready": false,
+      "reasonCode": "HOOK_TRUST_REQUIRED"
+    },
+    "steps": [],
+    "remainingCoverage": [
+      "actual-running supplemental input and unfinished-tool interruption",
+      "three-backlog native capacity recovery",
+      "original Hosted task recovery",
+      "independent candidate review"
+    ],
+    "cleanup": {
+      "ownedProcessGroupAbsent": true
+    },
+    "failure": "HOOK_TRUST_REQUIRED"
+  },
+  "localChecks": {
+    "syntax": "passed",
+    "resultCheckerTests": {
+      "total": 3,
+      "passed": 3,
+      "failed": 0
+    },
+    "diffWhitespace": "passed"
+  },
+  "currentTaskReadback": {
+    "nativeMcpStatus": "passed",
+    "installedStdioStatus": "passed",
+    "rootModel": "gpt-6-astra",
+    "changedByRouter": false,
+    "delegationGate": {
+      "state": "available"
+    },
+    "stageClosure": null,
+    "pendingOutcomes": 0,
+    "pendingStageWork": []
+  },
+  "documentationStage": {
+    "transport": "stdio-bridge",
+    "action": "continue",
+    "reasonCodes": [
+      "HOST_HOOK_DISPATCH_NOT_OBSERVED"
+    ],
+    "childStarted": false
+  },
+  "acceptanceDriver": "scripts/probe-residency-semantics.mjs",
+  "instructions": "scripts/residency-acceptance/README.md",
+  "fullAcceptancePassed": false,
+  "pluginSourceChangedSinceCandidate": false,
+  "externalHostApiRequired": false,
+  "hookTrustModifiedByAgent": false,
+  "limits": [
+    "Local result-checker tests do not establish real-model acceptance.",
+    "The successful native status read does not establish every old task launch path.",
+    "Same-root 100-stage, real-model, old-backlog capacity, original-task and independent-review acceptance remains required."
+  ]
+}

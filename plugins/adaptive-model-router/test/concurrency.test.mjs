@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RouterStore } from "../scripts/lib/database.mjs";
+import { DATABASE_VERSION } from "../scripts/lib/constants.mjs";
 import {
   consumeDelegationTicket,
   observeAgentResult,
@@ -48,9 +49,9 @@ test("50 processes concurrently migrate an empty SQLite database", async () => {
   try {
     const results = await Promise.all(Array.from({ length: 50 }, (_, index) => runWorker(project, "migrate", `migration-${index}`)));
     assert.equal(results.length, 50);
-    assert.ok(results.every((result) => result.version === 6 && result.health === "ok"));
+    assert.ok(results.every((result) => result.version === DATABASE_VERSION && result.health === "ok"));
     const store = new RouterStore({ path: join(project.home, "router.sqlite3") });
-    assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 6);
+    assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), DATABASE_VERSION);
     store.close();
   } finally {
     await project.cleanup();

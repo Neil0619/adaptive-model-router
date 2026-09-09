@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-08",
+  "scope": "Plan reassessment and existing native cooperative-tool feasibility; not plugin release acceptance",
+  "nativeProbe": {
+    "schemaVersion": 1,
+    "binary": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "version": "codex-cli 0.153.4",
+    "binarySha256": "a30ec314bbd0e3721632234d07db7c99855db3b9f1e32dbe8c791947f07e7629",
+    "artifactDirectory": "/var/folders/lp/z1188zq5623fm59tjjmby3n00000gn/T/router-native-residency-x4kb696j",
+    "syntheticResponses": true,
+    "paidModelInference": false,
+    "configuredTotalCapacity": 4,
+    "installedRouterModified": false,
+    "scenario": "cooperative",
+    "cooperativeStagesCompleted": 12,
+    "lateQueueOnlyStages": 6,
+    "directFollowupStages": 6,
+    "pendingRequirementsObservedByChildren": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "allFinalResultsMatchCurrentRequirement": true,
+    "capacityRejections": 0,
+    "routerAcceptance": "not_exercised",
+    "desktopOwningInstance": "not_exercised",
+    "semanticQualityAcceptance": "not_exercised",
+    "status": "mechanism_observed",
+    "rootRequests": 77,
+    "childResponses": 24,
+    "nativeCalls": 76
+  },
+  "nativeCallTraceSha256": "5c323147849276ea046b6faeff16d028fecd83026a99fed468329c21b9f95e18",
+  "probeSourceSha256": "4ab4dd64fd3bd6e2af88cf3a9e83d48f3c486c1807260e87bacbce6f44606a50",
+  "unitTests": {
+    "command": "python3 -B -m unittest discover -s scripts -p test_native_residency_probe.py -v",
+    "passed": 11
+  },
+  "baselineEvidence": "docs/evidence/macos-residency-p0-20260908.json",
+  "planCorrection": {
+    "previousConclusion": "A new owning-host lifecycle API is a prerequisite for this repair",
+    "assessment": "withdrawn: it follows from additional v2 physical-unload and native-seal requirements, not from the user functional objective",
+    "existingPath": "Native followup processes pending input; root validates latest results; native residency handles eviction during later admission"
+  },
+  "runtimeRepairComplete": false,
+  "macInstalled": false,
+  "externalSubmissionAuthorized": false,
+  "externalSubmissionMade": false
+}

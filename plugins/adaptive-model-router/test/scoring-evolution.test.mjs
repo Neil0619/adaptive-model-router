@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { DEFAULT_SCORING_PROFILE, SCHEMA_VERSION } from "../scripts/lib/constants.mjs";
+import { DATABASE_VERSION, DEFAULT_SCORING_PROFILE, SCHEMA_VERSION } from "../scripts/lib/constants.mjs";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { recordOutcome } from "../scripts/lib/learning.mjs";
 import {
@@ -86,7 +86,7 @@ test("database v6 stores redacted immutable score snapshots and excludes overrid
       const explicitRow = store.db.prepare(`
         SELECT * FROM route_score_snapshots WHERE route_id = ?
       `).get(explicit.routeId);
-      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), 6);
+      assert.equal(Number(store.db.prepare("PRAGMA user_version").get().user_version), DATABASE_VERSION);
       assert.equal(automaticRow.eligible_learning, 0);
       assert.equal(explicitRow.eligible_learning, 0);
       assert.deepEqual(JSON.parse(explicitRow.exclusion_codes_json), ["MODEL_POLICY_OBSERVE_ONLY"]);

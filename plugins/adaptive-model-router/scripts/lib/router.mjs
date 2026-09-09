@@ -1,3 +1,4 @@
+import { capacityAdmissionDecision } from "./host-capacity-recovery.mjs";
 import { randomUUID } from "node:crypto";
 import { getModelCatalog, selectDelegateCatalog } from "./catalog.mjs";
 import { classifyBorderline } from "./classifier.mjs";
@@ -243,6 +244,13 @@ async function routeWithStore(input, options, store) {
     }
     stageKey = previous.stage_key;
   }
+  const capacity = capacityAdmissionDecision(store.db, context, stageKey);
+  if (!capacity.allowed) {
+    const route = contextualRoute(store, context, { action: "continue", codes: [capacity.reasonCode] });
+    route.stageKey = stageKey;
+    store.commitRoute(context, route, null);
+    return publicRoute(route);
+  }
   let evidence = input.evidence;
   const prior = store.db.prepare(`SELECT r.*, o.status AS final_status, o.failure_type AS final_failure
     FROM routes r LEFT JOIN outcomes o ON o.route_id=r.route_id
@@ -421,7 +429,8 @@ async function routeWithStore(input, options, store) {
       }
       if (readiness?.ready !== true && readiness?.qualificationBinding) {
         const target = resolveModelTarget({ policy: modelPolicy, catalog: delegateCatalog, purpose: "qualification" }).target;
-        qualification = target ? newTaskQualification(readiness.qualificationBinding, route.routeId, readiness.requalification) : null;
+        qualification = target ? newTaskQualification(readiness.qualificationBinding, route.routeId,
+          readiness.requalification, readiness.passedRefresh) : null;
         if (qualification) {
           qualification.modelPolicy = { digest: modelPolicy.digest, target };
           route.target = { model: target.model, effort: target.effort };
@@ -455,7 +464,7 @@ async function routeWithStore(input, options, store) {
       }
     }
     const ticket = createDelegationTicket();
-    if (qualification) ticket.carrier.instruction = "Native lifecycle self-test only: launch this fixed carrier once, verify the no-tool child, then record one outcome. The server independently audits the complete native transcript. Only after success, route the original stage again. Never retry a failed self-test.";
+    if (qualification) ticket.carrier.instruction = `Qualification only: no-tool child, then verify and record one outcome. Server audits its full native transcript. Route the original stage only after success; never retry this self-test. ${ticket.carrier.instruction}`;
     const committed = store.commitRoute(context, route, qualification ? null : resolved.onceId, {
       ticket,
       contextPackage,

@@ -67,6 +67,7 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
       "get_model_policy", "preview_model_policy", "activate_model_policy", "rollback_model_policy",
       "route_stage",
       "record_outcome",
+      "manage_stage",
       "get_route_status",
       "get_route_history",
       "set_route_override",

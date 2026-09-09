@@ -4,15 +4,29 @@ import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { AppServerClient } from "./app-server.mjs";
 import { parseCarrierTaskName } from "./delegation-gate.mjs";
-import { canonicalJson, payloadHash } from "./io.mjs";
-import { auditNativeRecoveryTranscript, readNativeRecoveryTranscript, RECOVERY_AUDIT_ADAPTER, LIFECYCLE_AUDIT_ADAPTER } from "./native-recovery-audit.mjs";
+import { canonicalJson, parseJson, payloadHash } from "./io.mjs";
+import { auditNativeRecoveryTranscript, auditNativeLifecycle1533Transcript,
+  readNativeRecoveryTranscript, RECOVERY_AUDIT_ADAPTER, LIFECYCLE_AUDIT_ADAPTER,
+  LIFECYCLE_1533_AUDIT_ADAPTER, LIFECYCLE_1534_AUDIT_ADAPTER } from "./native-recovery-audit.mjs";
 import { QUALIFICATION_RECOVERY_SCHEMA, failedQualificationRecoverySubject, auditFailedQualificationTranscript } from "./qualification-recovery.mjs";
+import { readTaskQualification } from "./lifecycle-qualification.mjs";
+import { qualificationTargetMatches } from "./qualification-policy.mjs";
+import { auditNativeUnconsumed1534Transcript, isMetadataRecoveryAudit } from "./native-metadata-recovery-audit.mjs";
+import { inspectNativePredispatchRejection, isPredispatchRecoveryReceipt } from "./native-predispatch-audit.mjs";
+import { inspectNativeHostCapacityRejection } from "./native-host-capacity-audit.mjs";
+import { CAPACITY_RECOVERY_SCHEMA, CAPACITY_REASON, capacityStateKey, hostCapacityRecoverySubject,
+  isHostCapacityRecoveryReceipt, capacityWasRecovered, invalidateCapacityList, rememberCapacityRefusal } from "./host-capacity-recovery.mjs";
 
 const PREFIX = "native_recovery:";
 const SCHEMA = "native-thread-delegation-recovery/2";
 const hash = (value) => createHash("sha256").update(String(value)).digest("hex");
 const present = (value) => typeof value === "string" && value.length > 0;
 const isDigest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+const UNCONSUMED_AUDITORS = Object.freeze({
+  "0.153.0-alpha.5": { audit: auditNativeRecoveryTranscript, adapter: RECOVERY_AUDIT_ADAPTER },
+  "0.153.3": { audit: auditNativeLifecycle1533Transcript, adapter: LIFECYCLE_1533_AUDIT_ADAPTER },
+  "0.153.4": { audit: auditNativeUnconsumed1534Transcript, adapter: LIFECYCLE_1534_AUDIT_ADAPTER },
+});
 
 function unresolved(reasonCode = "RECOVERY_EVIDENCE_UNPROVEN") {
   return { status: "unresolved", reasonCode, gateReleased: false };
@@ -23,8 +37,14 @@ export function readNativeRecoveryReceipt(db, context, routeId) {
   if (!row) return null;
   try {
     const receipt = JSON.parse(row.value);
+    if (isPredispatchRecoveryReceipt(receipt, context, routeId)
+      || isHostCapacityRecoveryReceipt(receipt, context, routeId)) return receipt;
     const supported = receipt.schemaVersion === SCHEMA
-      ? receipt.rawAuditAdapter === RECOVERY_AUDIT_ADAPTER
+      ? Object.hasOwn(UNCONSUMED_AUDITORS, receipt.cliVersion)
+        && (receipt.rawAuditAdapter === UNCONSUMED_AUDITORS[receipt.cliVersion].adapter || isMetadataRecoveryAudit(receipt))
+        && (receipt.recoveryKind === undefined || (receipt.recoveryKind === "unconsumed_qualification"
+          && receipt.qualificationState === "pending" && receipt.ordinaryDelegationEnabled === false
+          && receipt.originalDispatchConsumed === false && isDigest(receipt.qualificationDigest)))
       : receipt.schemaVersion === QUALIFICATION_RECOVERY_SCHEMA
         && receipt.rawAuditAdapter === LIFECYCLE_AUDIT_ADAPTER && receipt.cliVersion === "0.153.0"
         && receipt.recoveryKind === "failed_qualification" && receipt.qualificationState === "failed"
@@ -81,11 +101,15 @@ function launchBinding(parent, attempt, input, cwd, subject) {
   }
   // Existing parent metadata can predate the build that actually ran the child.
   // Only the qualification branch has a stored exact child-build binding.
-  return { start, completion, cliVersion: subject.cliVersion || parent.cliVersion };
+  return { start, completion, cliVersion: subject.cliVersion || null };
 }
 
 function closedChild(child, binding, attempt, input, cwd, subject) {
-  const { start, completion, cliVersion } = binding;
+  const { start, completion } = binding;
+  // A long-lived parent may predate the executable that created this child.
+  // Pin the actual child build, then verify that same build in its raw source.
+  const cliVersion = binding.cliVersion || child?.cliVersion;
+  requireFact(subject.schemaVersion !== SCHEMA || Object.hasOwn(UNCONSUMED_AUDITORS, cliVersion));
   const spawn = child?.source?.subAgent?.thread_spawn;
   requireFact(child?.id === start.agentThreadId && child.parentThreadId === input.contextId);
   requireFact(child.forkedFromId === null && resolve(child.cwd) === resolve(cwd));
@@ -151,7 +175,30 @@ function eligible(attempt) {
 }
 
 function recoverySubject(store, context, attempt, cwd) {
-  if (eligible(attempt)) return { schemaVersion: SCHEMA, stateDigest: payloadHash(attempt), receiptFields: {} };
+  const capacity = hostCapacityRecoverySubject(store.db, context, attempt);
+  if (capacity) return capacity;
+  if (eligible(attempt)) {
+    const qualification = readTaskQualification(store.db, context);
+    const route = store.db.prepare("SELECT * FROM routes WHERE route_id=? AND project_id=? AND context_key=?")
+      .get(attempt.route_id, context.projectId, context.contextKey);
+    const reasons = parseJson(route?.reason_codes_json, null);
+    if (route?.action !== "delegate" || route.model !== attempt.model || route.effort !== attempt.effort
+      || !Array.isArray(reasons) || reasons.length === 0 || !reasons.every(present)
+      || qualification?.state === "invalid") return null;
+    // The immutable route class owns this boundary. Missing or malformed
+    // qualification metadata cannot turn a self-test into ordinary work.
+    const isQualification = reasons.includes("HOST_LIFECYCLE_QUALIFICATION");
+    if (isQualification || qualification?.routeId === attempt.route_id) {
+      if (!isQualification || qualification?.routeId !== attempt.route_id
+        || qualification.state !== "pending" || qualification.proof !== undefined
+        || qualification.ticketHash !== attempt.ticket_hash || !qualificationTargetMatches(store.db, qualification, route)) return null;
+      return { schemaVersion: SCHEMA, stateDigest: payloadHash({ attempt, qualification, route }),
+        cliVersion: qualification.binding.cliVersion,
+        receiptFields: { recoveryKind: "unconsumed_qualification", qualificationDigest: payloadHash(qualification),
+          qualificationState: "pending", ordinaryDelegationEnabled: false, originalDispatchConsumed: false } };
+    }
+    return { schemaVersion: SCHEMA, stateDigest: payloadHash({ attempt, qualification, route }), receiptFields: {} };
+  }
   return failedQualificationRecoverySubject(store.db, context, attempt, cwd);
 }
 
@@ -164,6 +211,12 @@ function finishRecovery(store, context, input, stateDigest, receipt, cwd) {
     const saved = { ...receipt, recordedAt };
     store.db.prepare("INSERT INTO meta(key, value) VALUES(?, ?)")
       .run(`${PREFIX}${input.routeId}`, canonicalJson(saved));
+    if (receipt.schemaVersion === CAPACITY_RECOVERY_SCHEMA) {
+      store.db.prepare("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        .run(capacityStateKey(context), input.routeId);
+      invalidateCapacityList(store.db, context);
+      rememberCapacityRefusal(store.db, context, input.routeId);
+    }
     // Preserve every missing original lifecycle field. This separate recovery
     // receipt is not a retroactive Pre/Post/Stop observation or normal outcome.
     store.db.prepare(`
@@ -189,6 +242,7 @@ function finishRecovery(store, context, input, stateDigest, receipt, cwd) {
 export async function recoverDelegation(input, {
   store, cwd, readThread = null, measureTranscript = measureNativeTranscript,
   readTranscript = readNativeRecoveryTranscript,
+  readParentTranscript,
 } = {}) {
   if (!present(input?.contextId) || !present(input.routeId)
     || (input.apply !== undefined && typeof input.apply !== "boolean")
@@ -207,8 +261,9 @@ export async function recoverDelegation(input, {
   const subject = recoverySubject(store, context, attempt, cwd);
   if (!subject) return unresolved("RECOVERY_ATTEMPT_INELIGIBLE");
   const attemptDigest = subject.stateDigest;
-  const auditTranscript = subject.schemaVersion === SCHEMA ? auditNativeRecoveryTranscript
-    : (bytes, child, parentId) => auditFailedQualificationTranscript(bytes, child, parentId, cwd);
+  const auditTranscript = (bytes, child, parentId) => subject.schemaVersion === SCHEMA
+    ? UNCONSUMED_AUDITORS[child.cliVersion].audit(bytes, child, parentId)
+    : auditFailedQualificationTranscript(bytes, child, parentId, cwd);
   const client = readThread ? null : new AppServerClient({ timeoutMs: 20_000 });
   const deadline = Date.now() + 20_000;
   const read = readThread || (async (threadId) => {
@@ -218,6 +273,34 @@ export async function recoverDelegation(input, {
   });
   try {
     const parent = await read(input.contextId);
+    // A separate, exact native adapter covers ordinary launches rejected by
+    // PreToolUse before dispatch. Qualification recovery keeps its own proof
+    // and retry contracts; generic errors never enter this branch.
+    const capacity = subject.schemaVersion === CAPACITY_RECOVERY_SCHEMA;
+    if (capacity || (subject.schemaVersion === SCHEMA && subject.receiptFields.recoveryKind === undefined)) {
+      let denial = null;
+      if (capacity) {
+        denial = await inspectNativeHostCapacityRejection({ parent, read, attempt,
+          contextId: input.contextId, cwd, readParentTranscript });
+      } else try {
+        denial = await inspectNativePredispatchRejection({ parent, read, attempt,
+          contextId: input.contextId, cwd, readParentTranscript });
+      } catch { /* Existing child recovery remains available for its own case. */ }
+      if (denial) {
+        const subjectDigest = payloadHash([context.projectId, context.contextKey, input.routeId]);
+        const evidenceDigest = payloadHash({ subjectDigest, attemptDigest, projection: denial.projection });
+        if (input.apply !== true) return { status: "recoverable", evidenceDigest, gateReleased: false,
+          disposition: "reconciled_failure", failureType: "tooling", transcriptBytes: 0,
+          recoveryKind: denial.projection.recoveryKind };
+        if (input.expectedEvidenceDigest !== evidenceDigest) return unresolved("RECOVERY_EVIDENCE_CHANGED");
+        return finishRecovery(store, context, input, attemptDigest, {
+          ...denial.projection, subjectDigest, evidenceDigest, sourceBytes: denial.sourceBytes,
+          sourceDigest: denial.sourceDigest, status: "reconciled_failure", failureType: "tooling",
+          source: "native_thread_read", originalHandshakeProven: capacity, transcriptBytes: 0,
+          ...subject.receiptFields,
+        }, cwd);
+      }
+    }
     const binding = launchBinding(parent, attempt, input, cwd, subject);
     const child = await read(binding.start.agentThreadId);
     const projection = closedChild(child, binding, attempt, input, cwd, subject);
@@ -254,4 +337,36 @@ export async function recoverDelegation(input, {
   } finally {
     client?.close();
   }
+}
+
+// Historical capacity evidence is retained after reservation recovery. A later
+// native list and bounded admission reassess this root; a proven successful
+// spawn ends the temporary fallback without deleting the incident receipt.
+export function readHostCapacityRejection(db, context) {
+  const marker = db.prepare("SELECT value FROM meta WHERE key=?").get(capacityStateKey(context));
+  if (!marker) return null;
+  const receipt = readNativeRecoveryReceipt(db, context, marker.value);
+  if (!receipt || receipt.schemaVersion !== CAPACITY_RECOVERY_SCHEMA) {
+    return { reasonCode: "HOST_CAPACITY_EVIDENCE_UNPROVEN", source: "retained_capacity_marker" };
+  }
+  return { reasonCode: CAPACITY_REASON, source: receipt.source, recordedAt: receipt.recordedAt,
+    state: capacityWasRecovered(db, context) ? "recovered" : "recheck_required",
+    nextAction: capacityWasRecovered(db, context) ? "normal_routing" : "native_list_then_finish_pending_work_or_bounded_maintenance" };
+}
+
+// The mutation surface may close this exact native failure after storing the
+// caller's failed/tooling outcome. Read-only status/history never repair state.
+export async function recoverFailedHostCapacityDelegation(input, options) {
+  if (input.status !== "failed" || input.failureType !== "tooling") return null;
+  const { store, cwd } = options;
+  const context = store.context({ cwd, contextId: input.contextId, create: false });
+  const attempt = store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=? AND project_id=? AND context_key=?")
+    .get(input.routeId, context.projectId, context.contextKey);
+  if (!hostCapacityRecoverySubject(store.db, context, attempt)) return null;
+  const subject = { contextId: input.contextId, routeId: input.routeId };
+  const inspected = await recoverDelegation(subject, options);
+  if (inspected.status !== "recoverable" || inspected.recoveryKind !== "host_agent_limit_rejected") return null;
+  const applied = await recoverDelegation({ ...subject, apply: true, expectedEvidenceDigest: inspected.evidenceDigest }, options);
+  return { status: applied.status, gateReleased: applied.gateReleased,
+    reasonCode: applied.gateReleased ? CAPACITY_REASON : applied.reasonCode };
 }

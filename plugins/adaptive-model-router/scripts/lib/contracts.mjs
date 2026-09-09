@@ -183,6 +183,7 @@ export const OUTCOME_INPUT_SCHEMA = {
   required: ["routeId", "contextId", "status", "gate", "failureType", "retries", "retryBreakdown", "escalations", "userCorrection"],
   properties: {
     routeId: { type: "string", minLength: 1, maxLength: 128 },
+    closureToken: { type: "string", pattern: "^[a-f0-9]{64}$" },
     contextId: { type: "string", minLength: 1, maxLength: 256 },
     status: { type: "string", enum: ["passed", "failed", "unknown"] },
     gate: { type: "string", enum: VERIFICATION_GATES },

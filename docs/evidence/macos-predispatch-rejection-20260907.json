@@ -1,0 +1,211 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-09-07T12:36:35.480Z",
+  "status": "final_installed_desktop_qualification_and_ordinary_delegation_passed",
+  "host": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cliVersion": "0.153.4"
+  },
+  "sourceVersion": "0.4.0+codex.20260907122923",
+  "sourceDigest": "4b9021cd2b4b191bf8a2b8f643faaddb035fb0b59832726bdf704bfaad9e98f0",
+  "sourceMatchesInstalledAndManaged": true,
+  "registeredSourceMatchesManaged": true,
+  "unrelatedConfigUnchanged": true,
+  "protectedFilesUnchanged": 346,
+  "hooks": [
+    {
+      "eventName": "postToolUse",
+      "currentHash": "sha256:536f7142e3337a9665609212c5869613f75dcee5d2f71e5b1d5d9f1d96f7c243",
+      "enabled": true,
+      "trustStatus": "trusted"
+    },
+    {
+      "eventName": "preToolUse",
+      "currentHash": "sha256:58222a3c8ea361d2fc23fcd5c4c2dfdb5f7a30a5481877019bb2f916a5a10d6e",
+      "enabled": true,
+      "trustStatus": "trusted"
+    },
+    {
+      "eventName": "sessionStart",
+      "currentHash": "sha256:f4df68347e9e9a703ce55cbfdb285cad39004e2d0002f03fa0acaa553cd7c7d4",
+      "enabled": true,
+      "trustStatus": "trusted"
+    },
+    {
+      "eventName": "stop",
+      "currentHash": "sha256:b2bae719fb2e2fd78518726e96d79554506ae91bb52c14fc876b1e691f284347",
+      "enabled": true,
+      "trustStatus": "trusted"
+    },
+    {
+      "eventName": "subagentStart",
+      "currentHash": "sha256:b5579abc5c692ddf94b0337d1d7b229aa71a5a26de6e907ebfd7323d7f1807c3",
+      "enabled": true,
+      "trustStatus": "trusted"
+    },
+    {
+      "eventName": "subagentStop",
+      "currentHash": "sha256:b1d0748b7ffc6647a065fe488dd0d3d8c5d74510cd58561359b13bc78d2606c8",
+      "enabled": true,
+      "trustStatus": "trusted"
+    },
+    {
+      "eventName": "userPromptSubmit",
+      "currentHash": "sha256:a6107a2e117be5abe5bf82f11a2c07da6896f41156aa521bcfa02fb62a6e4eb4",
+      "enabled": true,
+      "trustStatus": "trusted"
+    }
+  ],
+  "checks": {
+    "tests": 340,
+    "passed": 339,
+    "skipped": 1,
+    "failed": 0,
+    "skipReason": "Windows cmd.exe and Windows PowerShell integration requires native Windows",
+    "policyCases": 232,
+    "policyMismatches": 0,
+    "compactionFocusedTests": 39,
+    "predispatchBoundaryFocusedTests": 73,
+    "packageValidation": "passed",
+    "skillValidation": "passed",
+    "pluginValidation": "passed",
+    "diffCheck": "passed",
+    "receiptSchemaAndQualificationFocusedTests": 49,
+    "installedFocusedTests": 13
+  },
+  "review": {
+    "sourceDigest": "4b9021cd2b4b191bf8a2b8f643faaddb035fb0b59832726bdf704bfaad9e98f0",
+    "target": {
+      "model": "gpt-6-astra",
+      "effort": "high"
+    },
+    "status": "passed",
+    "outcomeSeq": 1230,
+    "focusedTests": 49,
+    "independentMalformedReceiptReplaysRejected": 4,
+    "independentHookReadback": "Two initialization timeouts; fresh Hook/config validation was completed by root."
+  },
+  "originalIncident": {
+    "routeId": "400350c1-3560-484e-9269-8064fc4603ec",
+    "recoveryApplyPerformed": false,
+    "recoveryRefusal": "RECOVERY_ATTEMPT_INELIGIBLE",
+    "reason": "The original task independently retried under the old runtime and completed during this repair; its completed outcome was preserved.",
+    "observedLifecycle": {
+      "route_id": "400350c1-3560-484e-9269-8064fc4603ec",
+      "model": "gpt-6-astra",
+      "effort": "xhigh",
+      "ticket_consumed": 1,
+      "post_observed": 1,
+      "stop_observed": 1,
+      "no_child": 0,
+      "outcome_recorded": 1,
+      "ambiguous": 0,
+      "finalized_at": "2026-09-07T10:26:31.720Z",
+      "seq": 1222,
+      "status": "passed",
+      "gate": "full-checks"
+    }
+  },
+  "finalDesktopVerification": {
+    "status": "passed",
+    "currentTurnHook": {
+      "event": "UserPromptSubmit",
+      "observedAt": "2026-09-07T12:21:07.192Z",
+      "exactTurnMatched": true
+    },
+    "sameTurnHotUpgradeKeptGenuineReceipt": true,
+    "qualification": {
+      "route_id": "7858ed21-ad1b-445b-a99a-a3959cceeb84",
+      "model": "gpt-6-astra",
+      "effort": "low",
+      "ticket_consumed": 1,
+      "post_observed": 1,
+      "stop_observed": 1,
+      "no_child": 0,
+      "outcome_recorded": 1,
+      "ambiguous": 0,
+      "finalized_at": "2026-09-07T12:33:44.021Z",
+      "seq": 1231,
+      "status": "passed",
+      "gate": "structured-check",
+      "hooks": {
+        "post": {
+          "runtimeDigest": "4b9021cd2b4b191bf8a2b8f643faaddb035fb0b59832726bdf704bfaad9e98f0",
+          "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+        },
+        "pre": {
+          "runtimeDigest": "4b9021cd2b4b191bf8a2b8f643faaddb035fb0b59832726bdf704bfaad9e98f0",
+          "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+        },
+        "start": {
+          "runtimeDigest": "4b9021cd2b4b191bf8a2b8f643faaddb035fb0b59832726bdf704bfaad9e98f0",
+          "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+        },
+        "stop": {
+          "runtimeDigest": "4b9021cd2b4b191bf8a2b8f643faaddb035fb0b59832726bdf704bfaad9e98f0",
+          "shellRoot": "2df604766327b8a18d17c915badfd531d04c2d61dfda3e93a4ece906156774ed"
+        }
+      },
+      "proof": {
+        "childDigest": "5d24ffe310a9a035c8bed9e18c4ad7068de608891d3bf925b4219fdb363f38f1",
+        "childTurnDigest": "c7a235fb36a6d1bf9fffb60b4fd535fb503ebce728ddfc9433be5ae963344451",
+        "passed": true,
+        "rawAuditAdapter": "codex-0.153.4-no-work/1",
+        "rawAuditDigest": "068e96a020ef69200a359cbcdf4f2f5b8bc5c7c68955d6c2a7fa79e548ff3973",
+        "rootTurnDigest": "5d7a88e71e98b6d1c268d5f731d873ae4a333e871dc1ef1a1b14d5ea9476c6c2",
+        "sourceBytes": 103226,
+        "toolUseDigest": "e362c55c7cc31da811d7bf31faaa6214e33fe636c7ec62e12272c81b24b94806"
+      }
+    },
+    "ordinaryDelegation": {
+      "route_id": "3fa7a344-005e-41f5-b40a-fc5eb2844e4d",
+      "model": "gpt-6-astra",
+      "effort": "high",
+      "ticket_consumed": 1,
+      "post_observed": 1,
+      "stop_observed": 1,
+      "no_child": 0,
+      "outcome_recorded": 1,
+      "ambiguous": 0,
+      "finalized_at": "2026-09-07T12:35:38.448Z",
+      "seq": 1232,
+      "status": "passed",
+      "gate": "full-checks"
+    },
+    "finalGate": {
+      "state": "available"
+    },
+    "pendingOutcomes": 0,
+    "rootTask": {
+      "modelVisibility": "hook_observed",
+      "model": "gpt-6-astra",
+      "reasoningEffortVisibility": "host_only",
+      "changedByRouter": false
+    },
+    "noReceiptFabricated": true,
+    "nextAction": null
+  },
+  "changes": [
+    "All ordinary and qualification carriers and automatic Hook guidance specify the five native spawn parameters.",
+    "Profile mismatch denies reuse, retains the reservation, and directs exact native recovery.",
+    "Desktop 0.153.4 ordinary pre-dispatch recovery audits native rejection evidence and rejects replay, child activity, unsupported or truncated records, and state changes.",
+    "Persisted route classification and qualification metadata remain bound through final recovery commit.",
+    "Turnless compaction diagnostics cannot overwrite independently observed exact-turn receipts.",
+    "Both the new turn receipt index and legacy fallback validate a complete consistent audit schema; malformed, unknown-event and bounded-child records cannot establish root-turn readiness."
+  ],
+  "limits": [
+    "Native Windows acceptance was not performed; its shell integration test was skipped.",
+    "The original already-completed Hosted incident was preserved without applying recovery.",
+    "No remote Git push was performed during this acceptance."
+  ],
+  "hostCheckedAt": "2026-09-07T12:32:21.097Z",
+  "previousBlockingObservation": {
+    "reason": "HOST_HOOK_DISPATCH_NOT_OBSERVED",
+    "source": "compact",
+    "turnIdAbsent": true,
+    "observedAt": "2026-09-07T10:43:26.711Z",
+    "nativeSelfMessageProducedNewTurnReceipt": false,
+    "resolvedBy": "Genuine UserPromptSubmit followed by the corrected separate exact-turn index."
+  }
+}

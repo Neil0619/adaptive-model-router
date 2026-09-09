@@ -10,10 +10,15 @@ import {
   rollbackPolicy,
 } from "./learning.mjs";
 import { routeStage } from "./router.mjs";
+import { recoverFailedHostCapacityDelegation } from "./delegation-recovery.mjs";
 import { inspectLifecycleHookReadiness } from "./hook-readiness.mjs";
-import { prepareQualificationOutcome } from "./lifecycle-qualification.mjs";
+import { prepareQualificationOutcome, nativeTaskWorkingDirectory } from "./lifecycle-qualification.mjs";
+import { withAppServer } from "./app-server.mjs";
 import { assertSchema } from "./schema.mjs";
 import { isTrivialTask, scoreTask } from "./scorer.mjs";
+import { manageStage } from "./stage-closure.mjs";
+import { OPERATION_ACTIONS, OPERATION_REVIEW_SCHEMA } from "./operation-contract.mjs";
+import { toolDefinitionsForShell } from "./service-shell-contract.mjs";
 
 import { MODEL_POLICY_SCHEMA, decideWorkLevel } from "./model-policy.mjs";
 import { readModelPolicy, modelPolicyStatus, previewModelPolicy, activateModelPolicy, rollbackModelPolicy } from "./model-policy-store.mjs";
@@ -50,7 +55,7 @@ const SCORING_PROFILE_DEFINITION = {
   },
 };
 
-export const TOOL_DEFINITIONS = [
+const CURRENT_TOOL_DEFINITIONS = [
   { name: "get_model_policy", description: "Read the active global model scope and immutable policy definition without changing state.",
     inputSchema: { type: "object", additionalProperties: false, required: ["contextId"], properties: { contextId: CONTEXT } } },
   { name: "preview_model_policy", description: "Validate and compare a candidate global model policy without writes or model calls.",
@@ -71,6 +76,36 @@ export const TOOL_DEFINITIONS = [
     name: "record_outcome",
     description: "Record exactly one strict final verification outcome for a delegated route.",
     inputSchema: OUTCOME_INPUT_SCHEMA,
+  },
+  {
+    name: "manage_stage",
+    description: "Reconcile existing native message calls or run and verify bounded collection for an existing child. Preserves its outcome and never launches a new business stage. The root verifies requirement dispositions and unresolved operation receipts.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["contextId", "routeId", "action", "expectedRevision"], properties: {
+        contextId: CONTEXT, routeId: PROPOSAL,
+        action: { type: "string", enum: ["reconcile_messages", "begin_maintenance", "verify_maintenance", "read_disposition", "resolve_requirements", ...OPERATION_ACTIONS] },
+        operationReview: OPERATION_REVIEW_SCHEMA,
+        expectedRevision: { type: "integer", minimum: 0 },
+        childId: CONTEXT, childTranscriptPath: { type: "string", minLength: 1, maxLength: 4096 },
+        parentTranscriptPath: { type: "string", minLength: 1, maxLength: 4096 },
+        senderTranscriptPaths: { type: "array", maxItems: 3, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 4096 } },
+        closureToken: { type: "string", pattern: "^[a-f0-9]{64}$" },
+        disposition: { type: "object", additionalProperties: false,
+          required: ["intent", "basis", "requirements", "pendingOperations"], properties: {
+            intent: { type: "string", enum: ["collect", "cancelled", "superseded", "deferred"] },
+            basis: { type: "string", minLength: 1, maxLength: 10000 },
+            resultReview: { type: "string", minLength: 1, maxLength: 10000 },
+            requirements: { type: "array", maxItems: 1000, items: { type: "object", additionalProperties: false,
+              required: ["messageId", "source", "disposition", "receipt", "owner"], properties: {
+                messageId: { type: "string", minLength: 1, maxLength: 256 },
+                source: { type: "string", minLength: 1, maxLength: 10000 },
+                disposition: { type: "string", enum: ["fulfilled", "cancelled", "superseded", "deferred", "transferred", "no_work"] },
+                receipt: { type: "string", minLength: 1, maxLength: 10000 },
+                owner: { type: "string", minLength: 1, maxLength: 1000 }
+              } } },
+            pendingOperations: { type: "array", maxItems: 1000, items: { type: "string", minLength: 1, maxLength: 10000 } }
+          } }
+      } },
   },
   {
     name: "get_route_status",
@@ -232,7 +267,8 @@ export const TOOL_DEFINITIONS = [
   },
 ];
 
-const TOOLS = new Map(TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
+export const TOOL_DEFINITIONS = await toolDefinitionsForShell(CURRENT_TOOL_DEFINITIONS, import.meta.url);
+const TOOLS = new Map(CURRENT_TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
 
 function contextFor(store, args, cwd) {
   return store.context({ cwd, contextId: args.contextId });
@@ -355,10 +391,34 @@ function shadowRoute(store, args, cwd) {
   };
 }
 
-export async function callRouterTool(name, args, { store, cwd = process.cwd(), routeOptions = null, qualificationOptions = {} } = {}) {
+async function readStageParent(contextId) {
+  return withAppServer(async (client, deadline) => {
+    await client.start(deadline);
+    return (await client.request("thread/read", { threadId: contextId, includeTurns: false }, deadline)).thread;
+  });
+}
+
+export async function callRouterTool(name, args, { store, cwd = process.cwd(), routeOptions = null, qualificationOptions = {}, recoveryOptions = {}, stageOptions = {} } = {}) {
   const definition = TOOLS.get(name);
   if (!definition) throw new Error(`unknown tool: ${name}`);
   assertSchema(definition.inputSchema, args, `${name} input`);
+  if (name === "manage_stage") {
+    const readOnly = ["read_disposition", "read_operations"].includes(args.action);
+    const context = readOnly ? store.context({ cwd, contextId: args.contextId, create: false }) : contextFor(store, args, cwd);
+    if (!readOnly && store.inspectionGuardActive(context)) throw new Error("Stage management is not available during a read-only inspection.");
+    if (readOnly) return manageStage(store.db, context, args, cwd);
+    let taskCwd = cwd;
+    if (args.childId && args.childTranscriptPath && !store.db.prepare(
+      "SELECT 1 FROM delegation_children WHERE route_id=? AND project_id=? AND context_key=?")
+      .get(args.routeId, context.projectId, context.contextKey)) {
+      // Installed MCP processes run in a cache, not the business checkout.
+      // Resolve the existing native root outside the transaction and verify
+      // its authoritative project binding before adopting historical identity.
+      const parent = await (stageOptions.readParent || readStageParent)(args.contextId);
+      taskCwd = nativeTaskWorkingDirectory(parent, { contextId: args.contextId, store, context });
+    }
+    return store.transaction(() => manageStage(store.db, context, args, taskCwd));
+  }
   if (name === "get_model_policy") return { ...modelPolicyStatus(store.db, store.context({ cwd, contextId: args.contextId, create: false })), definition: readModelPolicy(store.db).definition };
   if (name === "preview_model_policy") return previewModelPolicy(store.db, args.definition);
   if (name === "activate_model_policy") return activateModelPolicy(store, args);
@@ -382,7 +442,9 @@ export async function callRouterTool(name, args, { store, cwd = process.cwd(), r
         context: store.context({ cwd, contextId: args.contextId }),
       })),
     });
-    return recordOutcome(args, { store, cwd, qualificationProof });
+    const result = recordOutcome(args, { store, cwd, qualificationProof });
+    const recovery = await recoverFailedHostCapacityDelegation(args, { ...recoveryOptions, store, cwd });
+    return recovery ? { ...result, delegationRecovery: recovery } : result;
   }
   if (name === "get_route_status") return store.status(contextFor(store, args, cwd));
   if (name === "get_route_history") {

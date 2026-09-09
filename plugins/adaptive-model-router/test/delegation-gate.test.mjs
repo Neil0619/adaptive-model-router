@@ -15,6 +15,8 @@ import {
   claimDelegationSubagent,
   consumeDelegationTicket,
   inspectManagedSubagent,
+  inspectFreeDisk,
+  inspectRouterChildBudget,
   observeAgentResult,
   observeSubagentStop,
 } from "../scripts/lib/delegation-gate.mjs";
@@ -32,6 +34,19 @@ const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const hookPath = join(pluginRoot, "scripts", "hook.mjs");
 const workerPath = join(pluginRoot, "test", "concurrency-worker.mjs");
 const ampleDisk = () => 16n * 1024n * 1024n * 1024n;
+
+function completedChildBody(taskName, turnId) {
+  return [
+    { type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
+    { type: "inter_agent_communication_metadata", payload: { trigger_turn: true } },
+    { type: "response_item", payload: { type: "agent_message", id: "activation", author: "/root",
+      recipient: `/root/${taskName}`, content: [{ type: "input_text", text: "bounded activation" }],
+      internal_chat_message_metadata_passthrough: { turn_id: turnId } } },
+    { type: "response_item", payload: { type: "message", role: "assistant", phase: "final_answer",
+      content: [{ type: "output_text", text: "COMPLETE" }], internal_chat_message_metadata_passthrough: { turn_id: turnId } } },
+    { type: "event_msg", payload: { type: "task_complete", turn_id: turnId } },
+  ].map((row) => JSON.stringify(row)).join("\n") + "\n";
+}
 
 async function writeChildTranscript(path, {
   parentId,
@@ -73,8 +88,9 @@ test("Agent lifecycle hook matchers include Codex flattened collaboration spawn 
     assert.equal(matcher.test("Agent"), true, `${event} must retain the documented Agent alias`);
     assert.equal(matcher.test("spawn_agent"), true, `${event} must match the canonical live tool name`);
     assert.equal(matcher.test("collaborationspawn_agent"), true, `${event} must match the Codex 0.152 flattened namespace`);
-    assert.equal(matcher.test("collaboration.spawn_agent"), false, `${event} must not assume a namespace separator`);
-    assert.equal(matcher.test("send_message"), false, `${event} must not affect unrelated collaboration tools`);
+    if (event === "PostToolUse") assert.equal(matcher.test("collaboration.spawn_agent"), false, `${event} must not assume a namespace separator`);
+    assert.equal(matcher.test("send_message"), true, `${event} must observe managed message obligations`);
+    assert.equal(matcher.test("collaborationfollowup_task"), true, `${event} must observe same-stage continuations`);
   }
 });
 
@@ -464,6 +480,26 @@ test("50 concurrent eligible route processes produce one delegate and 49 busy re
   }
 });
 
+test("disk admission rejects fractional, negative and overflowing byte counts", async () => {
+  for (const value of [NaN, Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "123"]) {
+    assert.equal(inspectFreeDisk(".", { probe: () => value }).trusted, false);
+    assert.equal(inspectFreeDisk(".", { probe: () => 100n, reservedBytes: value }).trusted, false);
+  }
+  const project = await temporaryProject();
+  try {
+    const store = new RouterStore({ path: join(project.home, "router.sqlite3") });
+    try {
+      const context = store.context({ cwd: project.root, contextId: "reservation-validation" });
+      for (const options of [{ maximumPending: NaN }, { maximumPending: -1 }, { reservationBytes: 0.5 }, { maximumBytes: Infinity }]) {
+        assert.equal(inspectRouterChildBudget(store.db, context, options).trusted, false);
+      }
+      const route = await routeStage(routeInput({ contextId: "reserve-one" }), { store, cwd: project.root, catalog: CATALOG, diskProbe: ampleDisk });
+      assert.equal(route.action, "delegate");
+      assert.equal(inspectRouterChildBudget(store.db, context, { reservationBytes: Number.MAX_SAFE_INTEGER }).trusted, false);
+    } finally { store.close(); }
+  } finally { await project.cleanup(); }
+});
+
 test("host-wide reservations cap unresolved Router children across contexts", async () => {
   const project = await temporaryProject("adaptive cross-context capacity ");
   try {
@@ -718,19 +754,19 @@ test("low or untrusted free-disk state and oversized context stay root-only with
       budgetStore.db.prepare(`
         INSERT INTO delegation_usage(project_id, context_key, total_transcript_bytes, untrusted, updated_at)
         VALUES(?, ?, ?, 0, ?)
-      `).run(budgetContext.projectId, budgetContext.contextKey, 1024 * 1024 * 1024, new Date().toISOString());
-      const exhausted = await routeStage(routeInput({ contextId: "child-budget" }), {
+      `).run(budgetContext.projectId, budgetContext.contextKey, 2 * 1024 * 1024 * 1024, new Date().toISOString());
+      const admitted = await routeStage(routeInput({ contextId: "child-budget" }), {
         store: budgetStore,
         cwd: project.root,
         catalog: CATALOG,
         diskProbe: ampleDisk,
       });
-      assert.equal(exhausted.action, "continue");
-      assert.deepEqual(exhausted.reasonCodes, ["ROUTER_CHILD_STORAGE_LIMIT"]);
+      assert.equal(admitted.action, "delegate", "accumulated history must not become a permanent admission ceiling");
+      assert.equal(budgetStore.db.prepare("SELECT total_transcript_bytes FROM delegation_usage WHERE context_key=?").get(budgetContext.contextKey).total_transcript_bytes, 2 * 1024 * 1024 * 1024);
       budgetStore.close();
 
       const store = new RouterStore();
-      assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM delegation_attempts").get().count), 0);
+      assert.equal(Number(store.db.prepare("SELECT count(*) AS count FROM delegation_attempts").get().count), 1);
       store.close();
     });
   } finally {
@@ -856,13 +892,18 @@ test("Agent hooks validate and consume Router tickets without rewriting encrypte
       reasoning_effort: delegated.target.effort,
       fork_turns: "none",
     };
+    const wrongContextId = `${contextId}-rejected-profile`;
+    const wrongRoute = await withRouterEnvironment(project, () => routeStage(routeInput({ contextId: wrongContextId }), {
+      cwd: project.root, catalog: CATALOG, diskProbe: ampleDisk,
+    }));
+    assert.equal(wrongRoute.action, "delegate");
     const wrongTarget = runHook("pre-tool-use", {
       cwd: project.root,
-      session_id: contextId,
+      session_id: wrongContextId,
       turn_id: "turn-wrong-target",
       tool_use_id: "tool-wrong-target",
       tool_name: "Agent",
-      tool_input: { ...toolInput, model: "gpt-5.6-luna", reasoning_effort: "low" },
+      tool_input: { ...toolInput, task_name: wrongRoute.carrier.taskName, model: "gpt-5.6-luna", reasoning_effort: "low" },
     }, project.home);
     assert.equal(wrongTarget.status, 0);
     assert.deepEqual(JSON.parse(wrongTarget.stdout).hookSpecificOutput, {
@@ -1137,7 +1178,7 @@ test("a fast SubagentStop before PostToolUse is correlated by agent id and trans
       childId: "agent-fast",
       taskName: delegated.carrier.taskName,
       cwd: project.root,
-      body: "fast child transcript\n",
+      body: completedChildBody(delegated.carrier.taskName, "child-fast"),
     });
     const started = runHook("subagent-start", {
       cwd: project.root,
@@ -1156,6 +1197,7 @@ test("a fast SubagentStop before PostToolUse is correlated by agent id and trans
       turn_id: "child-fast",
       agent_id: "agent-fast",
       agent_transcript_path: transcript,
+      last_assistant_message: "COMPLETE",
     }, project.home);
     assert.equal(stopped.status, 0, stopped.stderr);
     const post = runHook("post-tool-use", {
@@ -1251,7 +1293,7 @@ test("a task-name-only PostToolUse before SubagentStart waits for the trusted ch
       childId: "agent-post-first",
       taskName: delegated.carrier.taskName,
       cwd: project.root,
-      body: "post before start child transcript\n",
+      body: completedChildBody(delegated.carrier.taskName, "child-post-first"),
     });
     const started = runHook("subagent-start", {
       cwd: project.root,
@@ -1280,6 +1322,7 @@ test("a task-name-only PostToolUse before SubagentStart waits for the trusted ch
       turn_id: "child-post-first",
       agent_id: "agent-post-first",
       agent_transcript_path: transcript,
+      last_assistant_message: "COMPLETE",
     }, project.home);
     assert.equal(stopped.status, 0, stopped.stderr);
     assert.deepEqual(JSON.parse(stopped.stdout), {});
@@ -1367,9 +1410,9 @@ test("an ambiguous multi-child lifecycle can never auto-release the delegation g
       }, project.home);
       assert.equal(stopped.status, 0, stopped.stderr);
     }
-    await withRouterEnvironment(project, () => recordOutcome(outcome(delegated, contextId), {
+    await withRouterEnvironment(project, () => assert.throws(() => recordOutcome(outcome(delegated, contextId), {
       cwd: project.root,
-    }));
+    }), /child_lifecycle_requires_reconciliation/));
     const post = runHook("post-tool-use", {
       cwd: project.root,
       session_id: contextId,
@@ -1386,7 +1429,7 @@ test("an ambiguous multi-child lifecycle can never auto-release the delegation g
       const gate = store.status(store.context({ cwd: project.root, contextId })).delegationGate;
       assert.equal(gate.state, "occupied");
       assert.equal(gate.ambiguous, true);
-      assert.equal(gate.outcomeRecorded, true);
+      assert.equal(gate.outcomeRecorded, false);
       store.close();
     });
   } finally {
@@ -1483,7 +1526,7 @@ test("PostToolUse and SubagentStop correlation release only after the route outc
       childId: "agent-life",
       taskName: delegated.carrier.taskName,
       cwd: project.root,
-      body: "bounded transcript\n",
+      body: completedChildBody(delegated.carrier.taskName, "child-turn"),
     });
     const started = runHook("subagent-start", {
       cwd: project.root,
@@ -1524,6 +1567,7 @@ test("PostToolUse and SubagentStop correlation release only after the route outc
       agent_type: "worker",
       agent_transcript_path: transcript,
       stop_hook_active: false,
+      last_assistant_message: "COMPLETE",
     }, project.home);
     assert.equal(stopped.status, 0, stopped.stderr);
     assert.deepEqual(JSON.parse(stopped.stdout), {});
