@@ -48,3 +48,11 @@
 
 完整最终测试日志：`/tmp/router-global-reclamation-final-full3.log`。
 最终安装日志：`/tmp/router-global-reclamation-final-install2.log`。
+
+## PR 交付期跨平台复核
+
+PR #24 首轮必需 CI 有 8/9 项通过；Windows / Node 24.15.0 的 `append permission cannot hide modified prefixes, truncation or path replacement` 报告缺少预期异常，其余 Windows / Node 24.x 通过。失败日志未区分三个变更分项，也未记录 runner 的原始 inode，不能声称已经取得该 runner 的具体文件 ID。
+
+后续确定性回归通过真实 rename / 同内容重建文件，注入 `2^54` 与 `2^54+1` 两个可被 Number 舍入为相同值的 inode，实际复现旧实现漏检路径替换。读取器现使用 BigInt Stats 精确比较文件身份与纳秒时间，仅将受 512 MiB 上限保护的长度转为 Number，并保持对外字节计数类型不变。三个原有变更分项已拆为独立命名测试。
+
+修复后的读取器、活动判定和阶段收尾定向测试 71/71 通过，0 失败或跳过；独立复核未发现实质问题。该记录补充 CI 发现与修复证据，不替代前述本机安装验收，也不代表已执行原生 Windows 登录验收。

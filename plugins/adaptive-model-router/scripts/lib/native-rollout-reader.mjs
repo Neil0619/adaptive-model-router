@@ -28,13 +28,16 @@ export function readStableRollout(path, accept, { allowAppend = false, deadline 
   path = resolveRolloutPath(path);
   const fd = openSync(path, "r");
   try {
-    const before = fstatSync(fd);
-    if (!before.isFile() || before.size > 512 * 1024 * 1024) throw new Error("native transcript exceeds evidence bounds");
+    // Windows file IDs can exceed Number's exact integer range. Keep identity
+    // and timestamps lossless; only the bounded byte count becomes a Number.
+    const before = fstatSync(fd, { bigint: true });
+    if (!before.isFile() || before.size > 512n * 1024n * 1024n) throw new Error("native transcript exceeds evidence bounds");
+    const size = Number(before.size);
     const hash = createHash("sha256");
     let offset = 0, line = 0, fragment = Buffer.alloc(0);
-    while (offset < before.size) {
+    while (offset < size) {
       if (Date.now() > deadline) throw new Error("native evidence read budget exhausted");
-      const chunk = Buffer.alloc(Math.min(64 * 1024, before.size - offset));
+      const chunk = Buffer.alloc(Math.min(64 * 1024, size - offset));
       const count = readSync(fd, chunk, 0, chunk.length, offset);
       if (!count) throw new Error("native transcript changed during evidence read");
       offset += count;
@@ -48,26 +51,26 @@ export function readStableRollout(path, accept, { allowAppend = false, deadline 
       }
       if (fragment.length > 16 * 1024 * 1024) throw new Error("native transcript line exceeds evidence bounds");
     }
-    const after = fstatSync(fd);
+    const after = fstatSync(fd, { bigint: true });
     const sameFile = (value) => value.dev === before.dev && value.ino === before.ino && value.size >= before.size;
-    if (!sameFile(after) || !sameFile(statSync(path))) throw new Error("native transcript changed during evidence read");
-    if (!allowAppend && !["size", "mtimeMs", "ctimeMs"].every((key) => before[key] === after[key])) throw new Error("native transcript changed during evidence read");
+    if (!sameFile(after) || !sameFile(statSync(path, { bigint: true }))) throw new Error("native transcript changed during evidence read");
+    if (!allowAppend && !["size", "mtimeNs", "ctimeNs"].every((key) => before[key] === after[key])) throw new Error("native transcript changed during evidence read");
     if (fragment.length || !line) throw new Error("native transcript has incomplete records");
     const transcriptDigest = hash.digest("hex");
     if (allowAppend) {
       const verified = createHash("sha256");
       let position = 0;
-      while (position < before.size) {
-        const chunk = Buffer.alloc(Math.min(64 * 1024, before.size - position));
+      while (position < size) {
+        const chunk = Buffer.alloc(Math.min(64 * 1024, size - position));
         const count = readSync(fd, chunk, 0, chunk.length, position);
         if (!count) throw new Error("native transcript changed during evidence read");
         verified.update(chunk.subarray(0, count)); position += count;
       }
-      if (verified.digest("hex") !== transcriptDigest || !sameFile(fstatSync(fd)) || !sameFile(statSync(path))) {
+      if (verified.digest("hex") !== transcriptDigest || !sameFile(fstatSync(fd, { bigint: true })) || !sameFile(statSync(path, { bigint: true }))) {
         throw new Error("native transcript changed during evidence read");
       }
     }
-    const allocated = Number.isSafeInteger(before.blocks) ? before.blocks * 512 : before.size;
-    return { transcriptDigest, transcriptBytes: Math.max(before.size, allocated) };
+    const allocated = Number(before.blocks) * 512;
+    return { transcriptDigest, transcriptBytes: Math.max(size, Number.isSafeInteger(allocated) ? allocated : size) };
   } finally { closeSync(fd); }
 }

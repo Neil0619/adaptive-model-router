@@ -4,6 +4,8 @@ import { appendFileSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { readStableRollout } from "../scripts/lib/native-rollout-reader.mjs";
 
 function fixture(run) {
@@ -30,14 +32,38 @@ test("child result verification still rejects a concurrent append by default", (
   }), /changed during evidence read/);
 }));
 
-test("append permission cannot hide modified prefixes, truncation or path replacement", () => {
-  for (const mutation of [
-    (path, bytes) => writeFileSync(path, bytes.replace('"value":1', '"value":9') + '{"value":3}\n'),
-    (path) => writeFileSync(path, '{"value":1}\n'),
-    (path, bytes) => { renameSync(path, `${path}.old`); writeFileSync(path, bytes); },
-  ]) fixture(({ path, bytes }) => {
+for (const [name, mutation] of [
+  ["modified prefix", (path, bytes) => writeFileSync(path, bytes.replace('"value":1', '"value":9') + '{"value":3}\n')],
+  ["truncation", (path) => writeFileSync(path, '{"value":1}\n')],
+  ["path replacement", (path, bytes) => { renameSync(path, `${path}.old`); writeFileSync(path, bytes); }],
+]) test(`append permission cannot hide ${name}`, () => fixture(({ path, bytes }) => {
     assert.throws(() => readStableRollout(path, (_value, line) => {
       if (line === 1) mutation(path, bytes);
     }, { allowAppend: true }), /changed during evidence read/);
-  });
-});
+}));
+
+test("path replacement rejects distinct file IDs that round to the same Number", (t) => fixture(({ path, bytes }) => {
+  const original = 2n ** 54n, replacement = original + 1n;
+  assert.equal(Number(original), Number(replacement));
+  const nativeFstat = fs.fstatSync, nativeStat = fs.statSync;
+  let replaced = false;
+  const withIdentity = (stats, identity, options) => {
+    stats.ino = options?.bigint ? identity : Number(identity);
+    return stats;
+  };
+  t.mock.method(fs, "fstatSync", (fd, options) => withIdentity(nativeFstat(fd, options), original, options));
+  t.mock.method(fs, "statSync", (file, options) => withIdentity(nativeStat(file, options), replaced ? replacement : original, options));
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => readStableRollout(path, (_value, line) => {
+      if (line === 1) {
+        renameSync(path, `${path}.old`);
+        writeFileSync(path, bytes);
+        replaced = true;
+      }
+    }, { allowAppend: true }), /changed during evidence read/);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+}));
