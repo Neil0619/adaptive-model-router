@@ -7,6 +7,7 @@ import { reconcileStageMessages } from "./stage-reconciliation.mjs";
 import { createChildCommandSchema, readChildCommands } from "./child-command-journal.mjs";
 import { applyOperationReviews, readOperations, reconcileOperations } from "./operation-reconciliation.mjs";
 import { readStableRollout } from "./native-rollout-reader.mjs";
+import { readReservationRelease, reacquireReservation } from "./reservation-ledger.mjs";
 
 const now = () => new Date().toISOString();
 const present = (value) => typeof value === "string" && value.length > 0;
@@ -144,6 +145,7 @@ export function observeManagedMessage(db, context, input, { post = false, author
       WHERE route_id=? AND caller_turn_id=? AND call_id=?`).run(state, now(), ...key);
     return { matched: true, allowed: accepted, routeId: child.route_id, revision: existing.revision };
   }
+  if (!maintenance && readReservationRelease(db, child.route_id)) return deny("This stage's global reservation was deferred. Read its disposition and begin bounded maintenance before sending more work; preserve original requirements.");
   if (kind === "interrupt_agent" && !maintenance) return deny("Record the explicit cancellation, replacement or deferral with manage_stage before interrupting this Router child; preserve partial results and outstanding operation references.");
   if (maintenance && (maintenance.state !== "active" || !["followup_task", "interrupt_agent"].includes(kind) || author !== "/root")) {
     return deny("This child accepts only the root's bounded maintenance followup. Preserve business requirements with the root; no QueueOnly or new-stage work.");
@@ -162,6 +164,7 @@ export function observeManagedMessage(db, context, input, { post = false, author
   if (!maintenance && db.prepare("SELECT 1 FROM outcomes WHERE route_id=?").get(child.route_id)) {
     return deny("This stage already has a final outcome; use bounded maintenance for any historical pending input.");
   }
+  if (kind === "followup_task" && !reacquireReservation(db, child.route_id)) return deny("ROUTER_GLOBAL_PENDING_LIMIT: bounded collection must reacquire a global slot before resuming this deferred child. Retain its requirements and retry only after current work releases capacity.");
   const revision = child.revision + 1;
   db.prepare(`INSERT INTO delegation_messages(route_id, caller_turn_id, call_id, author, kind,
     input_digest, revision, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,'pending',?,?)`)
@@ -182,7 +185,7 @@ export function observeManagedStop(db, routeId, { turnId, lastAssistantMessage }
   return true;
 }
 
-export function stageClosureStatus(db, context, routeId = null) {
+export function stageClosureStatus(db, context, routeId = null, { deadline = Infinity } = {}) {
   const child = routeId
     ? db.prepare("SELECT * FROM delegation_children WHERE project_id=? AND context_key=? AND route_id=?")
       .get(context.projectId, context.contextKey, routeId)
@@ -216,7 +219,7 @@ export function stageClosureStatus(db, context, routeId = null) {
   const operations = messages.filter((op) => op.status === "accepted");
   let facts;
   const commands = readChildCommands(db, child.route_id);
-  try { facts = applyOperationReviews(db, context, child, commands, readChildTurnEvidence(locator, { commands })); }
+  try { facts = applyOperationReviews(db, context, child, commands, readChildTurnEvidence(locator, { commands, deadline })); }
   catch { return pending("child_evidence_unavailable"); }
   if (facts.pendingOperations.length) return pending("child_operations_pending", { pendingOperations: facts.pendingOperations });
   if (!facts.finished) return pending("latest_child_turn_not_complete");
@@ -289,7 +292,7 @@ export function childToolRestriction(db, context, target, input = {}) {
       if (readChildTurnEvidence(locator, { commands: readChildCommands(db, child.route_id) }).permitsPoll(input)) return { restricted: false, existingOperationPoll: true };
     } catch { /* An unknown operation never grants a tool exception. */ }
   }
-  if (maintenance || child.state !== "open") return { restricted: true, reason:
+  if (maintenance || child.state !== "open" || readReservationRelease(db, child.route_id)) return { restricted: true, reason:
     "This Router child is in collection, cancellation, deferral or finalized state. No business tools, shell, file access, delegation or messaging are permitted. During active maintenance only, an exact previously observed native process/cell may be polled without input. A code-mode process poll must use only text(await tools.write_stdin({...})); with literal arguments and empty input; arbitrary code remains denied. Return the outstanding requirements, partial results and operation references to the root in your final reply; do not execute the old task." };
   return { restricted: false };
 }
@@ -314,6 +317,15 @@ export function stageResponsibilities(db, context) {
 /** Root-owned business disposition. Native facts are still checked separately;
  * a cancelled intent does not prove that an executing operation has stopped. */
 export function manageStage(db, context, input, cwd) {
+  if (input.action === "read_disposition") {
+    const owned = db.prepare("SELECT route_id FROM delegation_attempts WHERE route_id=? AND project_id=? AND context_key=?")
+      .get(input.routeId, context.projectId, context.contextKey);
+    if (owned) {
+      const release = readReservationRelease(db, input.routeId);
+      if (release && !db.prepare("SELECT 1 FROM delegation_maintenance WHERE route_id=?").get(input.routeId)) return { state: "reservation_released", gateRetained: true, release,
+        nextAction: "collect_and_verify_original_stage_before_new_business" };
+    }
+  }
   let child = db.prepare("SELECT * FROM delegation_children WHERE project_id=? AND context_key=? AND route_id=?")
     .get(context.projectId, context.contextKey, input.routeId);
   if (!child && ["reconcile_messages", "begin_maintenance"].includes(input.action) && input.childId && input.childTranscriptPath) {
@@ -336,7 +348,11 @@ export function manageStage(db, context, input, cwd) {
     const maintenance = db.prepare("SELECT * FROM delegation_maintenance WHERE route_id=?").get(child.route_id);
     if (!maintenance) throw new Error("No stage disposition is recorded.");
     const current = JSON.parse(openPrivateState(db, maintenance.record));
-    if (input.action === "read_disposition") return { state: maintenance.state, revision: child.revision, disposition: current };
+    if (input.action === "read_disposition") {
+      const release = readReservationRelease(db, child.route_id);
+      return { state: maintenance.state, revision: child.revision, disposition: current,
+        ...(release ? { release, gateRetained: !db.prepare("SELECT finalized_at FROM delegation_attempts WHERE route_id=?").get(child.route_id)?.finalized_at } : {}) };
+    }
     if (maintenance.state !== "verified" || !input.disposition?.resultReview || !input.disposition.basis
       || !input.disposition.requirements.length || input.disposition.pendingOperations.length) throw new Error("Resolve retained work only after its actual result or intent change is verified.");
     const changes = input.disposition.requirements;

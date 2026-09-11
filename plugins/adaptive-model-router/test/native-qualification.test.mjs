@@ -602,10 +602,11 @@ for (const platform of ["darwin", "win32"]) {
       const original = await completedQualification(f);
       await callRouterTool("record_outcome", original.outcome, original.serviceOptions);
       assert.deepEqual(provenQualificationShellRoots(f.store.db, f.context).sort(), [payloadHash(parentRoot), payloadHash(childRoot)].sort());
+      let currentInventoryRoot = configuredRoot;
       const inspect = () => inspectLifecycleHookReadiness({ cwd: f.project.root, pluginRoot: parentRoot, platform,
         store: f.store, context: f.context, contextId: f.input.contextId,
         appServer: async (run) => run({ start: async () => {}, request: async (method) => method === "thread/turns/list"
-          ? { data: [{ id: "current-native-turn" }] } : { thread: { id: f.input.contextId, cwd: f.project.root } }, listHooks: async () => inventory(configuredRoot) }),
+          ? { data: [{ id: "current-native-turn" }] } : { thread: { id: f.input.contextId, cwd: f.project.root } }, listHooks: async () => inventory(currentInventoryRoot) }),
         nativeHost: async () => host,
       });
       const readiness = await inspect();
@@ -615,9 +616,25 @@ for (const platform of ["darwin", "win32"]) {
       const refreshed = await completedQualification(f);
       await callRouterTool("record_outcome", refreshed.outcome, refreshed.serviceOptions);
       assert.equal((await inspect()).ready, true);
-      const changed = JSON.parse(readFileSync(resolve(childRoot, "hooks", "hooks.json"), "utf8"));
+      // A second upgrade can expose the previous configured shell for the first
+      // time on a child. Do not discard it merely because the last child used
+      // an older shell; also do not retain an unrelated cache directory.
+      currentInventoryRoot = resolve(realpathSync(f.project.root), "cache", "next-configured-shell");
+      cpSync(SOURCE_ROOT, currentInventoryRoot, { recursive: true });
+      const secondUpgrade = await inspect();
+      assert.equal(secondUpgrade.reasonCode, "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN");
+      assert.deepEqual(secondUpgrade.binding.shellRoots, [parentRoot, childRoot, configuredRoot, currentInventoryRoot].map(payloadHash).sort());
+      Object.assign(f.binding, secondUpgrade.binding);
+      f.hookShells = { pre: parentRoot, post: parentRoot, start: configuredRoot, stop: configuredRoot };
+      const secondProof = await completedQualification(f);
+      await callRouterTool("record_outcome", secondProof.outcome, secondProof.serviceOptions);
+      const stable = await inspect();
+      // One new no-tool binding refresh may discard the no-longer-used oldest
+      // child shell, without ever excluding the actual latest child entrance.
+      assert.ok(stable.binding.shellRoots.includes(payloadHash(configuredRoot)));
+      const changed = JSON.parse(readFileSync(resolve(configuredRoot, "hooks", "hooks.json"), "utf8"));
       changed.hooks.SubagentStart[0].hooks[0][commandField] += " unexpected";
-      writeFileSync(resolve(childRoot, "hooks", "hooks.json"), JSON.stringify(changed));
+      writeFileSync(resolve(configuredRoot, "hooks", "hooks.json"), JSON.stringify(changed));
       const rejected = await inspect();
       assert.equal(rejected.ready, false);
       assert.equal(rejected.qualificationBinding, undefined);

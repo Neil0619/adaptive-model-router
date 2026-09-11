@@ -31,6 +31,8 @@ import {
 import { readModelPolicy, retainModelPolicy, modelPolicyStatus } from "./model-policy-store.mjs";
 import { targetAllowed } from "./model-policy.mjs";
 import { createStageClosureSchema, createStageMessageSchema, stageClosureStatus, stageResponsibilities, verifyStageClosure } from "./stage-closure.mjs";
+import { reclaimGlobalReservations } from "./global-reservation-reclamation.mjs";
+import { reservationStatus } from "./reservation-ledger.mjs";
 import { createChildCommandSchema } from "./child-command-journal.mjs";
 
 const GLOBAL_PROJECT = "__global__";
@@ -1038,12 +1040,9 @@ export class RouterStore {
         if (!admission?.ticket || !admission?.contextPackage) {
           throw new Error("delegate route is missing its admission ticket or context package");
         }
-        const childBudget = inspectRouterChildBudget(this.db, context, admission.childBudget);
+        let childBudget = inspectRouterChildBudget(this.db, context, admission.childBudget);
         if (!childBudget.trusted) {
           return { committed: false, retry: false, fallback: "ROUTER_CHILD_STORAGE_UNTRUSTED" };
-        }
-        if (!childBudget.allowed) {
-          return { committed: false, retry: false, fallback: "ROUTER_CHILD_STORAGE_LIMIT" };
         }
         const disk = inspectFreeDisk(admission.cwd, {
           ...admission.disk,
@@ -1055,6 +1054,16 @@ export class RouterStore {
         if (!disk.allowed) {
           return { committed: false, retry: false, fallback: "LOW_DISK_FALLBACK" };
         }
+        if (childBudget.reasonCode === "ROUTER_GLOBAL_PENDING_LIMIT") {
+          const reclamation = reclaimGlobalReservations(this.db, context, { maximumPending: childBudget.maximumPending });
+          this.db.prepare("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+            .run(`global_reclamation:${context.projectId}:${context.contextKey}`, JSON.stringify({ ...reclamation, at: nowIso() }));
+          childBudget = inspectRouterChildBudget(this.db, context, admission.childBudget);
+        }
+        if (!childBudget.allowed) {
+          return { committed: false, retry: false, fallback: childBudget.reasonCode || "ROUTER_CHILD_STORAGE_LIMIT" };
+        }
+
       }
       if (onceId != null) {
         const row = this.db.prepare(`
@@ -1958,6 +1967,9 @@ export class RouterStore {
       stageClosure: stageClosureStatus(this.db, context),
       pendingStageWork: stageResponsibilities(this.db, context),
       pendingOutcomes,
+      globalReservations: { ...reservationStatus(this.db, context),
+        lastReclamation: parseJson(this.db.prepare("SELECT value FROM meta WHERE key=?")
+          .get(`global_reclamation:${context.projectId}:${context.contextKey}`)?.value, null) },
       pendingProposals,
       ...(this.hostCapacityRejection(context) ? { hostCapacityRejection: this.hostCapacityRejection(context) } : {}),
       delegationGate: activeDelegation ? {

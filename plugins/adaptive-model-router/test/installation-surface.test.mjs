@@ -19,6 +19,24 @@ test("the reviewed residency extension preserves existing commands, transports a
   assert.equal(supportsResidencySurfaceRefresh(current, current), true);
 });
 
+test("reviewed refresh permits only the two optional host-selector declarations missing in old shells", () => {
+  const old = structuredClone(current), doc = JSON.parse(old[".mcp.json"]);
+  delete doc.mcpServers["adaptive-model-router"].env_vars;
+  old[".mcp.json"] = JSON.stringify(doc);
+  assert.equal(supportsResidencySurfaceRefresh(old, current), true);
+  assert.equal(supportsResidencySurfaceRefresh(current, old), false, "removal is not an additive refresh");
+  for (const change of [
+    (server) => { server.env_vars.push("UNRELATED_CREDENTIAL"); },
+    (server) => { server.env_vars = ["CODEX_HOME"]; },
+    (server) => { server.env = { CODEX_HOME: "/different-state" }; },
+    (server) => { server.command = "different-runtime"; },
+  ]) {
+    const next = structuredClone(current), updated = JSON.parse(next[".mcp.json"]);
+    change(updated.mcpServers["adaptive-model-router"]); next[".mcp.json"] = JSON.stringify(updated);
+    assert.equal(supportsResidencySurfaceRefresh(old, next), false);
+  }
+});
+
 test("surface refresh cannot authorize unrelated commands, tools, approvals or hook events", () => {
   const mutations = [
     (next) => { const doc = JSON.parse(next[".mcp.json"]); doc.mcpServers["adaptive-model-router"].cwd = "/unrelated"; next[".mcp.json"] = JSON.stringify(doc); },

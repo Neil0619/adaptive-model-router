@@ -513,16 +513,16 @@ test("host-wide reservations cap unresolved Router children across contexts", as
       assert.deepEqual(floorOnly.reasonCodes, ["LOW_DISK_FALLBACK"]);
 
       const routes = [];
-      for (let index = 0; index < 5; index += 1) {
+      for (let index = 0; index < 11; index += 1) {
         routes.push(await routeStage(routeInput({ contextId: `capacity-${index}` }), {
           cwd: project.root,
           catalog: CATALOG,
           diskProbe: ampleDisk,
         }));
       }
-      assert.equal(routes.filter((route) => route.action === "delegate").length, 4);
-      assert.equal(routes[4].action, "continue");
-      assert.deepEqual(routes[4].reasonCodes, ["ROUTER_CHILD_STORAGE_LIMIT"]);
+      assert.equal(routes.filter((route) => route.action === "delegate").length, 10);
+      assert.equal(routes[10].action, "continue");
+      assert.deepEqual(routes[10].reasonCodes, ["ROUTER_GLOBAL_PENDING_LIMIT"]);
     });
   } finally {
     await project.cleanup();

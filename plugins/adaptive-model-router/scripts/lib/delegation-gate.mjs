@@ -3,12 +3,13 @@ import { statfsSync } from "node:fs";
 import { canonicalJson, payloadHash } from "./io.mjs";
 import { openPrivateState as openContextPackage, sealPrivateState as sealContextPackage } from "./private-state.mjs";
 import { managedStageCanFinalize, markManagedStageSettled, observeManagedStop } from "./stage-closure.mjs";
+import { GLOBAL_PENDING_LIMIT, reservationInventory } from "./reservation-ledger.mjs";
 
 export const CARRIER_TYPE = "adaptive-model-router/delegation-ticket-v2";
 export const CONTEXT_PACKAGE_BYTE_LIMIT = 64 * 1024;
 export const MINIMUM_FREE_DISK_BYTES = 4 * 1024 * 1024 * 1024;
 export const ROUTER_CHILD_RESERVATION_BYTES = 256 * 1024 * 1024;
-export const ROUTER_GLOBAL_PENDING_LIMIT = 4;
+export const ROUTER_GLOBAL_PENDING_LIMIT = GLOBAL_PENDING_LIMIT;
 export const TERMINAL_ATTEMPT_HISTORY_LIMIT = 64;
 
 const TASK_NAME_PREFIX = "router_";
@@ -171,9 +172,8 @@ export function inspectRouterChildBudget(db, _context, {
            COALESCE(MAX(untrusted), 0) AS untrusted
     FROM delegation_usage
   `).get();
-  const pending = Number(db.prepare(`
-    SELECT count(*) AS count FROM delegation_attempts WHERE finalized_at IS NULL
-  `).get().count);
+  const inventory = reservationInventory(db);
+  const pending = inventory.pending.length;
   if (usage?.untrusted === 1) return { trusted: false, allowed: false };
   const usedBytes = Number(usage?.total_transcript_bytes || 0);
   if (
@@ -194,6 +194,11 @@ export function inspectRouterChildBudget(db, _context, {
       || BigInt(usedBytes) + BigInt(nextReservationBytes) <= BigInt(maximumBytes)),
     usedBytes,
     pending,
+    maximumPending,
+    released: inventory.released.length,
+    reasonCode: pending >= maximumPending ? "ROUTER_GLOBAL_PENDING_LIMIT"
+      : maximumBytes !== null && BigInt(usedBytes) + BigInt(nextReservationBytes) > BigInt(maximumBytes)
+      ? "ROUTER_CHILD_STORAGE_LIMIT" : null,
     nextReservationBytes,
   };
 }
