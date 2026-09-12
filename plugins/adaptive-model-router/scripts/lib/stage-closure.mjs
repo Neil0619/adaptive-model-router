@@ -3,7 +3,7 @@ import { openPrivateState, sealPrivateState } from "./private-state.mjs";
 import { readChildTurnEvidence } from "./child-turn-evidence.mjs";
 import { readThreadSpawnIdentity } from "./subagent-session.mjs";
 import { createHash } from "node:crypto";
-import { reconcileStageMessages } from "./stage-reconciliation.mjs";
+import { reconcileStageMessages, rejectionHostCurrent } from "./stage-reconciliation.mjs";
 import { createChildCommandSchema, readChildCommands } from "./child-command-journal.mjs";
 import { applyOperationReviews, readOperations, reconcileOperations } from "./operation-reconciliation.mjs";
 import { readStableRollout } from "./native-rollout-reader.mjs";
@@ -215,7 +215,8 @@ export function stageClosureStatus(db, context, routeId = null, { deadline = Inf
     if (attempt.post_observed !== 1 || !attempt.agent_id || attempt.no_child) return pending("child_launch_result_pending");
   }
   const messages = db.prepare("SELECT * FROM delegation_messages WHERE route_id=? ORDER BY author,COALESCE(source_order,9007199254740991),revision").all(child.route_id);
-  if (messages.some((op) => !["accepted", "rejected"].includes(op.status))) return pending("message_result_pending");
+  if (messages.some((op) => !["accepted", "rejected"].includes(op.status)
+    || (op.status === "rejected" && !rejectionHostCurrent(db, child, op)))) return pending("message_result_pending");
   const operations = messages.filter((op) => op.status === "accepted");
   let facts;
   const commands = readChildCommands(db, child.route_id);
