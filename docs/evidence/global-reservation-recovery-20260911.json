@@ -1,0 +1,34 @@
+{
+  "activeVersion": "0.4.0+codex.20260911075751",
+  "activePointerStatus": "matched",
+  "databaseHealth": "ok",
+  "databaseVersion": 10,
+  "rootModel": "gpt-6-astra",
+  "globalReservations": {
+    "limit": 10,
+    "pending": 1,
+    "released": 3,
+    "verificationDeferred": 0,
+    "retained": [],
+    "lastReclamation": null
+  },
+  "stageClosure": null,
+  "delegationGate": {
+    "state": "available"
+  },
+  "pendingOutcomes": 0,
+  "validation": {
+    "total": 479,
+    "passed": 476,
+    "skippedWindows": 3,
+    "failed": 0,
+    "policyCases": 232,
+    "policyMismatches": 0
+  },
+  "independentAcceptance": {
+    "status": "passed",
+    "routeId": "9858b204-d671-4949-9829-2057c1b28df7",
+    "outcomeSequence": 1345
+  },
+  "nativeWindowsExecuted": false
+}

@@ -43,6 +43,14 @@ export function supportsResidencySurfaceRefresh(previous, next) {
     if (after.manage_stage?.approval_mode !== "approve" || Object.keys(after.manage_stage).length !== 1) return false;
     delete beforeMcp.mcpServers["adaptive-model-router"].tools;
     delete afterMcp.mcpServers["adaptive-model-router"].tools;
+    // These optional inherited selectors were added after early 0.4 shells.
+    // They set no values, alter no approval, and are not required by a running
+    // shell (runtime discovery has the existing default fallback). Allow only
+    // this exact additive declaration during an explicit reviewed refresh.
+    const oldServer = beforeMcp.mcpServers["adaptive-model-router"];
+    const nextServer = afterMcp.mcpServers["adaptive-model-router"];
+    if (oldServer.env_vars === undefined
+      && canonicalJson(nextServer.env_vars) === canonicalJson(["CODEX_HOME", "CODEX_BIN"])) delete nextServer.env_vars;
     if (canonicalJson(beforeMcp) !== canonicalJson(afterMcp)) return false;
     const beforeHooks = JSON.parse(previous["hooks/hooks.json"]);
     const afterHooks = JSON.parse(next["hooks/hooks.json"]);

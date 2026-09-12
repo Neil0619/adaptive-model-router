@@ -41,21 +41,25 @@ export async function nativeQualificationHost() {
 export function lifecycleBinding(hooks, shellRoot, inventoryRoot, host, cwd, historicalRoots = []) {
   const runtimeDigest = runtimeSourceDigest();
   const taskCwdDigest = payloadHash(realpathSync(cwd));
+  const directShellRoots = [...new Set([shellRoot, inventoryRoot].map((root) => payloadHash(realpathSync(root))))].sort();
   const shellRoots = [...new Set([shellRoot, inventoryRoot, ...historicalRoots].map((root) => payloadHash(realpathSync(root))))].sort();
   const hookSet = hooks.map((hook) => Object.fromEntries([
     "eventName", "handlerType", "command", "matcher", "timeoutSec", "statusMessage", "async",
     "source", "sourcePath", "pluginId", "currentHash", "enabled", "trustStatus",
   ].map((field) => [field, hook[field] ?? null])));
-  return { digest: payloadHash({ host, hookSet, shellRoots, runtimeDigest, taskCwdDigest }), runtimeDigest, taskCwdDigest,
+  return { digest: payloadHash({ host, hookSet, shellRoots, directShellRoots, runtimeDigest, taskCwdDigest }), runtimeDigest, taskCwdDigest,
     configurationDigest: payloadHash({ host, hookSet, taskCwdDigest }),
-    shellRoots, cliVersion: host.cliVersion };
+    shellRoots, directShellRoots, cliVersion: host.cliVersion };
 }
 
 function validBinding(binding) {
   return digest(binding?.digest) && digest(binding?.runtimeDigest) && digest(binding?.taskCwdDigest)
     && NATIVE_LIFECYCLE_CLI_VERSIONS.includes(binding.cliVersion)
     && Array.isArray(binding.shellRoots) && binding.shellRoots.length > 0
-    && binding.shellRoots.length <= 6 && binding.shellRoots.every(digest);
+    && binding.shellRoots.length <= 6 && binding.shellRoots.every(digest)
+    && (binding.directShellRoots === undefined || (Array.isArray(binding.directShellRoots)
+      && binding.directShellRoots.length > 0 && binding.directShellRoots.length <= 2
+      && binding.directShellRoots.every((root) => binding.shellRoots.includes(root))));
 }
 
 export function newTaskQualification(binding, routeId, requalification = null, passedRefresh = null) {
@@ -156,13 +160,20 @@ function passedQualificationBasis(db, context, value) {
 }
 
 // An open host task can keep separate parent and child Hook snapshots across
-// an upgrade. Retain only paths actually observed by its last verified proof,
-// not every historical cache path. Readiness rechecks their current definitions.
+// an upgrade. The prior configured shell can first appear on a child after the
+// next upgrade, even though the previous proof's child used an older shell.
+// Retain explicitly bound parent/configured roots plus observed proof roots;
+// never enumerate all cache paths. Readiness rechecks their current definitions.
 export function provenQualificationShellRoots(db, context) {
   let value = readTaskQualification(db, context);
   const seen = new Set();
+  const retained = new Set();
   for (let depth = 0; value && depth < 8; depth++) {
-    if (passedQualificationBasis(db, context, value)) return [...new Set(EVENTS.map((event) => value.hooks[event].shellRoot))];
+    if (!validBinding(value.binding)) return [];
+    // Legacy bindings did not distinguish direct from historical roots. Keep
+    // their bounded set through the next proof, which records those roles.
+    for (const root of value.binding.directShellRoots || value.binding.shellRoots) retained.add(root);
+    if (passedQualificationBasis(db, context, value)) return [...new Set([...retained, ...EVENTS.map((event) => value.hooks[event].shellRoot)])];
     const prior = value.passedRefresh?.priorRouteId || value.requalification?.priorRouteId;
     if (typeof prior !== "string" || seen.has(prior)) return [];
     seen.add(prior);

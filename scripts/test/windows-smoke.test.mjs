@@ -110,9 +110,12 @@ test("Windows lifecycle stops only Router processes in the marked Home cache", {
       await once(child.stdout, "data");
     }
     const helper = fileURLToPath(new URL("../stop-windows-smoke-router-processes.ps1", import.meta.url));
+    // PowerShell startup, Add-Type compilation and CIM queries can nearly
+    // consume 15 seconds on hosted Windows runners before process checks finish.
     const result = spawnSync("pwsh", ["-NoProfile", "-File", helper, "-CodexHome", home], {
-      encoding: "utf8", timeout: 15_000, windowsHide: true,
+      encoding: "utf8", timeout: 60_000, windowsHide: true,
     });
+    assert.ifError(result.error);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(JSON.parse(result.stdout).StoppedRouterProcesses, 1);
     await children[0].exited;

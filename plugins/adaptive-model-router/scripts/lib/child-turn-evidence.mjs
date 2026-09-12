@@ -1,3 +1,4 @@
+import { NativeActivity } from "./native-activity.mjs";
 import { readStableRollout } from "./native-rollout-reader.mjs";
 import { payloadHash } from "./io.mjs";
 import { NativeOperationEvidence } from "./native-operation-evidence.mjs";
@@ -34,17 +35,19 @@ function memoryStopProof(final, native, completions) {
 /** Read only the native identity, input order and final-turn facts. Never return
  * message contents or model reasoning. Limits fail explicitly, not as emptiness.
  */
-export function readChildTurnEvidence(locator, { commands = [] } = {}) {
+export function readChildTurnEvidence(locator, { commands = [], deadline = Infinity, maintenanceInputOffset = Infinity } = {}) {
 
   const messages = [];
   const completions = new Map();
   const completionEvidence = new Map();
   const nativeFinals = new Map();
+  const foreignFinalIds = new Set();
   const ids = new Set();
   let latestStarted = null;
   let lastFinal = null;
   let finalSource = null;
   let pendingMode = null;
+  const activity = new NativeActivity({ maintenanceInputOffset });
   const operations = new NativeOperationEvidence({ childId: locator.childId, commands });
   const coverage = locator.commandCoverage;
   if (coverage && (coverage.version !== 1 || !Number.isSafeInteger(coverage.throughLine) || coverage.throughLine < 1
@@ -54,6 +57,9 @@ export function readChildTurnEvidence(locator, { commands = [] } = {}) {
   const operationRecords = [];
   const source = readStableRollout(locator.transcriptPath, (entry, lineNumber) => {
     const value = entry.payload;
+    activity.observe(entry);
+    if (entry.type === "event_msg" && value?.type === "item_completed" && value.item?.type === "AgentMessage"
+      && typeof value.item.id === "string" && value.thread_id !== locator.childId) foreignFinalIds.add(value.item.id);
     operations.observe(entry, { commandCoverage: covered });
     if (coverage && lineNumber <= coverage.throughLine) {
       prefix.update(JSON.stringify(entry) + "\n");
@@ -89,14 +95,14 @@ export function readChildTurnEvidence(locator, { commands = [] } = {}) {
       const text = textContent(value.content);
       if (!itemTurn(value) || text === null) throw new Error("final result lacks native turn identity");
       lastFinal = { turnId: itemTurn(value), digest: payloadHash(text), line: lineNumber };
-      finalSource = { ...lastFinal, id: value.id, text, textOnly: Array.isArray(value.content) && value.content.length > 0
+      finalSource = { ...lastFinal, startedTurnId: latestStarted, id: value.id, text, textOnly: Array.isArray(value.content) && value.content.length > 0
         && value.content.every((part) => part?.type === "output_text" && typeof part.text === "string") };
     } else if (entry.type === "event_msg" && value?.type === "item_completed"
       && value.thread_id === locator.childId && value.item?.type === "AgentMessage"
       && typeof value.item.id === "string" && typeof value.turn_id === "string") {
       const key = JSON.stringify([value.turn_id, value.item.id]);
       const previous = nativeFinals.get(key), itemDigest = payloadHash(value.item);
-      nativeFinals.set(key, { item: value.item, itemDigest, digest: payloadHash(entry), line: lineNumber,
+      nativeFinals.set(key, { turnId: value.turn_id, item: value.item, itemDigest, digest: payloadHash(entry), line: lineNumber,
         conflicted: previous?.conflicted || Boolean(previous && previous.itemDigest !== itemDigest) });
     } else if (entry.type === "event_msg" && value?.type === "task_started") {
       latestStarted = value.turn_id;
@@ -105,19 +111,46 @@ export function readChildTurnEvidence(locator, { commands = [] } = {}) {
       if (!completionEvidence.has(value.turn_id)) completionEvidence.set(value.turn_id, []);
       completionEvidence.get(value.turn_id).push({ line: lineNumber, text: value.last_agent_message, digest: payloadHash(entry) });
     }
-  });
+  }, { deadline });
   if (coverage && !covered) throw new Error("command coverage prefix is incomplete");
   if (pendingMode !== null) throw new Error("unpaired native communication metadata");
   if (lastFinal && typeof finalSource.id === "string" && finalSource.id.length > 0) {
+    if (foreignFinalIds.has(finalSource.id)) throw new Error("native final message has conflicting child identity");
+    // The response passthrough ID can be an inference ID rather than the host
+    // turn ID. Bind by the unique native message ID and exact content, never by
+    // proximity or by assuming the most recent completion belongs to this text.
+    const candidates = [...nativeFinals.values()].filter((native) => native.item.id === finalSource.id);
+    if (candidates.length === 1) {
+      const native = candidates[0], ends = completionEvidence.get(native.turnId) || [];
+      const memoryProof = memoryStopProof(finalSource, native, ends);
+      const text = textContent(native.item.content);
+      const exact = finalSource.textOnly && Array.isArray(native.item.content) && native.item.content.length > 0
+        && native.item.content.every((part) => part?.type === "Text" && typeof part.text === "string")
+        && text === finalSource.text;
+      if (!native.conflicted && native.item.phase === "final_answer"
+        && (native.turnId === finalSource.startedTurnId || (!finalSource.startedTurnId && native.turnId === finalSource.turnId))
+        && (exact || memoryProof) && ends.length > 0
+        && ends.every((end) => end.line > Math.max(native.line, finalSource.line) && end.text === text)) {
+        lastFinal = { ...lastFinal, turnId: native.turnId,
+          nativeEvidenceDigest: payloadHash({ native: native.digest, completions: ends.map((end) => end.digest) }),
+          ...(memoryProof || {}) };
+      } else {
+        throw new Error("native final turn identity cannot be uniquely verified");
+      }
+    } else if (candidates.length > 1) throw new Error("native final message belongs to conflicting turns");
     const proof = memoryStopProof(finalSource, nativeFinals.get(JSON.stringify([lastFinal.turnId, finalSource.id])),
       completionEvidence.get(lastFinal.turnId) || []);
     if (proof) lastFinal = { ...lastFinal, ...proof };
+  }
+  if (lastFinal && !lastFinal.stopDigest && (completionEvidence.get(lastFinal.turnId) || []).some((end) =>
+    end.line > lastFinal.line && typeof end.text === "string" && end.text !== finalSource.text)) {
+    throw new Error("native completion contradicts the final response");
   }
   const turnFinished = Boolean(lastFinal && completions.get(lastFinal.turnId) > lastFinal.line
     && (!latestStarted || latestStarted === lastFinal.turnId)
     && messages.every((message) => message.line < lastFinal.line));
   const finished = turnFinished && operations.unanswered.size === 0 && operations.active.size === 0;
-  return { messages, lastFinal, finished, turnFinished, operationDigest: payloadHash({ operationRecords, coverage: coverage || null }), pendingCalls: [...operations.unanswered],
+  return { messages, lastFinal, finished, turnFinished, lastActivity: activity.result(), operationDigest: payloadHash({ operationRecords, coverage: coverage || null }), pendingCalls: [...operations.unanswered],
     commandCompletions: [...operations.commandEnds.values()].sort((a, b) => a.callId.localeCompare(b.callId)),
     pendingOperations: [...operations.active.values()], permitsPoll: (input) => operations.permitsPoll(input), ...source };
 }

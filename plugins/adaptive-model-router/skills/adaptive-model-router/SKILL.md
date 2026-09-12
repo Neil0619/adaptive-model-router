@@ -293,7 +293,39 @@ until a real child performs it. Never claim the list or a local finalization
 proves physical slot release; the next actual native spawn decides. Its trusted
 successful Post ends the temporary fallback while retaining the audit history.
 
-### Existing-child maintenance and intent changes
+### Global reservation pressure
+
+The Router allows ten global outstanding reservations across local tasks. This
+is separate from native per-root resident-agent capacity. Real admission at the
+limit performs bounded global reclamation: verified terminal responsibility
+first, then oldest verified idle work by actual native activity. It releases
+only the missing reservation count. Active turns, unknown operations, uncertain
+messages and missing identity are skipped; age alone never proves completion.
+
+`ROUTER_GLOBAL_PENDING_LIMIT` means all ten accounting slots remain occupied,
+not low disk. Inspect `get_route_status.globalReservations` for counts and the
+last reclamation result. Do not create probe children or repeatedly retry in
+the same unchanged state. Continue independent root work and reassess on the
+next actual delegation. Required independent review remains outstanding.
+
+A released global reservation retains its original task gate and verification
+responsibility. On resumption, inspect `globalReservations.retained`, use
+`manage_stage read_disposition` to recover original evidence, and finish the
+existing stage or begin bounded maintenance before any followup. Deferred
+children cannot execute new business tools. Maintenance resumption atomically
+reacquires a global slot; a full-capacity refusal leaves the collection pending.
+Never label a deferred result as successful business verification.
+
+For an explicitly user-named legacy release only, the installed
+`scripts/release-reservations.mjs` reads a JSON request on stdin containing the
+current Hook-injected requester `contextId`, exact `routeIds` and authorization
+`basis`. Inspect first, then apply with `apply: true` and `expectedDigests` from
+that inspection. This releases accounting only, preserves old gates and all
+missing evidence, and cannot release unconsumed tickets or known active children.
+It is not the automatic fallback for unknown historical work. Never invent
+other task contextIds or silently apply it to additional records.
+
+### Existing-child maintenance procedure
 
 Use `manage_stage` for a closed child's historical backlog or an explicit
 cancellation, replacement or deferral. This is plugin bookkeeping around existing
