@@ -3,8 +3,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { readFileSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
-import { AppServerClient, resolveCodexCommand } from "./app-server.mjs";
+import { AppServerClient } from "./app-server.mjs";
+import { attestNativeCodexHost } from "./native-host-executable.mjs";
 import { canonicalJson, payloadHash } from "./io.mjs";
 import { auditNativeLifecycleNoop, NATIVE_LIFECYCLE_CLI_VERSIONS, supportsNativeLifecycleHost } from "./native-lifecycle-audit.mjs";
 import { activeRequalification, consumeRequalification } from "./qualification-retry.mjs";
@@ -28,14 +28,9 @@ export function runtimeSourceDigest(root = MODULE_ROOT) {
 
 export async function nativeQualificationHost() {
   if (!["darwin", "win32"].includes(process.platform)) throw new Error("native qualification platform is unproven");
-  const command = await resolveCodexCommand();
-  if (command.kind !== "direct") throw new Error("native qualification requires a directly verifiable executable");
-  const path = realpathSync(command.path);
-  const result = spawnSync(path, ["--version"], { encoding: "utf8", timeout: 3_000, maxBuffer: 1024, windowsHide: true });
-  const version = /^codex-cli (\S+)\s*$/u.exec(result.stdout || "")?.[1];
-  if (result.error || result.status !== 0 || !supportsNativeLifecycleHost(process.platform, version)) throw new Error("native qualification build is unproven");
-  return { platform: process.platform, arch: process.arch, cliVersion: version,
-    executableDigest: sha(readFileSync(path)), executablePathDigest: payloadHash(path) };
+  const host = await attestNativeCodexHost();
+  if (!supportsNativeLifecycleHost(process.platform, host.cliVersion)) throw new Error("native qualification build is unproven");
+  return host;
 }
 
 export function lifecycleBinding(hooks, shellRoot, inventoryRoot, host, cwd, historicalRoots = []) {
@@ -249,12 +244,22 @@ async function nativeSnapshot(parentId, attempt) {
   } finally { client.close(); }
 }
 
-function verifySnapshot({ parent, child }, attempt, value, input, store, context, auditOptions) {
+function verifySnapshot({ parent, child }, attempt, value, input, store, context, auditOptions, { retainedHostVersionMismatch = false } = {}) {
   const persistedRoute = store.db.prepare("SELECT * FROM routes WHERE route_id=?").get(attempt.route_id);
   requireFact(qualificationTargetMatches(store.db, value, persistedRoute));
   const cwd = nativeTaskWorkingDirectory(parent, { contextId: input.contextId, store, context });
   requireFact(payloadHash(cwd) === value.binding.taskCwdDigest);
-  requireFact(child.cliVersion === value.binding.cliVersion && realpathSync(child.cwd) === cwd);
+  requireFact(realpathSync(child.cwd) === cwd);
+  if (retainedHostVersionMismatch) {
+    // Recovery alone may inspect a completed no-tool child whose actual build
+    // differed from the old PATH-based binding. It never rewrites that binding
+    // or mints a passed qualification. The entire source is audited below.
+    requireFact(value.failure === "NATIVE_QUALIFICATION_EVIDENCE_UNPROVEN"
+      && child.cliVersion !== value.binding.cliVersion
+      && NATIVE_LIFECYCLE_CLI_VERSIONS.includes(child.cliVersion)
+      && EVENTS.every((event) => value.hooks[event]?.runtimeDigest === value.binding.runtimeDigest
+        && value.binding.shellRoots.includes(value.hooks[event].shellRoot)));
+  } else requireFact(child.cliVersion === value.binding.cliVersion);
   const turn = parent.turns.find((entry) => entry.id === attempt.root_turn_id);
   requireFact(turn?.itemsView === "full");
   const activities = turn.items.filter((item) => item.type === "subAgentActivity" && item.agentThreadId === child.id);
@@ -286,8 +291,9 @@ export async function auditFailedQualificationNoop(input, { store, cwd, readNati
   requireFact(attempt?.finalized_at && attempt.ticket_consumed === 1 && attempt.post_observed === 1
     && attempt.stop_observed === 1 && attempt.no_child === 0 && attempt.ambiguous === 0 && attempt.outcome_recorded === 1);
   const before = payloadHash({ value, attempt });
-  const first = verifySnapshot(await readNative(input.contextId, attempt), attempt, value, input, store, context, auditOptions);
-  const second = verifySnapshot(await readNative(input.contextId, attempt), attempt, value, input, store, context, auditOptions);
+  const recovery = { retainedHostVersionMismatch: value.failure === "NATIVE_QUALIFICATION_EVIDENCE_UNPROVEN" };
+  const first = verifySnapshot(await readNative(input.contextId, attempt), attempt, value, input, store, context, auditOptions, recovery);
+  const second = verifySnapshot(await readNative(input.contextId, attempt), attempt, value, input, store, context, auditOptions, recovery);
   requireFact(payloadHash(first) === payloadHash(second));
   requireFact(before === payloadHash({ value: readTaskQualification(store.db, context),
     attempt: store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=?").get(input.routeId) }));

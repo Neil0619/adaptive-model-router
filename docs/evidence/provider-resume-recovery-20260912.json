@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "observedAt": "2026-09-12T13:39:14.401Z",
+  "databaseHealth": "ok",
+  "runtime": {
+    "shellProtocolVersion": 1,
+    "toolContractVersion": 7,
+    "storageContractVersion": 3,
+    "runtimeVersion": "0.4.0+codex.20260912132803",
+    "activeVersion": "0.4.0+codex.20260912132803",
+    "requestedActiveVersion": "0.4.0+codex.20260912132803",
+    "activePointerStatus": "matched",
+    "activeSource": "cache",
+    "previousVersion": "0.4.0+codex.20260912132046",
+    "failedRuntimeCount": 8,
+    "databaseVersion": 10,
+    "hotReload": true,
+    "provisional": false
+  },
+  "rootTask": {
+    "modelVisibility": "hook_observed",
+    "model": "gpt-6-astra",
+    "reasoningEffortVisibility": "host_only",
+    "changedByRouter": false
+  },
+  "stageClosure": null,
+  "pendingOutcomes": 0,
+  "pendingStageWork": [],
+  "delegationGate": {
+    "state": "available"
+  },
+  "globalReservations": {
+    "limit": 10,
+    "pending": 0,
+    "released": 3,
+    "verificationDeferred": 0,
+    "retained": [],
+    "lastReclamation": null
+  },
+  "nativeHost": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cliVersion": "0.154.0-alpha.6.2",
+    "executableDigest": "ecad78dbf98adb89ec475edac86630406cbe59d9f3070b17d88065f136b94bcb"
+  },
+  "verification": {
+    "tests": 504,
+    "passed": 501,
+    "skipped": 3,
+    "failed": 0,
+    "policyCases": 232,
+    "policyMismatches": 0,
+    "installedFilesCompared": 82,
+    "installedFileMismatches": 0,
+    "independentReview": "passed",
+    "nativeWindowsLoggedIn": false
+  },
+  "outcomes": [
+    {
+      "routeId": "b99c0cf6-8163-4028-a257-03586c534c73",
+      "seq": 1353,
+      "status": "failed",
+      "failureType": "tooling",
+      "maintenance": "verified"
+    },
+    {
+      "routeId": "1bf6d5d5-32fe-492a-a8c6-b4195594c77f",
+      "seq": 1355,
+      "status": "failed",
+      "failureType": "tooling",
+      "retained": true
+    },
+    {
+      "routeId": "6d321aa6-f579-4630-bd16-9ffe5958bca2",
+      "seq": 1356,
+      "status": "passed"
+    },
+    {
+      "routeId": "b31dffba-8599-45e9-b59b-69409d573b24",
+      "seq": 1357,
+      "status": "passed"
+    },
+    {
+      "routeId": "55cfb1ab-de5d-4e0e-9358-2543cd615259",
+      "seq": 1358,
+      "status": "passed",
+      "gate": "full-checks"
+    },
+    {
+      "routeId": "9101c95b-07c0-4b8d-8ec7-a644be634a7a",
+      "seq": 1359,
+      "status": "passed"
+    },
+    {
+      "routeId": "37e76a0e-2d2e-4384-a297-2ba8a88a22bb",
+      "seq": 1360,
+      "status": "passed"
+    },
+    {
+      "routeId": "f31c605d-5df6-4e75-bf91-6bf90dd51327",
+      "seq": 1361,
+      "status": "passed",
+      "gate": "targeted-tests"
+    }
+  ]
+}

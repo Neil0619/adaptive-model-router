@@ -5,6 +5,7 @@ import {
   auditNativeLifecycleTranscript,
   auditNativeLifecycle1533Transcript,
   auditNativeLifecycle1534Transcript,
+  auditNativeLifecycle1540Alpha62Transcript,
   auditNativeRecoveryTranscript,
   readNativeRecoveryTranscript,
 } from "./native-recovery-audit.mjs";
@@ -14,12 +15,13 @@ const AUDITORS = Object.freeze({
   "0.153.0": auditNativeLifecycleTranscript,
   "0.153.3": auditNativeLifecycle1533Transcript,
   "0.153.4": auditNativeLifecycle1534Transcript,
+  "0.154.0-alpha.6.2": auditNativeLifecycle1540Alpha62Transcript,
 });
 export const NATIVE_LIFECYCLE_CLI_VERSIONS = Object.freeze(Object.keys(AUDITORS));
 
 export function supportsNativeLifecycleHost(platform, cliVersion) {
   if (platform === "win32") return cliVersion === "0.153.4";
-  return platform === "darwin" && ["0.153.0-alpha.5", "0.153.0", "0.153.3", "0.153.4"].includes(cliVersion);
+  return platform === "darwin" && ["0.153.0-alpha.5", "0.153.0", "0.153.3", "0.153.4", "0.154.0-alpha.6.2"].includes(cliVersion);
 }
 
 function requireFact(value) {

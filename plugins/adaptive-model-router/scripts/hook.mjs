@@ -24,7 +24,8 @@ import { createLifecycleDiagnostic } from "./lib/lifecycle-diagnostics.mjs";
 import { childToolRestriction, isRouterChildTarget, observeManagedMessage, observeManagedStop, registerManagedChild, targetedChild } from "./lib/stage-closure.mjs";
 
 import { observeCapacityList, observeCapacitySpawn, observeCapacityTurn, invalidateCapacityList } from "./lib/host-capacity-recovery.mjs";
-import { rememberRootTranscript } from "./lib/stage-reconciliation.mjs";
+import { rememberMessageHost, rememberRootTranscript } from "./lib/stage-reconciliation.mjs";
+import { attestNativeCodexHost } from "./lib/native-host-executable.mjs";
 import { isChildCommand, observeChildCommand } from "./lib/child-command-journal.mjs";
 
 let RouterStore;
@@ -510,7 +511,7 @@ async function preToolUseHook(input) {
     if (identity.contextId && identity.turnId) recordIdentity(identity, "identity_accepted");
   }
   if (managedChildToolHook(input)) return;
-  if (managedMessageHook(input, false)) return;
+  if (await managedMessageHook(input, false)) return;
   const parsed = parseCarrierTaskName(input.tool_input?.task_name);
   if (!parsed.marked) {
     if (parseLegacyCarrierMessage(input.tool_input?.message).marked) {
@@ -579,7 +580,7 @@ async function postToolUseHook(input) {
     }
     return;
   }
-  if (managedMessageHook(input, true)) return;
+  if (await managedMessageHook(input, true)) return;
   if (!/^(?:Agent|(?:collaboration)?spawn_agent)$/u.test(input.tool_name || "")) return;
   const identity = resolveHookIdentity(input, { event: "PostToolUse" });
   if (!identity.contextId) return;
@@ -703,7 +704,7 @@ function managedChildCommandResultHook(input) {
   return true;
 }
 
-function managedMessageHook(input, post) {
+async function managedMessageHook(input, post) {
   if (!/^(?:collaboration)?(?:send_message|followup_task|interrupt_agent)$/u.test(input.tool_name || "")) return false;
   const marked = isRouterChildTarget(input.tool_input?.target) || /^[a-f0-9-]{36}$/u.test(input.tool_input?.target || "");
   const denyUnavailable = () => {
@@ -721,8 +722,15 @@ function managedMessageHook(input, post) {
     store = new RouterStore();
     const context = store.context({ cwd: input.cwd || process.cwd(),
       contextId: spawn?.parentContextId || identity.contextId, authoritative: true, create: false });
+    const child = targetedChild(store.db, context, input.tool_input?.target);
+    let host = null;
+    if (!post && child) {
+      try { host = await attestNativeCodexHost({ requireAncestor: true }); }
+      catch { /* Unknown call-time host must not classify a version-pinned rejection. */ }
+    }
     const result = store.transaction(() => {
       if (author === "/root") rememberRootTranscript(store.db, context, input.transcript_path);
+      if (!post) rememberMessageHost(store.db, child, input, author, host);
       return observeManagedMessage(store.db, context, input, { post, author });
     });
     if (!result.matched) return false;

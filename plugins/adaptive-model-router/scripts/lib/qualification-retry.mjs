@@ -81,7 +81,7 @@ function isFresh(value, now = Date.now()) {
 
 function completedFailedBasis(db, context, qualification) {
   if (qualification?.schema !== 1 || qualification.state !== "failed" || qualification.proof !== null
-    || qualification.failure !== "HOST_HOOK_SET_MISMATCH") return null;
+    || !["HOST_HOOK_SET_MISMATCH", "NATIVE_QUALIFICATION_EVIDENCE_UNPROVEN"].includes(qualification.failure)) return null;
   const routeId = qualification.routeId;
   const route = db.prepare("SELECT * FROM routes WHERE route_id=? AND project_id=? AND context_key=?")
     .get(routeId, context.projectId, context.contextKey);

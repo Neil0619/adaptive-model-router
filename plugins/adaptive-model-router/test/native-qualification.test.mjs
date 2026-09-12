@@ -182,6 +182,67 @@ test("managed qualification verifies current closure before minting and consumin
   });
 });
 
+async function failedDesktopVersionBinding(run) {
+  await fixture(async (value) => {
+    value.binding.cliVersion = "0.153.4";
+    const f = await completedQualification(value);
+    f.child.cliVersion = f.records[0].payload.cli_version = "0.154.0-alpha.6.2";
+    await assert.rejects(callRouterTool("record_outcome", f.outcome, f.serviceOptions), /qualification verification failed/);
+    assert.equal(readTaskQualification(f.store.db, f.context).failure, "NATIVE_QUALIFICATION_EVIDENCE_UNPROVEN");
+    await callRouterTool("record_outcome", { ...f.outcome, status: "failed", failureType: "tooling" }, f.serviceOptions);
+    const input = { contextId: f.input.contextId, routeId: f.route.routeId };
+    const binding = { ...f.binding, cliVersion: f.child.cliVersion, digest: "c".repeat(64) };
+    const options = { store: f.store, cwd: f.project.root, inspectBinding: async () => ({ binding }),
+      noopAuditOptions: f.serviceOptions.qualificationOptions };
+    await run({ ...f, authorizationInput: input, authorizationOptions: options, nextBinding: binding });
+  });
+}
+
+test("a wrong standalone CLI binding remains failed while a full native audit authorizes one fresh qualification", async () => {
+  await failedDesktopVersionBinding(async (f) => {
+    const original = readTaskQualification(f.store.db, f.context);
+    const outcome = f.store.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(f.route.routeId);
+    const preview = await authorizeRequalification(f.authorizationInput, f.authorizationOptions);
+    assert.equal(preview.status, "authorizable");
+    assert.equal(preview.ordinaryDelegationEnabled, false);
+    assert.equal((await authorizeRequalification({ ...f.authorizationInput, apply: true,
+      expectedEvidenceDigest: preview.evidenceDigest }, f.authorizationOptions)).status, "authorized");
+    assert.deepEqual(readTaskQualification(f.store.db, f.context), original);
+    assert.deepEqual(f.store.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(f.route.routeId), outcome);
+    const admitted = await routeStage(f.input, { ...f.options,
+      lifecycleHookProbe: async () => qualificationReadiness(f.store.db, f.context, f.nextBinding) });
+    assert.deepEqual(admitted.reasonCodes, ["HOST_LIFECYCLE_QUALIFICATION"]);
+    assert.notEqual(admitted.routeId, f.route.routeId);
+    assert.equal(readTaskQualification(f.store.db, f.context).binding.cliVersion, "0.154.0-alpha.6.2");
+    assert.equal((await authorizeRequalification(f.authorizationInput, f.authorizationOptions)).status, "consumed");
+    const current = await completedQualification({ ...f, binding: f.nextBinding }, admitted);
+    assert.equal((await callRouterTool("record_outcome", current.outcome, current.serviceOptions)).status, "passed");
+    assert.equal(qualificationReadiness(f.store.db, f.context, f.nextBinding).ready, true);
+    assert.equal(f.store.status(f.context).delegationGate.state, "available");
+    assert.deepEqual(f.store.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(f.route.routeId), outcome);
+  });
+});
+
+test("Desktop version-drift recovery retains unknown work, same-build failures, and missing or contradictory evidence", async () => {
+  for (const mutate of [
+    (f) => { f.child.cliVersion = f.records[0].payload.cli_version = "0.153.4"; },
+    (f) => { f.child.cliVersion = f.records[0].payload.cli_version = "0.154.0-alpha.6.3"; },
+    (f) => { f.child.parentThreadId = "foreign-parent"; },
+    (f) => { f.records.splice(-1, 0, { type: "response_item", payload: { type: "custom_tool_call", name: "exec", namespace: "functions" } }); },
+    (f) => { f.child.turns.push(structuredClone(f.child.turns[0])); },
+    (f) => { f.records[0].payload.cli_version = "0.153.4"; },
+    (f) => {
+      const q = readTaskQualification(f.store.db, f.context); delete q.hooks.stop;
+      f.store.db.prepare("UPDATE meta SET value=? WHERE key=?").run(JSON.stringify(q),
+        `native_qualification:${f.context.projectId}:${f.context.contextKey}`);
+    },
+  ]) await failedDesktopVersionBinding(async (f) => {
+    mutate(f);
+    assert.equal((await authorizeRequalification(f.authorizationInput, f.authorizationOptions)).status, "unresolved");
+    assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM meta WHERE key LIKE 'native_requalification:%'").get().n, 0);
+  });
+});
+
 test("a pending managed requirement prevents qualification proof without poisoning its retry state", async () => {
   await fixture(async (value) => {
     value.binding.cliVersion = "0.153.4";

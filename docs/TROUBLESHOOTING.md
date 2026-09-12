@@ -419,6 +419,35 @@ The latter path independently re-reads the complete native child twice and
 verifies its original marker, model, parent, raw transcript, and retained
 tooling-failure outcome. It never converts that failed attempt into a success:
 
+A Desktop upgrade can also expose an older standalone CLI earlier on PATH.
+On macOS, qualification now identifies the actual Codex process in its bounded
+parent-process chain and verifies that executable, while ordinary CLI command
+discovery is unchanged. Unknown or changing process identity fails before a
+qualification ticket is issued. The reviewed macOS `0.154.0-alpha.6.2` no-tool
+record format has its own exact adapter; adjacent builds and native Windows
+on that build remain unqualified.
+
+Version-pinned followup rejection parsing uses a per-call host measurement from
+the real message Pre Hook. A task's initial `session_meta.cli_version` remains
+its creation version after resume and cannot establish the sender's current
+version. The Hook binds the measured native executable to the exact sender,
+call, turn, tool and input digest. Missing, changed, conflicting or unknown
+call-time evidence retains the message as pending; a later MCP process or PATH
+CLI cannot supply it retroactively. Existing verified rejection receipts remain
+usable only while their exact original native evidence still matches, without
+inventing a historical host measurement. Call-time process attestation currently
+requires a proven macOS Codex ancestor; other hosts retain uncertain errors.
+
+An already completed qualification rejected as
+`NATIVE_QUALIFICATION_EVIDENCE_UNPROVEN` may use the same one-use operator flow
+only when the full native audit proves its child ran a different, explicitly
+reviewed build from its retained binding. All four original Hook observations
+must still match that original binding, and the child must have exactly one
+completed no-tool turn with the original marker and verified parent. Same-build
+failures, unknown builds, missing Hooks, or hidden work remain unresolved. This
+audit preserves the original failed outcome and authorizes only a new no-tool
+qualification against the currently verified runtime and host.
+
 ```sh
 node /absolute/plugin/scripts/authorize-requalification.mjs --context <task-id> --route <failed-route-id>
 node /absolute/plugin/scripts/authorize-requalification.mjs --context <task-id> --route <failed-route-id> --approve-one-no-tool-requalification --expect-digest <fresh-inspection-digest>

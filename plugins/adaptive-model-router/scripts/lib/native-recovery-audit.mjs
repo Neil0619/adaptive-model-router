@@ -5,6 +5,7 @@ export const RECOVERY_AUDIT_ADAPTER = "codex-0.153.0-alpha.5-no-work/1";
 export const LIFECYCLE_AUDIT_ADAPTER = "codex-0.153.0-no-work/1";
 export const LIFECYCLE_1533_AUDIT_ADAPTER = "codex-0.153.3-no-work/1";
 export const LIFECYCLE_1534_AUDIT_ADAPTER = "codex-0.153.4-no-work/1";
+export const LIFECYCLE_1540_ALPHA_6_2_AUDIT_ADAPTER = "codex-0.154.0-alpha.6.2-no-work/1";
 const MAX_BYTES = 2 * 1024 * 1024;
 const RECORD_TYPES = new Set(["session_meta", "event_msg", "response_item", "world_state",
   "turn_context", "inter_agent_communication_metadata", "token_usage_record"]);
@@ -55,6 +56,12 @@ export function auditNativeLifecycle1533Transcript(bytes, child, parentId) {
 // vocabulary. Keep its receipt separately pinned; unknown actions fail closed.
 export function auditNativeLifecycle1534Transcript(bytes, child, parentId) {
   return auditNoWorkTranscript(bytes, child, parentId, "0.153.4", LIFECYCLE_1534_AUDIT_ADAPTER);
+}
+
+// Reviewed against the complete native macOS Desktop no-tool stream. Its
+// record/action vocabulary is unchanged; adjacent builds remain unproven.
+export function auditNativeLifecycle1540Alpha62Transcript(bytes, child, parentId) {
+  return auditNoWorkTranscript(bytes, child, parentId, "0.154.0-alpha.6.2", LIFECYCLE_1540_ALPHA_6_2_AUDIT_ADAPTER);
 }
 
 function auditNoWorkTranscript(bytes, child, parentId, version, adapter) {

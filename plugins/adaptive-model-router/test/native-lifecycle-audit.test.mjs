@@ -10,7 +10,7 @@ import { auditNativeLifecycleTranscript, auditNativeLifecycle1533Transcript } fr
 function fixture(cliVersion = "0.153.0") {
   const parentId = "probe-root";
   const taskName = `router_${"a".repeat(32)}`;
-  const target = { model: ["0.153.3", "0.153.4"].includes(cliVersion) ? "gpt-6-astra" : "gpt-5.6-sol", effort: "low" };
+  const target = { model: ["0.153.3", "0.153.4", "0.154.0-alpha.6.2"].includes(cliVersion) ? "gpt-6-astra" : "gpt-5.6-sol", effort: "low" };
   const marker = `NATIVE_ROUTER_NOOP_${"a".repeat(24)}`;
   const child = {
     id: "probe-child", parentThreadId: parentId, forkedFromId: null,
@@ -118,8 +118,22 @@ test("native no-op probe reads only stable regular native session files by defau
   }
 });
 
+test("the reviewed macOS Desktop build has its own exact no-work audit", () => {
+  const { input, options } = fixture("0.154.0-alpha.6.2");
+  const result = auditNativeLifecycleNoop(input, options);
+  assert.equal(result.passed, true);
+  assert.equal(result.rawAuditAdapter, "codex-0.154.0-alpha.6.2-no-work/1");
+  assert.equal(supportsNativeLifecycleHost("darwin", input.child.cliVersion), true);
+  assert.equal(supportsNativeLifecycleHost("win32", input.child.cliVersion), false);
+  for (const cliVersion of ["0.154.0", "0.154.0-alpha.6.1", "0.154.0-alpha.6.3"]) {
+    const other = fixture(cliVersion);
+    assert.equal(auditNativeLifecycleNoop(other.input, other.options).passed, false);
+    assert.equal(supportsNativeLifecycleHost("darwin", cliVersion), false);
+  }
+});
+
 test("native no-op probe rejects hidden actions even when the native projection looks inert", () => {
-  for (const cliVersion of ["0.153.0", "0.153.3", "0.153.4"]) for (const payload of [
+  for (const cliVersion of ["0.153.0", "0.153.3", "0.153.4", "0.154.0-alpha.6.2"]) for (const payload of [
     { type: "custom_tool_call", name: "exec", namespace: "functions", call_id: "hidden" },
     { type: "function_call", name: "exec_command", call_id: "hidden" },
     { type: "future_native_action", id: "hidden" },
@@ -131,7 +145,7 @@ test("native no-op probe rejects hidden actions even when the native projection 
 });
 
 test("native no-op probe rejects incomplete, mismatched, resumed and unknown-build children", () => {
-  for (const cliVersion of ["0.153.0", "0.153.3", "0.153.4"]) for (const mutate of [
+  for (const cliVersion of ["0.153.0", "0.153.3", "0.153.4", "0.154.0-alpha.6.2"]) for (const mutate of [
     ({ child }) => { child.parentThreadId = "different-root"; },
     ({ child }) => { child.source.subAgent.thread_spawn.agent_path = "/root/other"; },
     ({ child }) => { child.source.subAgent.thread_spawn.depth = 2; },

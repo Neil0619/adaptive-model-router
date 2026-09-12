@@ -14,6 +14,7 @@ import { capacityAdmissionDecision, capacityStateKey } from "../scripts/lib/host
 import { DATABASE_VERSION } from "../scripts/lib/constants.mjs";
 import { runtimeSourceDigest } from "../scripts/lib/lifecycle-qualification.mjs";
 import { payloadHash } from "../scripts/lib/io.mjs";
+import { rememberMessageHost } from "../scripts/lib/stage-reconciliation.mjs";
 import { inspectReclamationCandidate, reclaimGlobalReservations } from "../scripts/lib/global-reservation-reclamation.mjs";
 import { reservationInventory, reservationSnapshot, saveReservationRelease } from "../scripts/lib/reservation-ledger.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment, completeNoChildRoute } from "./fixtures.mjs";
@@ -23,6 +24,16 @@ const disposition = (intent = "collect") => ({ intent, basis: "Original stage is
 const reviewed = (closure, intent = "collect") => ({ ...disposition(intent), resultReview: "Checked the returned requirements and operation receipts against each native input.",
   requirements: closure.inputReferences.slice(1).map(({ id }) => ({ messageId: id, source: `native input ${id}`,
     disposition: "transferred", receipt: "Retained in the root's current plan for execution", owner: "/root" })) });
+
+function messageHostFixture(f, invocation, cliVersion = "0.153.4", replace = true, hostChanges = {}) {
+  const key = `message_host:${payloadHash(["/root", invocation.tool_use_id])}`;
+  if (replace) f.store.db.prepare("DELETE FROM delegation_stage_journal WHERE route_id=? AND kind IN (?,?)")
+    .run(f.route.routeId, key, `${key}:conflict`);
+  if (cliVersion === null) return;
+  const child = f.store.db.prepare("SELECT * FROM delegation_children WHERE route_id=?").get(f.route.routeId);
+  rememberMessageHost(f.store.db, child, invocation, "/root", { platform: "darwin", arch: "arm64", cliVersion,
+    executableDigest: payloadHash(`fixture executable ${cliVersion}`), executablePathDigest: payloadHash("fixture executable path"), ...hostChanges });
+}
 
 test("native final message identity binds a different passthrough ID to its actual completed host turn", async () => {
   await withChild(async (f) => {
@@ -639,6 +650,7 @@ test("a native Pre rejection remains with its sender and cannot poison later col
       tool_input: { target: `/root/${f.route.carrier.taskName}`, message: "encrypted rejected requirement" } };
     const denied = hook(f.project, "pre-tool-use", invocation);
     assert.equal(denied.hookSpecificOutput.permissionDecision, "deny");
+    messageHostFixture(f, invocation);
     f.parentRecords[0].payload.cli_version = "0.153.4";
     f.parentRecords.push({ type: "response_item", payload: { type: "function_call", namespace: "collaboration",
       name: "send_message", call_id: invocation.tool_use_id, arguments: JSON.stringify(invocation.tool_input) } },
@@ -678,10 +690,56 @@ test("v9 migration preserves existing message rows and unique revisions while ad
   });
 });
 
+test("missing native provider rejects only the undelivered followup and permits real collection", async () => {
+  await withChild(async (f) => {
+    const { invocation } = f.send("provider-rejected", "followup_task", false);
+    messageHostFixture(f, invocation);
+    f.parentRecords[0].payload.cli_version = "0.153.4";
+    f.parentRecords.at(-1).payload.output = "collab tool failed: Model provider `codex_local_access` not found";
+    f.saveParent();
+    const result = await f.manage("reconcile_messages");
+    assert.deepEqual(result.pendingCalls, []);
+    assert.equal(result.rejectedCalls[0].source, "native_provider_resolution_rejection");
+    assert.equal(result.rejectedCalls[0].nextAction, "keep_undelivered_requirement_with_sender");
+    assert.equal(f.store.status(f.context).delegationGate.state, "occupied");
+    assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM outcomes").get().n, 0);
+    await f.manage("begin_maintenance", { disposition: disposition("superseded") });
+    assert.equal(f.send("restored-provider").pre.hookSpecificOutput, undefined);
+    f.input(2, "recovery-collection"); await f.finish("recovery-collection", "COLLECTED_AFTER_PROVIDER_RECOVERY");
+    const closure = f.store.status(f.context).stageClosure;
+    assert.equal(closure.state, "ready");
+    await f.manage("verify_maintenance", { closureToken: closure.token, disposition: reviewed(closure, "superseded") });
+    assert.equal(recordOutcome({ ...f.outcome(), status: "failed", failureType: "tooling", closureToken: closure.token },
+      { store: f.store, cwd: f.project.root }).recorded, true);
+    assert.equal(f.store.status(f.context).delegationGate.state, "available");
+  }, { cli_version: "0.153.4", model_provider: "codex_local_access" });
+});
+
+for (const variation of ["wrong-provider", "missing-provider-metadata", "unknown-host", "unknown-child-host", "extra-text", "wrong-tool", "unexpected-child-input", "missing-call-host", "stale-call-host", "conflicting-call-host", "changed-call-input"]) test(`provider rejection keeps ${variation} pending`, async () => {
+  await withChild(async (f) => {
+    const { invocation } = f.send("provider-uncertain", variation === "wrong-tool" ? "send_message" : "followup_task", false);
+    // Both immutable session headers stay at 0.153.4 after host upgrade.
+    f.parentRecords[0].payload.cli_version = "0.153.4";
+    messageHostFixture(f, variation === "stale-call-host" ? { ...invocation, turn_id: "old-native-turn" }
+      : variation === "changed-call-input" ? { ...invocation, tool_input: { ...invocation.tool_input, message: "other input" } } : invocation,
+    variation === "missing-call-host" ? null : variation === "unknown-host" ? "0.999.0" : "0.153.4");
+    if (variation === "conflicting-call-host") messageHostFixture(f, invocation, "0.999.0", false);
+    f.parentRecords.at(-1).payload.output = `collab tool failed: Model provider \`${variation === "wrong-provider" ? "other" : "codex_local_access"}\` not found${variation === "extra-text" ? " but delivered" : ""}`;
+    f.saveParent();
+    if (variation === "unexpected-child-input") { f.input(2, "unexpected"); await f.finish("unexpected", "UNEXPECTED_INPUT"); }
+    const result = await f.manage("reconcile_messages");
+    assert.equal(f.store.status(f.context).stageClosure.state, "pending");
+    if (variation !== "unexpected-child-input") assert.deepEqual(result.pendingCalls, ["provider-uncertain"]);
+    assert.throws(() => recordOutcome(f.outcome(), { store: f.store, cwd: f.project.root }), /pending/);
+  }, { cli_version: variation === "unknown-child-host" ? "unknown" : "0.153.4",
+    ...(variation === "missing-provider-metadata" ? {} : { model_provider: "codex_local_access" }) });
+});
+
 for (const variation of ["generic-error", "wrong-tool", "unknown-host"]) test(`${variation} cannot settle an undelivered message`, async () => {
   await withChild(async (f) => {
-    f.send("uncertain-send", "followup_task", false);
-    f.parentRecords[0].payload.cli_version = variation === "unknown-host" ? "unknown" : "0.153.4";
+    const { invocation } = f.send("uncertain-send", "followup_task", false);
+    messageHostFixture(f, invocation, variation === "unknown-host" ? "0.999.0" : "0.153.4");
+    f.parentRecords[0].payload.cli_version = "0.153.4";
     f.parentRecords.at(-1).payload.output = variation === "generic-error" ? "connection lost"
       : `Tool call blocked by PreToolUse hook: refused. Tool: collaboration${variation === "wrong-tool" ? "send_message" : "followup_task"}`;
     f.saveParent();
@@ -690,6 +748,53 @@ for (const variation of ["generic-error", "wrong-tool", "unknown-host"]) test(`$
     assert.deepEqual(result.rejectedCalls, []);
     assert.equal(f.store.status(f.context).stageClosure.reason, "message_result_pending");
   });
+});
+
+test("retained rejection receipts survive an upgrade without retroactively attesting a call host", async () => {
+  await withChild(async (f) => {
+    const { invocation } = f.send("legacy-provider-rejection", "followup_task", false);
+    messageHostFixture(f, invocation);
+    f.parentRecords[0].payload.cli_version = "0.153.4";
+    f.parentRecords.at(-1).payload.output = "collab tool failed: Model provider `codex_local_access` not found";
+    f.saveParent();
+    const first = await f.manage("reconcile_messages");
+    messageHostFixture(f, invocation, null);
+    const key = `message_rejection:${payloadHash(["/root", invocation.tool_use_id])}`;
+    const receipt = JSON.parse(openPrivateState(f.store.db, f.store.db.prepare("SELECT record FROM delegation_stage_journal WHERE kind=?").get(key).record));
+    delete receipt.hostEvidenceDigest; // Exact legacy receipt contract, predating call-time attestation.
+    delete receipt.schema;
+    f.store.db.prepare("UPDATE delegation_stage_journal SET record=? WHERE kind=?")
+      .run(sealPrivateState(f.store.db, JSON.stringify(receipt)), key);
+    const next = await f.manage("reconcile_messages");
+    assert.deepEqual(next.pendingCalls, []);
+    assert.equal(next.rejectedCalls[0].resultDigest, first.rejectedCalls[0].resultDigest);
+    assert.equal(next.rejectedCalls[0].hostEvidenceDigest, undefined);
+    assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM outcomes").get().n, 0);
+    assert.equal(f.store.status(f.context).delegationGate.state, "occupied");
+    f.parentRecords.at(-1).payload.output += " changed"; f.saveParent();
+    await assert.rejects(f.manage("reconcile_messages"), /terminal result changed/);
+  }, { cli_version: "0.153.4", model_provider: "codex_local_access" });
+});
+
+for (const change of ["missing", "conflict", "same-version-executable"]) test(`a new rejection cannot borrow legacy retention after its host evidence becomes ${change}`, async () => {
+  await withChild(async (f) => {
+    const { invocation } = f.send("verified-then-changed", "followup_task", false);
+    messageHostFixture(f, invocation);
+    f.parentRecords[0].payload.cli_version = "0.153.4";
+    f.parentRecords.at(-1).payload.output = "collab tool failed: Model provider `codex_local_access` not found";
+    f.saveParent();
+    const first = await f.manage("reconcile_messages");
+    assert.equal(first.rejectedCalls[0].schema, 2);
+    assert.match(first.rejectedCalls[0].hostEvidenceDigest, /^[a-f0-9]{64}$/u);
+    const before = f.store.db.prepare("SELECT * FROM outcomes").all();
+    if (change === "same-version-executable") messageHostFixture(f, invocation, "0.153.4", true,
+      { executableDigest: payloadHash("changed binary with the same version") });
+    else messageHostFixture(f, invocation, change === "missing" ? null : "0.999.0", change === "missing");
+    assert.equal(f.store.status(f.context).stageClosure.reason, "message_result_pending", "status alone must retain the gate");
+    await assert.rejects(f.manage("reconcile_messages"), /terminal result changed/);
+    assert.throws(() => recordOutcome(f.outcome(), { store: f.store, cwd: f.project.root }), /pending/);
+    assert.deepEqual(f.store.db.prepare("SELECT * FROM outcomes").all(), before);
+  }, { cli_version: "0.153.4", model_provider: "codex_local_access" });
 });
 
 for (const recovered of [false, true]) test(`active historical maintenance blocks admission ${recovered ? "after recovery" : "without a capacity refusal"}`, async () => {
@@ -920,7 +1025,7 @@ function hook(project, mode, input) {
   return result.stdout.trim() ? JSON.parse(result.stdout) : null;
 }
 
-async function setupChild(project, store, run, contextId = "closure-root") {
+async function setupChild(project, store, run, contextId = "closure-root", nativeMetadata = {}) {
         const parentPath = join(project.root, `${contextId}-parent.jsonl`);
         const parentRecords = [{ type: "session_meta", payload: { id: contextId, cwd: project.root } },
           { type: "turn_context", payload: { turn_id: "root-turn" } }];
@@ -937,7 +1042,7 @@ async function setupChild(project, store, run, contextId = "closure-root") {
         const toolInput = { task_name: name, message: "gAAAA-activation", model: route.target.model,
           reasoning_effort: route.target.effort, fork_turns: "none" };
         hook(project, "pre-tool-use", { ...root, tool_name: "collaborationspawn_agent", tool_use_id: "spawn-call", tool_input: toolInput });
-        const records = [{ type: "session_meta", payload: { session_id: contextId, id: childId,
+        const records = [{ type: "session_meta", payload: { ...nativeMetadata, session_id: contextId, id: childId,
           parent_thread_id: contextId, cwd: project.root, agent_path: `/root/${name}`,
           source: { subagent: { thread_spawn: { parent_thread_id: contextId, depth: 1, agent_path: `/root/${name}` } } } } }];
         const save = () => writeFile(path, records.map((row) => JSON.stringify(row)).join("\n") + "\n");
@@ -988,13 +1093,13 @@ async function setupChild(project, store, run, contextId = "closure-root") {
         await run({ project, store, context, route, child, input, finish, save, records, outcome, send, root, parentPath, parentRecords, saveParent, manage });
 }
 
-async function withChild(run) {
+async function withChild(run, nativeMetadata = {}) {
   const project = await temporaryProject("router stage closure ");
   try {
     await withRouterEnvironment(project, async () => {
       const store = new RouterStore();
       try {
-        await setupChild(project, store, run);
+        await setupChild(project, store, run, "closure-root", nativeMetadata);
       } finally { store.close(); }
     });
   } finally { await project.cleanup(); }
@@ -1206,7 +1311,8 @@ test("a finalized child performs bounded collection with real tool denial and no
     assert.ok(afterBytes >= beforeBytes);
     assert.equal((await manage("verify_maintenance", { closureToken: closure.token, disposition: report })).idempotent, true);
     assert.equal(store.db.prepare("SELECT total_transcript_bytes FROM delegation_usage").get().total_transcript_bytes, afterBytes);
-    assert.equal(store.db.prepare("SELECT count(*) AS n FROM delegation_stage_journal WHERE route_id=?").get(route.routeId).n, 2);
+    assert.equal(store.db.prepare("SELECT count(*) AS n FROM delegation_stage_journal WHERE route_id=? AND kind IN ('intent','verification')").get(route.routeId).n, 2);
+    assert.equal(store.db.prepare("SELECT count(*) AS n FROM delegation_stage_journal WHERE route_id=? AND kind LIKE 'message_host:%'").get(route.routeId).n, 2);
     assert.equal(send("new-business").pre.hookSpecificOutput.permissionDecision, "deny");
   });
 });
