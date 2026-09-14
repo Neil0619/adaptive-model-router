@@ -13,6 +13,21 @@ import { prepareRuntimeHostEntry } from "../scripts/lib/runtime-host-entry.mjs";
 
 const source = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+function fakeCodex(project, script) {
+  const bin = join(project.root, "bin");
+  mkdirSync(bin);
+  if (process.platform === "win32") {
+    writeFileSync(join(bin, "fake-codex.mjs"), script);
+    const executable = join(bin, "codex.cmd");
+    writeFileSync(executable, `@echo off\r\n"${process.execPath}" "%~dp0fake-codex.mjs" %*\r\n`);
+    return executable;
+  }
+  const executable = join(bin, "codex");
+  writeFileSync(executable, `#!${process.execPath}\n${script}`);
+  chmodSync(executable, 0o755);
+  return executable;
+}
+
 test("cold host retention preserves all historical paths, rejects tampering/redirection, and never overwrites a new generation", async () => {
   const project = await temporaryProject("router-host-retention-");
   try {
@@ -171,8 +186,7 @@ test("deferred uninstall preserves shared learning and unrelated config while re
     writeFileSync(agents, original + "\n" + AGENTS_MARKER_START + "\n<!-- adaptive-model-router:restore separator=1 created=0 -->\nOwned block\n" + AGENTS_MARKER_END + "\n");
     const config = join(codexHome, "config.toml"); writeFileSync(config, 'model = "gpt-6-astra"\n');
     const data = join(project.root, "learning.sqlite3"); writeFileSync(data, "retained learning fixture");
-    mkdirSync(join(project.root, "bin")); const fake = join(project.root, "bin", "codex");
-    writeFileSync(fake, `#!${process.execPath}\nconst a=process.argv.slice(2).join(' '); if(a==='--version')console.log('codex 0.153.4'); else if(a==='plugin marketplace list --json')console.log('{"marketplaces":[]}'); else if(a==='plugin list --available --json')console.log('{"installed":[],"available":[]}'); else if(a==='mcp list --json')console.log('[]'); else process.exit(9);\n`); chmodSync(fake, 0o755);
+    const fake = fakeCodex(project, `const a=process.argv.slice(2).join(' '); if(a==='--version')console.log('codex 0.153.4'); else if(a==='plugin marketplace list --json')console.log('{"marketplaces":[]}'); else if(a==='plugin list --available --json')console.log('{"installed":[],"available":[]}'); else if(a==='mcp list --json')console.log('[]'); else process.exit(9);\n`);
     for (let i = 0; i < 2; i++) {
       const result = spawnSync(process.execPath, [join(source, "scripts/manage-install.mjs"), "uninstall", "--non-interactive"], { encoding: "utf8", env: { ...process.env,
         CODEX_HOME: codexHome, CODEX_BIN: fake, ADAPTIVE_ROUTER_DESKTOP_OVERRIDE_DIR: join(project.root, "isolated-override") } });
@@ -191,9 +205,7 @@ test("explicit uninstall recognizes the prepared stable marketplace from source,
     const config = join(codexHome, "config.toml"); writeFileSync(config, 'model = "gpt-6-astra"\n');
     mkdirSync(project.home); const data = join(project.home, "retained-learning"); writeFileSync(data, "original data");
     const state = join(project.root, "native-state.json"), calls = join(project.root, "native-removals.jsonl");
-    mkdirSync(join(project.root, "bin"));
-    const fakePath = join(project.root, "bin", "codex");
-    writeFileSync(fakePath, `#!${process.execPath}\nimport {readFileSync,appendFileSync} from 'node:fs';\nconst a=process.argv.slice(2).join(' '), state=JSON.parse(readFileSync(${JSON.stringify(state)},'utf8'));\nif(a==='--version')console.log('codex 0.153.4');\nelse if(a==='plugin marketplace list --json')console.log(JSON.stringify({marketplaces:[{name:'adaptive-model-router',root:state.marketplace}]}));\nelse if(a==='plugin list --available --json')console.log(JSON.stringify({installed:[{pluginId:'adaptive-model-router@adaptive-model-router'}],available:[]}));\nelse if(a==='mcp list --json')console.log('[]');\nelse if(['plugin remove adaptive-model-router@adaptive-model-router','plugin marketplace remove adaptive-model-router'].includes(a)){appendFileSync(${JSON.stringify(calls)},JSON.stringify(a)+'\\n');console.log('{}');}\nelse process.exit(9);\n`); chmodSync(fakePath, 0o755);
+    const fakePath = fakeCodex(project, `import {readFileSync,appendFileSync} from 'node:fs';\nconst a=process.argv.slice(2).join(' '), state=JSON.parse(readFileSync(${JSON.stringify(state)},'utf8'));\nif(a==='--version')console.log('codex 0.153.4');\nelse if(a==='plugin marketplace list --json')console.log(JSON.stringify({marketplaces:[{name:'adaptive-model-router',root:state.marketplace}]}));\nelse if(a==='plugin list --available --json')console.log(JSON.stringify({installed:[{pluginId:'adaptive-model-router@adaptive-model-router'}],available:[]}));\nelse if(a==='mcp list --json')console.log('[]');\nelse if(['plugin remove adaptive-model-router@adaptive-model-router','plugin marketplace remove adaptive-model-router'].includes(a)){appendFileSync(${JSON.stringify(calls)},JSON.stringify(a)+'\\n');console.log('{}');}\nelse process.exit(9);\n`);
     const run = (root, marketplace, status) => {
       writeFileSync(state, JSON.stringify({ marketplace })); writeFileSync(calls, "");
       const result = spawnSync(process.execPath, [join(root, "scripts/manage-install.mjs"), "uninstall", "--non-interactive"], { encoding: "utf8", env: { ...process.env,

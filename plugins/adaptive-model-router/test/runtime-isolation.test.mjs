@@ -377,10 +377,26 @@ test("prospective native root receipts settle parallel command batches across tu
     }
     const proof = inspect(); assert.ok(proof);
     for (const forwarding of [
+      code,
       'const rs=await Promise.allSettled([tools.exec_command({cmd:"printf one"}),tools.exec_command({cmd:"printf two"})]); for(let i=0;i<rs.length;i++)text({i,...rs[i]});',
       'const rs = await Promise.all([tools.exec_command({cmd:"printf one"}), tools.exec_command({cmd:"printf two"})]); rs.forEach((r,i)=>text({i,...r}));',
       'const rs = await Promise.allSettled([tools.exec_command({cmd:"printf one"}), tools.exec_command({cmd:"printf two"})]); rs.forEach(text);',
-    ]) { records[1].payload.input = forwarding; rootTranscript(project, "batch", records); assert.ok(inspect(), forwarding); }
+    ]) {
+      for (const name of ["rs", "$", "$results", "results$", "re$sults"]) {
+        const renamed = forwarding.replace(/\b(?:results|rs)\b/gu, () => name);
+        records[1].payload.input = renamed; rootTranscript(project, "batch", records);
+        assert.ok(inspect(), `literal identifier remains covered: ${renamed}`);
+      }
+    }
+    for (const invalid of [
+      code.replace("of results", "of results$"),
+      code.replace("const results", "const results$"),
+      code.replaceAll("results", String.raw`re\sults`),
+      code.replaceAll("results", String.raw`\u0072esults`),
+    ]) {
+      records[1].payload.input = invalid; rootTranscript(project, "batch", records);
+      assert.equal(inspect(), null, `unproven identifier cannot settle native work: ${invalid}`);
+    }
     records[1].payload.input = code; rootTranscript(project, "batch", records);
     const currentProof = inspect(); assert.ok(currentProof);
     assert.equal(isRuntimeBoundaryProof(currentProof, store.db, context), true);

@@ -52,7 +52,7 @@ export function rootCommandBatch(input) {
   const source = input.replace(/^\s*\/\/ @exec:[^\r\n]*\r?\n/u, "").trim();
   const match = /^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*await\s+Promise\.(all|allSettled)\s*\(\s*\[([\s\S]*)\]\s*\)\s*;\s*([\s\S]*)$/u.exec(source);
   if (!match || ["tools", "text", "Promise"].includes(match[1])) return null;
-  const escaped = match[1].replace(/[$]/gu, "\\$");
+  const escaped = match[1].replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const tail = new RegExp(`^for\\s*\\(\\s*const\\s+([A-Za-z_$][\\w$]*)\\s+of\\s+${escaped}\\s*\\)\\s*(?:\\{\\s*)?text\\s*\\(\\s*\\1\\s*\\)\\s*;?(?:\\s*\\})?\\s*$`, "u");
   // Output-only AST shapes: whitespace and local binding names carry no
   // authority. Index decoration/spreading of returned values cannot launch

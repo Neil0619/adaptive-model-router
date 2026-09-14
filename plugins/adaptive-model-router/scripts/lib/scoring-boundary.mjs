@@ -3,7 +3,7 @@
 // smaller than all of scorer.mjs: an import, top-level side effect, arbitrary
 // expression or changed score/return contract requires a new compatibility epoch.
 export function scoringWriterProjection(source) {
-  const match = /export function inferCategory\(goal, phase = ""\) \{\n([\s\S]*?)\n\}/u.exec(source);
+  const match = /export function inferCategory\(goal, phase = ""\) \{\r?\n([\s\S]*?)\r?\n\}/u.exec(source);
   if (!match) throw new Error("Pure scoring boundary is missing");
   let body = match[1].trim();
   const prefix = 'const text = `${phase} ${normalizeText(goal)}`;';
