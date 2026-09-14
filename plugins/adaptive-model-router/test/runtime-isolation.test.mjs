@@ -548,13 +548,14 @@ test("settled historical stages can be archived and restored for their owning ge
     const historical = beginMcpDispatch("record_outcome", { contextId: "dormant", routeId: old.qualified.routeId }, { cwd: f.project.root, env: { CODEX_THREAD_ID: "dormant" } });
     assert.equal(historical.selected.digest, f.b.digest);
     assert.equal(runtimeGeneration(f.store.db, f.b.digest).state, "published");
-    assert.ok(runtimeGeneration(f.store.db, f.b.digest).root.startsWith(realpathSync(f.project.home) + "/"), "partial caller identity env cannot move a package outside the database home");
+    const expectedRoot = join(realpathSync(f.project.home), "runtime-v2", "published", f.b.digest);
+    assert.equal(runtimeGeneration(f.store.db, f.b.digest).root, expectedRoot, "partial caller identity env cannot move a package outside the database home");
     endRuntimeDispatch(historical);
     f.store.transaction(() => archiveRuntime(f.store.db, f.b.digest, f.project.home));
     const conflictingHome = join(f.project.root, "must-not-become-another-domain");
     const conflicting = beginMcpDispatch("record_outcome", { contextId: "dormant", routeId: old.qualified.routeId }, { cwd: f.project.root,
       env: { CODEX_THREAD_ID: "dormant", ADAPTIVE_ROUTER_HOME: conflictingHome } });
-    assert.ok(conflicting.selected.root.startsWith(realpathSync(f.project.home) + "/")); endRuntimeDispatch(conflicting);
+    assert.equal(conflicting.selected.root, expectedRoot, "conflicting caller identity env cannot move a package outside the database home"); endRuntimeDispatch(conflicting);
     assert.equal(existsSync(conflictingHome), false, "caller identity env does not select persistence");
     assert.equal(runtimeTask(f.store.db, context).generation, d.digest, "historical dispatch does not roll the current task back");
   });

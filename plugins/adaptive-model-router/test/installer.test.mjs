@@ -47,6 +47,33 @@ test("cold host retention preserves all historical paths, rejects tampering/redi
   } finally { await project.cleanup(); }
 });
 
+test("host retention rejects its source and nested destinations before mutation while allowing a sibling", async () => {
+  const project = await temporaryProject("router-host-retention-containment-");
+  try {
+    const versions = join(project.root, "versions"), anchor = join(versions, "installed");
+    mkdirSync(join(anchor, ".codex-plugin"), { recursive: true });
+    const files = [
+      [join(anchor, ".codex-plugin", "plugin.json"), readFileSync(join(source, ".codex-plugin", "plugin.json"), "utf8")],
+      [join(anchor, "runtime.json"), readFileSync(join(source, "runtime.json"), "utf8")],
+      [join(versions, "legacy-index.json"), "retained legacy index"],
+    ];
+    for (const [path, content] of files) writeFileSync(path, content);
+    const before = readdirSync(versions, { recursive: true }).sort();
+    const nested = join(versions, "nested", "retained");
+    for (const destination of [versions, nested]) {
+      assert.throws(() => captureRuntimeHostEntries(anchor, destination), /Host retention must be outside native caches/);
+      assert.equal(existsSync(join(versions, "nested")), false, "rejection must precede even parent directory creation");
+      assert.deepEqual(readdirSync(versions, { recursive: true }).sort(), before);
+      for (const [path, content] of files) assert.equal(readFileSync(path, "utf8"), content);
+    }
+    const sibling = join(project.root, "versions-retained");
+    const captured = captureRuntimeHostEntries(anchor, sibling);
+    assert.equal(captured.files, files.length);
+    assert.equal(readFileSync(join(sibling, "tree", "legacy-index.json"), "utf8"), "retained legacy index");
+    assert.deepEqual(readdirSync(versions, { recursive: true }).sort(), before);
+  } finally { await project.cleanup(); }
+});
+
 test("native CLI first registration replaces the isolated marketplace and restores every legacy cache path", {
   skip: !(process.env.ADAPTIVE_ROUTER_NATIVE_CLI && process.env.ADAPTIVE_ROUTER_LEGACY_FIXTURE) && "Requires explicit native CLI and exact isolated v1 fixture",
 }, async () => {

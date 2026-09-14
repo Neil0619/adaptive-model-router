@@ -1,6 +1,6 @@
 import { constants, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { canonicalDestination } from "./runtime-package.mjs";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
@@ -29,7 +29,9 @@ function anchorRoot(anchor) {
 // legacy indices. These bytes are never promoted as a qualified v2 writer.
 export function captureRuntimeHostEntries(anchor, destination) {
   const source = anchorRoot(anchor); destination = canonicalDestination(destination);
-  if (destination === source || destination.startsWith(source + "/") || destination.split(/[\\/]/u).includes("cache")) throw new Error("Host retention must be outside native caches");
+  const fromSource = relative(source, destination);
+  const insideSource = fromSource === "" || (!isAbsolute(fromSource) && fromSource !== ".." && !fromSource.startsWith(`..${sep}`));
+  if (insideSource || destination.split(/[\\/]/u).includes("cache")) throw new Error("Host retention must be outside native caches");
   if (existsSync(destination)) throw new Error("Use a new host retention directory");
   const before = tree(source);
   mkdirSync(destination, { recursive: true, mode: 0o700 });
