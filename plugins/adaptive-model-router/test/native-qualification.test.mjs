@@ -18,7 +18,7 @@ import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./
 
 const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-test("native source identity includes the model policy as well as executable code", async () => {
+test("lifecycle capability identity excludes policy data while executable adapters remain bound", async () => {
   const project = await temporaryProject("router-source-policy-");
   try {
     const copied = resolve(project.root, "candidate");
@@ -28,6 +28,9 @@ test("native source identity includes the model policy as well as executable cod
     assert.equal(runtimeSourceDigest(copied), runtimeSourceDigest());
     const changed = JSON.parse(source); changed.id = "changed-bindings-candidate";
     writeFileSync(resolve(copied, "model-policy.json"), JSON.stringify(changed));
+    assert.equal(runtimeSourceDigest(copied), runtimeSourceDigest());
+    const hook = resolve(copied, "scripts/hook.mjs");
+    writeFileSync(hook, readFileSync(hook, "utf8") + "\n// lifecycle adapter changed\n");
     assert.notEqual(runtimeSourceDigest(copied), runtimeSourceDigest());
   } finally { await project.cleanup(); }
 });

@@ -5,7 +5,7 @@ import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
 import { cp, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
 import { recordOutcome } from "../scripts/lib/learning.mjs";
@@ -18,6 +18,12 @@ import { rememberMessageHost } from "../scripts/lib/stage-reconciliation.mjs";
 import { inspectReclamationCandidate, reclaimGlobalReservations } from "../scripts/lib/global-reservation-reclamation.mjs";
 import { reservationInventory, reservationSnapshot, saveReservationRelease } from "../scripts/lib/reservation-ledger.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment, completeNoChildRoute } from "./fixtures.mjs";
+import { enrollRuntimeFixture } from "./runtime-fixtures.mjs";
+import { inspectRuntimePackage } from "../scripts/lib/runtime-package.mjs";
+import { qualifyRuntimeCompatibility } from "../scripts/lib/runtime-compatibility.mjs";
+import { publishRuntime, runtimeGeneration, runtimeTask } from "../scripts/lib/runtime-isolation.mjs";
+import { inspectColdRuntimeTransition } from "../scripts/lib/runtime-cold-transition.mjs";
+import { beginMcpDispatch, endRuntimeDispatch } from "../scripts/lib/runtime-dispatch.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const disposition = (intent = "collect") => ({ intent, basis: "Original stage is closed; collect the retained requests without executing business work.", requirements: [], pendingOperations: [] });
@@ -538,7 +544,7 @@ test("a later maintenance verification cannot overwrite an earlier transferred r
   });
 });
 
-test("runtime rollback preserves deferred work, late native operations and the historical outcome", async (t) => {
+test("explicit default rollback preserves deferred work, late native operations and the historical outcome", async (t) => {
   await withChild(async (f) => {
     recordOutcome(f.outcome(), { store: f.store, cwd: f.project.root });
     await f.manage("begin_maintenance", { disposition: disposition("deferred") });
@@ -590,15 +596,14 @@ test("runtime rollback preserves deferred work, late native operations and the h
       cwd: f.project.root, env, encoding: "utf8", timeout: 15000,
       input: JSON.stringify({ ...f.root, model: "gpt-6-astra", prompt: "router: status" }),
     });
-    const pointer = () => JSON.parse(readFileSync(join(f.project.home, "runtime/active.json"), "utf8"));
-    const activated = run(); assert.equal(activated.status, 0, activated.stderr);
-    assert.equal(pointer().activeVersion, "0.4.1");
-    await writeFile(join(roots[1], "scripts/hook.mjs"), "#!/usr/bin/env node\nprocess.exit(7);\n");
-    const failed = run(); assert.equal(failed.status, 7, failed.stderr);
-    assert.equal(pointer().activeVersion, "0.4.0");
-    assert.ok(pointer().failedDirectories.includes("0.4.1"));
-    const recovered = run(); assert.equal(recovered.status, 0, recovered.stderr);
-    assert.match(recovered.stderr, /runtime=0\.4\.0/u);
+    const retained = runtimeGeneration(f.store.db, runtimeTask(f.store.db, f.context).generation);
+    const candidate = inspectRuntimePackage(roots[1]);
+    const proof = qualifyRuntimeCompatibility(retained, candidate);
+    f.store.transaction(() => publishRuntime(f.store.db, candidate, f.project.home, { compatibilityProof: proof }));
+    assert.equal(runtimeTask(f.store.db, f.context).generation, retained.digest, "publication does not move the retained stage");
+    const rollbackProof = qualifyRuntimeCompatibility(candidate, retained);
+    f.store.transaction(() => publishRuntime(f.store.db, retained, f.project.home, { compatibilityProof: rollbackProof }));
+    assert.equal(runtimeTask(f.store.db, f.context).generation, retained.digest);
     const consumer = spawnSync(process.execPath, ["--input-type=module", "-e", `
       import { readFileSync } from "node:fs";
       import { pathToFileURL } from "node:url";
@@ -639,7 +644,7 @@ test("runtime rollback preserves deferred work, late native operations and the h
     assert.equal(afterOps.snapshotDigest, beforeOps.snapshotDigest);
     assert.deepEqual(afterOps.operations, beforeOps.operations);
     await assert.rejects(f.manage("verify_maintenance", { closureToken: first.token, disposition: work }), /pending|ready|closure/i);
-  });
+  }, {}, true);
 });
 
 test("a native Pre rejection remains with its sender and cannot poison later collection", async () => {
@@ -1093,12 +1098,13 @@ async function setupChild(project, store, run, contextId = "closure-root", nativ
         await run({ project, store, context, route, child, input, finish, save, records, outcome, send, root, parentPath, parentRecords, saveParent, manage });
 }
 
-async function withChild(run, nativeMetadata = {}) {
+async function withChild(run, nativeMetadata = {}, runtime = false) {
   const project = await temporaryProject("router stage closure ");
   try {
     await withRouterEnvironment(project, async () => {
       const store = new RouterStore();
       try {
+        if (runtime) enrollRuntimeFixture({ home: project.home, shellRoot: pluginRoot, cwd: project.root, contextId: "closure-root", store, lease: true });
         await setupChild(project, store, run, "closure-root", nativeMetadata);
       } finally { store.close(); }
     });
@@ -1532,6 +1538,34 @@ test("history trimming preserves maintenance identity and accounts only newly ad
   });
 });
 
+test("cold legacy binding retains a child and bounded maintenance after terminal attempt pruning", {
+  skip: !process.env.ADAPTIVE_ROUTER_LEGACY_FIXTURE && "Requires exact isolated installed-v1 fixture",
+}, async () => {
+  await withChild(async (f) => {
+    recordOutcome(f.outcome(), { store: f.store, cwd: f.project.root });
+    f.store.db.prepare("DELETE FROM delegation_attempts WHERE route_id=?").run(f.route.routeId);
+    const original = JSON.stringify(f.store.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(f.route.routeId));
+    const legacyRoot = join(f.project.root, "legacy-runtime"), candidateRoot = join(f.project.root, "stable-shell");
+    await cp(process.env.ADAPTIVE_ROUTER_LEGACY_FIXTURE, legacyRoot, { recursive: true }); await cp(pluginRoot, candidateRoot, { recursive: true });
+    const legacy = inspectRuntimePackage(legacyRoot, { legacy: true }), candidate = inspectRuntimePackage(candidateRoot);
+    const compatibilityProof = qualifyRuntimeCompatibility(legacy, candidate, { coldLegacy: true });
+    f.store.transaction(() => publishRuntime(f.store.db, candidate, f.project.home, { bootstrap: true, shellRoot: candidate.root, legacyRuntime: legacy,
+      compatibilityProof, coldProof: inspectColdRuntimeTransition(f.store.db, { inventory: () => [], preserveLegacy: true }) }));
+    const dispatch = beginMcpDispatch("manage_stage", { contextId: f.root.session_id, routeId: f.route.routeId }, { cwd: f.project.root, env: { CODEX_THREAD_ID: f.root.session_id } });
+    assert.equal(dispatch.selected.digest, legacy.digest);
+    const service = await import(pathToFileURL(join(dispatch.selected.root, "scripts/lib/service.mjs")));
+    const oldStore = service.createServiceStore();
+    try {
+      const call = (action, extra = {}) => service.callRouterTool("manage_stage", { contextId: f.root.session_id, routeId: f.route.routeId, action,
+        expectedRevision: oldStore.db.prepare("SELECT revision FROM delegation_children WHERE route_id=?").get(f.route.routeId).revision, ...extra },
+      { store: oldStore, cwd: f.project.root, stageOptions: { readParent: async () => ({ id: f.root.session_id, cwd: f.project.root }) } });
+      await call("begin_maintenance", { disposition: disposition("collect") });
+      const read = await call("read_disposition"); assert.equal(read.disposition.intent, "collect");
+      assert.equal(JSON.stringify(oldStore.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(f.route.routeId)), original);
+    } finally { oldStore.close(); endRuntimeDispatch(dispatch); }
+  });
+});
+
 test("transferred requirements survive root reentry until their actual resolution is recorded", async () => {
   await withChild(async ({ store, context, root, outcome, project, manage, send, input, finish }) => {
     recordOutcome(outcome(), { store, cwd: project.root });
@@ -1565,7 +1599,7 @@ test("a frozen native inventory can verify a followup through the existing stdio
     const closure = store.status(context).stageClosure;
     const result = spawnSync(process.execPath, [join(pluginRoot, "scripts/stdio-tool.mjs")], {
       cwd: project.root, encoding: "utf8", timeout: 15000,
-      env: { ...process.env, ADAPTIVE_ROUTER_HOME: project.home, ADAPTIVE_ROUTER_LOCAL_ONLY: "1" },
+      env: { ...process.env, ADAPTIVE_ROUTER_HOME: project.home, CODEX_THREAD_ID: root.session_id, ADAPTIVE_ROUTER_LOCAL_ONLY: "1" },
       input: JSON.stringify({ name: "record_outcome", arguments: { ...outcome(), closureToken: closure.token } }) + "\n",
     });
     assert.equal(result.status, 0, result.stderr + result.stdout);
@@ -1573,12 +1607,12 @@ test("a frozen native inventory can verify a followup through the existing stdio
     assert.equal(store.db.prepare("SELECT count(*) AS n FROM outcomes").get().n, 1);
     const read = spawnSync(process.execPath, [join(pluginRoot, "scripts/stdio-tool.mjs")], {
       cwd: project.root, encoding: "utf8", timeout: 15000,
-      env: { ...process.env, ADAPTIVE_ROUTER_HOME: project.home, ADAPTIVE_ROUTER_LOCAL_ONLY: "1" },
+      env: { ...process.env, ADAPTIVE_ROUTER_HOME: project.home, CODEX_THREAD_ID: root.session_id, ADAPTIVE_ROUTER_LOCAL_ONLY: "1" },
       input: JSON.stringify({ name: "manage_stage", arguments: { contextId: root.session_id, routeId: outcome().routeId,
         expectedRevision: closure.revision, action: "reconcile_messages" } }) + "\n",
     });
     assert.equal(read.status, 0, read.stderr + read.stdout);
     assert.equal(JSON.parse(read.stdout).structuredContent.reconciledCalls, 1);
     assert.equal(store.db.prepare("SELECT count(*) AS n FROM outcomes").get().n, 1);
-  });
+  }, {}, true);
 });

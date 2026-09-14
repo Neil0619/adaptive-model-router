@@ -18,6 +18,7 @@ test("legacy import requires confirmation, imports only settings and approved po
   await writeFile(join(legacy, "events.jsonl"), '{"prompt":"legacy secret prompt"}\n{"status":"failed"}\n');
   try {
     await withRouterEnvironment(project, async () => {
+      process.env.CODEX_HOME = codexHome;
       const store = new RouterStore();
       const context = store.context({ cwd: project.root, contextId: "legacy" });
       await assert.rejects(importLegacySettingsAndPolicy(store, context, "wrong"), /confirmation/);

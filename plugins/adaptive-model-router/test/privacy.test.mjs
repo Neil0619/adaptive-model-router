@@ -103,6 +103,7 @@ test("doctor reports legacy presence without returning legacy paths or content",
   await writeFile(join(codexHome, "adaptive-model-router", "settings.json"), JSON.stringify({ enabled: true, secret: "legacy-secret" }));
   try {
     await withRouterEnvironment(project, async () => {
+      process.env.CODEX_HOME = codexHome;
       const store = new RouterStore();
       const context = store.context({ cwd: project.root, contextId: "doctor" });
       const diagnosis = store.diagnose(context);

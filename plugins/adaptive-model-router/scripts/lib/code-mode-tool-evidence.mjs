@@ -1,7 +1,7 @@
 // A deliberately small, non-executing recognizer for the native code-mode
 // single-tool forwarding forms. Arbitrary JavaScript and text() output are not
 // tool receipts. No eval, accessors, spreads, expressions or result mutation.
-function literalObject(source) {
+export function literalObject(source) {
   let at = 0;
   const space = () => { while (/\s/u.test(source[at] || "") && at < source.length) at += 1; };
   const string = () => {

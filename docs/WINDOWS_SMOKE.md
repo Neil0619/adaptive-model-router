@@ -1,5 +1,7 @@
 # Native Windows 11 smoke test
 
+> Protocol v2 scope: this document retains historical v1 release/recovery evidence. Its `install`/`upgrade`/`repair` and automatic sibling-activation procedures do not apply to this checkout. Use [the v2 runbook](RUNTIME-UPGRADE-ISOLATION-IMPLEMENTATION.zh-CN.md); controlled macOS installation and retained-task delegation acceptance passed on 2026-09-14; native Windows logged-in acceptance remains pending.
+
 This is the blocking automated Windows gate for `v0.4.0`. Run it in native
 Windows 11 with PowerShell, not inside WSL2. WSL2 is a separate non-blocking
 smoke target.

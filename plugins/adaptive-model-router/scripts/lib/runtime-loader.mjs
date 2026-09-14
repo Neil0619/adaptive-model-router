@@ -1,29 +1,12 @@
-import { randomBytes } from "node:crypto";
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 export const RUNTIME_DESCRIPTOR = "runtime.json";
-export const SHELL_PROTOCOL_VERSION = 1;
+export const SHELL_PROTOCOL_VERSION = 2;
 export const TOOL_CONTRACT_VERSION = 7;
 export const STORAGE_CONTRACT_VERSION = 3;
 export const RUNTIME_PROBE_TIMEOUT_MS = 5_000;
-const POINTER_SCHEMA_VERSION = 1;
-const MAX_FAILED_RUNTIMES = 16;
-const POINTER_LOCK_TIMEOUT_MS = 2_000;
-const POINTER_ACTIVATION_LOCK_TIMEOUT_MS = (RUNTIME_PROBE_TIMEOUT_MS * 2) + 3_000;
-const POINTER_STALE_LOCK_MS = 30_000;
-const pointerWait = new Int32Array(new SharedArrayBuffer(4));
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -140,173 +123,6 @@ export function pluginRootFrom(importMetaUrl) {
   throw new Error("plugin runtime root is unavailable");
 }
 
-function pluginDataRoot(env = process.env) {
-  const configured = env.ADAPTIVE_ROUTER_HOME || env.PLUGIN_DATA || env.CLAUDE_PLUGIN_DATA;
-  return configured ? resolve(configured) : null;
-}
-
-function pointerPath(env = process.env) {
-  const root = pluginDataRoot(env);
-  return root ? join(root, "runtime", "active.json") : null;
-}
-
-function emptyPointer() {
-  return {
-    schemaVersion: POINTER_SCHEMA_VERSION,
-    activeDirectory: null,
-    activeVersion: null,
-    previousDirectory: null,
-    previousVersion: null,
-    failedDirectories: [],
-  };
-}
-
-function parsePointer(value) {
-  if (!isPlainObject(value) || !exactKeys(value, Object.keys(emptyPointer()))) return emptyPointer();
-  const optionalDirectory = (entry) => entry === null || safeDirectoryName(entry);
-  const optionalVersion = (entry) => entry === null ||
-    (typeof entry === "string" && entry.length <= 128 && /^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(entry));
-  if (
-    value.schemaVersion !== POINTER_SCHEMA_VERSION ||
-    !optionalDirectory(value.activeDirectory) ||
-    !optionalDirectory(value.previousDirectory) ||
-    !optionalVersion(value.activeVersion) ||
-    !optionalVersion(value.previousVersion) ||
-    !Array.isArray(value.failedDirectories) ||
-    value.failedDirectories.some((entry) => !safeDirectoryName(entry))
-  ) {
-    return emptyPointer();
-  }
-  return {
-    ...value,
-    failedDirectories: [...new Set(value.failedDirectories)].slice(-MAX_FAILED_RUNTIMES),
-  };
-}
-
-function readPointer(env = process.env) {
-  const path = pointerPath(env);
-  if (!path) return emptyPointer();
-  try {
-    return parsePointer(JSON.parse(readFileSync(path, "utf8")));
-  } catch {
-    return emptyPointer();
-  }
-}
-
-function atomicWritePointer(value, env = process.env) {
-  const path = pointerPath(env);
-  if (!path) return false;
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = join(dirname(path), `.active-${process.pid}-${randomBytes(5).toString("hex")}.tmp`);
-  writeFileSync(temporary, `${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o600 });
-  const deadline = Date.now() + 2_000;
-  try {
-    while (true) {
-      try {
-        renameSync(temporary, path);
-        break;
-      } catch (error) {
-        if (
-          !["EACCES", "EBUSY", "EPERM"].includes(error?.code) ||
-          Date.now() >= deadline
-        ) {
-          throw error;
-        }
-        Atomics.wait(pointerWait, 0, 0, 25);
-      }
-    }
-  } finally {
-    rmSync(temporary, { force: true });
-  }
-  return true;
-}
-
-function retirePointerLock(lockPath) {
-  const retiredPath = `${lockPath}.retired-${process.pid}-${randomBytes(5).toString("hex")}`;
-  const deadline = Date.now() + 2_000;
-  while (true) {
-    try {
-      renameSync(lockPath, retiredPath);
-      break;
-    } catch (error) {
-      if (error?.code === "ENOENT") return;
-      if (
-        !["EACCES", "EBUSY", "EPERM"].includes(error?.code) ||
-        Date.now() >= deadline
-      ) {
-        throw error;
-      }
-      Atomics.wait(pointerWait, 0, 0, 25);
-    }
-  }
-  try {
-    rmSync(retiredPath, {
-      recursive: true,
-      force: true,
-      maxRetries: 100,
-      retryDelay: 10,
-    });
-  } catch {
-    // The public lock name is already free. A retired empty lock directory is
-    // harmless and can be removed by normal plugin-data cleanup.
-  }
-}
-
-function cleanupRetiredPointerLocks(directory) {
-  try {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (!/^\.active\.lock\.retired-\d+-[a-f0-9]{10}$/u.test(entry.name)) continue;
-      try {
-        rmSync(join(directory, entry.name), {
-          recursive: true,
-          force: true,
-          maxRetries: 20,
-          retryDelay: 10,
-        });
-      } catch {}
-    }
-  } catch {}
-}
-
-function withPointerLock(env, action, timeoutMs = POINTER_LOCK_TIMEOUT_MS) {
-  const path = pointerPath(env);
-  if (!path) return action();
-  const directory = dirname(path);
-  const lockPath = join(directory, ".active.lock");
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const deadline = Date.now() + timeoutMs;
-  let nextStaleCheck = 0;
-  let acquired = false;
-  while (!acquired) {
-    try {
-      mkdirSync(lockPath, { mode: 0o700 });
-      acquired = true;
-    } catch (error) {
-      if (error?.code !== "EEXIST") throw error;
-      const now = Date.now();
-      if (now >= nextStaleCheck) {
-        nextStaleCheck = now + 1_000;
-        try {
-          if (now - statSync(lockPath).mtimeMs > POINTER_STALE_LOCK_MS) {
-            retirePointerLock(lockPath);
-            continue;
-          }
-        } catch (staleError) {
-          if (staleError?.code !== "ENOENT") throw staleError;
-        }
-      }
-      if (now >= deadline) throw new Error("runtime pointer is busy");
-      Atomics.wait(pointerWait, 0, 0, 15 + (process.pid % 17));
-    }
-  }
-  cleanupRetiredPointerLocks(directory);
-  try {
-    return action();
-  } finally {
-    retirePointerLock(lockPath);
-  }
-}
-
 function compatible(descriptor) {
   return descriptor.shellProtocolVersion === SHELL_PROTOCOL_VERSION &&
     descriptor.toolContractVersion === TOOL_CONTRACT_VERSION &&
@@ -329,182 +145,18 @@ function candidateAt(root) {
   return Object.freeze({ root, directory, descriptor });
 }
 
+// Used by Hook inventory inspection only. No sibling, vault or active.json
+// path can become a v2 runtime without explicit registry publication.
 export function discoverRuntimeCandidates(currentRoot) {
-  const resolvedCurrent = resolve(currentRoot);
-  const candidates = [];
-  const seen = new Set();
-  const add = (root) => {
-    const resolved = resolve(root);
-    if (seen.has(resolved)) return;
-    seen.add(resolved);
-    try {
-      const candidate = candidateAt(resolved);
-      if (candidate) candidates.push(candidate);
-    } catch {}
-  };
-  add(resolvedCurrent);
-  try {
-    for (const entry of readdirSync(dirname(resolvedCurrent), { withFileTypes: true })) {
-      if (!entry.isDirectory() || !safeDirectoryName(entry.name)) continue;
-      add(join(dirname(resolvedCurrent), entry.name));
-    }
-  } catch {}
-  return candidates.sort((left, right) =>
-    compareRuntimeVersions(right.descriptor.runtimeVersion, left.descriptor.runtimeVersion));
+  try { const current = candidateAt(resolve(currentRoot)); return current ? [current] : []; }
+  catch { return []; }
 }
 
-function matchingCandidate(candidates, directory, version) {
-  return candidates.find((candidate) =>
-    candidate.directory === directory && candidate.descriptor.runtimeVersion === version) || null;
-}
-
-// The host may reconstruct its cache from the registered marketplace source.
-// An activated runtime is also retained by the installer outside that cache.
-// Read only the indexed active entry; do not promote arbitrary vault versions
-// or mutate the cache from concurrent Hook/MCP bootstrap processes.
-function vaultedActiveCandidate(pointer, env) {
-  const dataRoot = pluginDataRoot(env);
-  if (!dataRoot || !pointer.activeDirectory || !pointer.activeVersion
-    || pointer.failedDirectories.includes(pointer.activeDirectory)) return null;
-  try {
-    const vault = join(dataRoot, "runtime-shell-vault");
-    if (!lstatSync(vault).isDirectory()) return null;
-    const indexPath = join(vault, "index.json");
-    if (!lstatSync(indexPath).isFile()) return null;
-    const index = JSON.parse(readFileSync(indexPath, "utf8"));
-    if (!isPlainObject(index) || !exactKeys(index, ["schemaVersion", "directories"])
-      || index.schemaVersion !== 1 || !Array.isArray(index.directories)
-      || index.directories.some((entry) => !safeDirectoryName(entry))
-      || new Set(index.directories).size !== index.directories.length
-      || !index.directories.includes(pointer.activeDirectory)) return null;
-    const root = join(vault, pointer.activeDirectory);
-    const pending = [root];
-    while (pending.length) {
-      const path = pending.pop();
-      const metadata = lstatSync(path);
-      if (metadata.isDirectory()) {
-        for (const name of readdirSync(path)) pending.push(join(path, name));
-      } else if (!metadata.isFile()) return null;
-    }
-    const candidate = candidateAt(root);
-    if (candidate?.descriptor.runtimeVersion !== pointer.activeVersion) return null;
-    for (const name of ["hook", "service", "probe"]) runtimeEntrypoint(candidate, name);
-    return candidate;
-  } catch { return null; }
-}
-
-export function resolveRuntime(currentRoot, { env = process.env, allowTrial = true } = {}) {
-  const candidates = discoverRuntimeCandidates(currentRoot);
-  const current = candidates.find((candidate) => candidate.root === resolve(currentRoot));
+export function resolveRuntime(currentRoot) {
+  const [current] = discoverRuntimeCandidates(currentRoot);
   if (!current) throw new Error("current runtime descriptor is unavailable or incompatible");
-  const pointer = readPointer(env);
-  const cachedActive = matchingCandidate(
-    candidates.filter((candidate) => !pointer.failedDirectories.includes(candidate.directory)),
-    pointer.activeDirectory,
-    pointer.activeVersion,
-  );
-  const vaultedActive = cachedActive ? null : vaultedActiveCandidate(pointer, env);
-  const active = cachedActive || vaultedActive || current;
-  const activePointerStatus = !pointer.activeDirectory ? "unset"
-    : cachedActive || vaultedActive ? "matched" : "unavailable";
-  const activeSource = vaultedActive ? "vault" : activePointerStatus === "unavailable" ? "fallback" : "cache";
-  const base = { current, active, pointer, activeSource, activePointerStatus };
-  if (!allowTrial) return { ...base, candidate: active, provisional: false };
-  const trial = candidates.find((candidate) =>
-    !pointer.failedDirectories.includes(candidate.directory) &&
-    compareRuntimeVersions(candidate.descriptor.runtimeVersion, active.descriptor.runtimeVersion) > 0);
-  return {
-    candidate: trial || active,
-    ...base,
-    provisional: Boolean(trial),
-  };
-}
-
-function writeHealthyPointer(resolution, env) {
-  const selected = resolution.candidate;
-  const latest = readPointer(env);
-  if (
-    latest.failedDirectories.includes(selected.directory) ||
-    (
-      latest.activeVersion &&
-      compareRuntimeVersions(latest.activeVersion, selected.descriptor.runtimeVersion) > 0
-    )
-  ) {
-    return latest;
-  }
-  const latestActiveIsSelected = latest.activeDirectory === selected.directory &&
-    latest.activeVersion === selected.descriptor.runtimeVersion;
-  if (latestActiveIsSelected) return latest;
-  const pointer = {
-    schemaVersion: POINTER_SCHEMA_VERSION,
-    activeDirectory: selected.directory,
-    activeVersion: selected.descriptor.runtimeVersion,
-    previousDirectory: latest.activeDirectory || resolution.active.directory,
-    previousVersion: latest.activeVersion || resolution.active.descriptor.runtimeVersion,
-    failedDirectories: latest.failedDirectories,
-  };
-  atomicWritePointer(pointer, env);
-  return pointer;
-}
-
-function writeFailedPointer(resolution, env) {
-  const latest = readPointer(env);
-  const failedDirectories = [
-    ...latest.failedDirectories.filter((entry) => entry !== resolution.candidate.directory),
-    resolution.candidate.directory,
-  ].slice(-MAX_FAILED_RUNTIMES);
-  const failedActive = latest.activeDirectory === resolution.candidate.directory &&
-    latest.activeVersion === resolution.candidate.descriptor.runtimeVersion;
-  const pointer = {
-    ...latest,
-    schemaVersion: POINTER_SCHEMA_VERSION,
-    activeDirectory: failedActive
-      ? latest.previousDirectory || resolution.current.directory
-      : latest.activeDirectory || resolution.active.directory,
-    activeVersion: failedActive
-      ? latest.previousVersion || resolution.current.descriptor.runtimeVersion
-      : latest.activeVersion || resolution.active.descriptor.runtimeVersion,
-    previousDirectory: failedActive ? null : latest.previousDirectory,
-    previousVersion: failedActive ? null : latest.previousVersion,
-    failedDirectories,
-  };
-  atomicWritePointer(pointer, env);
-  return pointer;
-}
-
-function probeRuntimeTrial(resolution, probe) {
-  try {
-    return probe(resolution) === true;
-  } catch {
-    return false;
-  }
-}
-
-export function activateRuntimeTrial(currentRoot, { env = process.env, probe } = {}) {
-  if (typeof probe !== "function") throw new TypeError("runtime probe is required");
-  const activate = () => {
-    const resolution = resolveRuntime(currentRoot, { env });
-    if (!resolution.provisional) return resolution;
-    if (probeRuntimeTrial(resolution, probe)) writeHealthyPointer(resolution, env);
-    else writeFailedPointer(resolution, env);
-    return resolveRuntime(currentRoot, { env, allowTrial: false });
-  };
-  if (!pointerPath(env)) {
-    const resolution = resolveRuntime(currentRoot, { env });
-    if (!resolution.provisional) return resolution;
-    return probeRuntimeTrial(resolution, probe)
-      ? resolution
-      : resolveRuntime(currentRoot, { env, allowTrial: false });
-  }
-  return withPointerLock(env, activate, POINTER_ACTIVATION_LOCK_TIMEOUT_MS);
-}
-
-export function markRuntimeHealthy(resolution, env = process.env) {
-  return withPointerLock(env, () => writeHealthyPointer(resolution, env));
-}
-
-export function markRuntimeFailed(resolution, env = process.env) {
-  return withPointerLock(env, () => writeFailedPointer(resolution, env));
+  return { current, active: current, candidate: current, provisional: false,
+    activeSource: "stable-shell", activePointerStatus: "explicit-publication-required" };
 }
 
 export function runtimeEntrypoint(candidate, name) {
@@ -520,24 +172,13 @@ export function runtimeEntrypoint(candidate, name) {
 }
 
 export function runtimeModuleUrl(candidate, name) {
-  return `${pathToFileURL(runtimeEntrypoint(candidate, name)).href}?runtime=${encodeURIComponent(candidate.descriptor.runtimeVersion)}`;
+  return `${pathToFileURL(runtimeEntrypoint(candidate, name)).href}?runtime=${encodeURIComponent(candidate.digest || candidate.descriptor.runtimeVersion)}`;
 }
 
-export function runtimePublicState(resolution, env = process.env) {
-  const pointer = readPointer(env);
-  return {
-    shellProtocolVersion: SHELL_PROTOCOL_VERSION,
-    toolContractVersion: TOOL_CONTRACT_VERSION,
-    storageContractVersion: STORAGE_CONTRACT_VERSION,
-    runtimeVersion: resolution.candidate.descriptor.runtimeVersion,
-    activeVersion: resolution.active.descriptor.runtimeVersion,
-    requestedActiveVersion: resolution.pointer.activeVersion,
-    activePointerStatus: resolution.activePointerStatus,
-    activeSource: resolution.activeSource,
-    previousVersion: pointer.previousVersion,
-    failedRuntimeCount: pointer.failedDirectories.length,
-    databaseVersion: resolution.candidate.descriptor.databaseVersion,
-    hotReload: true,
-    provisional: resolution.provisional,
-  };
+export function runtimePublicState(resolution) {
+  return { shellProtocolVersion: SHELL_PROTOCOL_VERSION, toolContractVersion: TOOL_CONTRACT_VERSION,
+    storageContractVersion: STORAGE_CONTRACT_VERSION, runtimeVersion: resolution.candidate.descriptor.runtimeVersion,
+    activeVersion: resolution.active.descriptor.runtimeVersion, activeSource: "stable-shell",
+    activePointerStatus: "explicit-publication-required", databaseVersion: resolution.candidate.descriptor.databaseVersion,
+    hotReload: false, taskIsolation: true, provisional: false };
 }

@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { AppServerClient, withAppServer } from "./app-server.mjs";
 import { lifecycleBinding, nativeQualificationHost, nativeTaskWorkingDirectory, provenQualificationShellRoots, qualificationReadiness } from "./lifecycle-qualification.mjs";
 import { payloadHash } from "./io.mjs";
-import { discoverRuntimeCandidates } from "./runtime-loader.mjs";
 import { readHookIdentityDiagnostic } from "./hook-diagnostics.mjs";
 import { supportsResidencyHookMatcherUpgrade } from "./installation-surface.mjs";
 
@@ -35,6 +34,7 @@ export function resolveLifecyclePluginRoot({
   argv = process.argv,
   moduleRoot = MODULE_PLUGIN_ROOT,
 } = {}) {
+  if (typeof env.ADAPTIVE_ROUTER_SHELL_ROOT === "string" && env.ADAPTIVE_ROUTER_SHELL_ROOT) return resolve(env.ADAPTIVE_ROUTER_SHELL_ROOT);
   if (typeof env.PLUGIN_ROOT === "string" && env.PLUGIN_ROOT) {
     return resolve(env.PLUGIN_ROOT);
   }
@@ -175,22 +175,32 @@ function safeHistoricalTree(root) {
   return true;
 }
 
-function historicalHookShells(store, context, pluginRoot, inventoryRoot, platform) {
+function equivalentHookEntries(previous, current) {
+  return payloadHash(previous) === payloadHash(current) || supportsResidencyHookMatcherUpgrade(previous, current);
+}
+
+function historicalHookShells(store, context, pluginRoot, inventoryRoot, platform, lifecycle, equivalentEntries, retainedShellRoots) {
   const roots = [pluginRoot, inventoryRoot].map(canonicalPath);
-  const required = new Set(provenQualificationShellRoots(store.db, context));
+  const required = new Set(lifecycle.provenQualificationShellRoots(store.db, context));
   for (const root of roots) required.delete(payloadHash(root));
   if (required.size === 0) return [];
   const expected = expectedHooks(inventoryRoot, platform);
   const matched = [];
-  for (const base of roots) for (const candidate of discoverRuntimeCandidates(base)) {
-    const hash = payloadHash(candidate.root);
+  // Legacy qualification retained hashes of observed sibling shell paths. This
+  // read-only lookup checks only those exact hashes; it never loads a descriptor,
+  // chooses an execution runtime, or treats an unobserved sibling as evidence.
+  const candidates = new Set([...retainedShellRoots, ...roots.flatMap((root) => {
+    try { return readdirSync(dirname(root)).map((name) => join(dirname(root), name)); }
+    catch { return []; }
+  })]);
+  for (const root of candidates) {
+    const hash = payloadHash(root);
     if (!required.has(hash)) continue;
-    const actual = expectedHooks(candidate.root, platform);
-    if (!safeHistoricalTree(candidate.root) || !actual || (payloadHash(actual.entries) !== payloadHash(expected.entries)
-      && !supportsResidencyHookMatcherUpgrade(actual.entries, expected.entries))) {
+    const actual = expectedHooks(root, platform);
+    if (!safeHistoricalTree(root) || !actual || !equivalentEntries(actual.entries, expected.entries)) {
       throw new Error("previously observed Hook shell is no longer equivalent");
     }
-    matched.push(candidate.root); required.delete(hash);
+    matched.push(root); required.delete(hash);
   }
   if (required.size !== 0) throw new Error("previously observed Hook shell is unavailable");
   return matched;
@@ -207,6 +217,9 @@ export async function inspectLifecycleHookReadiness({
   context = null,
   contextId = null,
   nativeHost = nativeQualificationHost,
+  lifecycle = { lifecycleBinding, qualificationReadiness, provenQualificationShellRoots },
+  equivalentEntries = equivalentHookEntries,
+  retainedShellRoots = [],
 } = {}) {
   let inventory;
   let hooksList;
@@ -241,8 +254,7 @@ export async function inspectLifecycleHookReadiness({
         const pinned = expectedHooks(pluginRoot, platform);
         const configured = expectedHooks(roots[0], platform);
         if ((discovered.ready || discovered.reasonCode === "HOOK_TRUST_REQUIRED") && pinned && configured
-          && (payloadHash(pinned.entries) === payloadHash(configured.entries)
-            || supportsResidencyHookMatcherUpgrade(pinned.entries, configured.entries))) {
+          && equivalentEntries(pinned.entries, configured.entries)) {
           inventory = discovered;
           inventoryRoot = roots[0];
         }
@@ -268,9 +280,9 @@ export async function inspectLifecycleHookReadiness({
       try {
         const host = await nativeHost();
         const group = hooksList.data.find((entry) => canonicalPath(entry.cwd) === canonicalPath(cwd));
-        const historicalRoots = historicalHookShells(store, context, pluginRoot, inventoryRoot, platform);
-        const binding = lifecycleBinding(group.hooks, pluginRoot, inventoryRoot, host, cwd, historicalRoots);
-        return qualificationReadiness(store.db, context, binding);
+        const historicalRoots = historicalHookShells(store, context, pluginRoot, inventoryRoot, platform, lifecycle, equivalentEntries, retainedShellRoots);
+        const binding = lifecycle.lifecycleBinding(group.hooks, pluginRoot, inventoryRoot, host, cwd, historicalRoots);
+        return lifecycle.qualificationReadiness(store.db, context, binding);
       } catch { /* Unknown hosts remain root-only, without a qualification ticket. */ }
     }
     return { ready: false, reasonCode: "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN" };

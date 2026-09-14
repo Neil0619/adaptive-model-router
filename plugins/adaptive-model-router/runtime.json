@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "runtimeVersion": "0.4.0+codex.20260912132803",
-  "shellProtocolVersion": 1,
+  "shellProtocolVersion": 2,
   "toolContractVersion": 7,
   "storageContractVersion": 3,
   "databaseVersion": 10,

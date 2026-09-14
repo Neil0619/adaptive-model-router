@@ -1,0 +1,224 @@
+{
+  "schemaVersion": 2,
+  "recordedAt": "2026-09-14T09:17:00.200Z",
+  "status": "installed_macOS_legacy_delegation_accepted",
+  "installationCompleted": true,
+  "productionVersionBefore": "0.4.0+codex.20260912132803.runtime2",
+  "targetVersion": "0.4.0+codex.20260914084118.runtime2",
+  "packageDigest": "dc3797f7539e861e71bb4481604c5b309a82828e1a34c80179347ec177a6f7e1",
+  "scope": {
+    "unchangedHookCommands": true,
+    "retainedHookRoot": "/Users/niuzhenya/.codex/router-runtime-v2-host/adaptive-model-router",
+    "newMcpRoot": "/Users/niuzhenya/.codex/router-runtime-v2-mcp-repair-20260914/adaptive-model-router",
+    "existingRuntimeDefaultChanged": false,
+    "existingTaskOrStageBindingsChanged": false,
+    "bootstrapRepeated": false
+  },
+  "tests": {
+    "full": {
+      "total": 452,
+      "passed": 448,
+      "failed": 0,
+      "skipped": 4,
+      "log": "/tmp/router-transport-final-full.log"
+    },
+    "installer": {
+      "total": 7,
+      "passed": 7,
+      "failed": 0,
+      "nativeCLI": true,
+      "log": "/tmp/router-transport-installer-tests.log"
+    },
+    "validate": true,
+    "pluginValidator": true,
+    "policyEval": {
+      "cases": 232,
+      "mismatches": 0
+    },
+    "candidateTransport": {
+      "tools": 22,
+      "routerToolCalls": 0,
+      "hookExecutions": 0
+    }
+  },
+  "remaining": [],
+  "privateEvidenceRoot": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-runtime-v2-shell-repair",
+  "installationStartObservation": {
+    "at": "2026-09-14T08:53:20.776Z",
+    "label": "local.router-v2-shell-repair.20260914",
+    "pid": 60320,
+    "ppid": 1,
+    "status": "waiting_for_hosts",
+    "commandSteps": 0,
+    "registrationStarted": false,
+    "version": "0.4.0+codex.20260914084118.runtime2",
+    "candidateDigest": "dc3797f7539e861e71bb4481604c5b309a82828e1a34c80179347ec177a6f7e1",
+    "workerIdentityVerified": true,
+    "frozenFilesVerified": true
+  },
+  "monitorStartObservation": {
+    "at": "2026-09-14T08:54:54.738Z",
+    "pid": 61160,
+    "ppid": 61159,
+    "externalTerminal": true,
+    "ancestors": [
+      61160,
+      61159,
+      60580,
+      60578,
+      37794,
+      1
+    ]
+  },
+  "installation": {
+    "status": "installed_awaiting_host_acceptance",
+    "waitStartedAt": "2026-09-14T08:52:56.506Z",
+    "registrationStartedAt": "2026-09-14T09:03:59.990Z",
+    "finishedAt": "2026-09-14T09:04:12.707Z",
+    "commandSteps": 11,
+    "allStepsPassed": true,
+    "primaryCode": 0,
+    "recoveryCode": 0,
+    "reopened": true,
+    "reopenCode": 0,
+    "shellEnrollment": {
+      "digest": "dc3797f7539e861e71bb4481604c5b309a82828e1a34c80179347ec177a6f7e1",
+      "hostEntry": "/Users/niuzhenya/.codex/router-runtime-v2-mcp-repair-20260914/adaptive-model-router",
+      "defaultChanged": false,
+      "oldRowsChanged": false
+    },
+    "capture": {
+      "archive": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-runtime-v2-shell-repair/cold-host-entries",
+      "source": "/Users/niuzhenya/.codex/plugins/cache/adaptive-model-router/adaptive-model-router",
+      "digest": "bda080ec517637fce814f861f0f0a677459d3bc0c7c9eb3a89b7289690109b50",
+      "files": 1396
+    },
+    "receipt": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-runtime-v2-shell-repair/registration-state.json",
+    "registrationDurationSeconds": 12.717
+  },
+  "protectionChecks": {
+    "databaseHealth": "ok",
+    "foreignKeyProblems": 0,
+    "runtimeDefaultUnchanged": true,
+    "runtime_tasks": {
+      "originalCount": 408,
+      "currentCount": 409,
+      "originalGenerationChanges": 0
+    },
+    "runtime_stages": {
+      "originalCount": 1466,
+      "currentCount": 1470,
+      "originalGenerationChanges": 0
+    },
+    "rootTaskBinding": {
+      "generation": "9d23b8ae47f6d9bd6b388a33b75c7f94741546116efa29d3e33d9ebc72a1c9b2",
+      "candidate": null
+    },
+    "historicalCache": {
+      "files": 1396,
+      "mismatches": [],
+      "receiptDigest": "bda080ec517637fce814f861f0f0a677459d3bc0c7c9eb3a89b7289690109b50"
+    },
+    "cacheVersions": 12,
+    "hooksIdentical": true,
+    "hooksDigest": "34c89481e5a64ed8a72fe95e9b21c8190bdbfbbfee8b8cf0b26336f1e86471c4",
+    "checkedAt": "2026-09-14T09:12:26.997Z"
+  },
+  "nativeAcceptance": {
+    "hostCLI": "0.154.0-alpha.6.2",
+    "rootModel": "gpt-6-astra",
+    "rootReasoningEffort": "host_managed",
+    "qualifications": [
+      {
+        "routeId": "f1d8b901-35a9-49df-96b3-386a39cce1bc",
+        "status": "passed",
+        "gate": "structured-check",
+        "outcomeSeq": 1446
+      },
+      {
+        "routeId": "3ecfd796-e89f-43cf-b6c4-12ac7214576a",
+        "status": "passed",
+        "gate": "structured-check",
+        "outcomeSeq": 1447
+      }
+    ],
+    "bindingConvergence": {
+      "historicalRootsBefore": 3,
+      "rootsAfter": 2,
+      "configurationChanged": false,
+      "directRootsChanged": false,
+      "runtimeCodeChanged": false,
+      "nativeHooksRootUnchanged": true,
+      "reason": "Passed proof retains direct roots and actual observations; one unused historical root drops, then reaches fixed point"
+    },
+    "ordinaryReview": {
+      "routeId": "49dbc574-4c4a-45df-9d7c-d5c7833cc1d1",
+      "model": "gpt-6-astra",
+      "effort": "xhigh",
+      "launched": true,
+      "status": "passed",
+      "gate": "full-checks",
+      "outcomeSeq": 1448,
+      "substantiveFindings": 0,
+      "verifiedClosureRevision": 1,
+      "verifiedInputCount": 2,
+      "resultDigest": "2d2b7c28d123e3cf67724b1a057bd9fc4120c73a3e6e45a51e2c63aa068ea8e5",
+      "recordedAt": "2026-09-14T09:15:49.881Z"
+    },
+    "windowsLoggedInSmoke": false,
+    "finalStatus": {
+      "databaseHealth": "ok",
+      "stageClosure": null,
+      "pendingStageWork": [],
+      "pendingOutcomes": 0,
+      "delegationGate": {
+        "state": "available"
+      },
+      "globalReservations": {
+        "limit": 10,
+        "pending": 1,
+        "released": 3,
+        "verificationDeferred": 0,
+        "retained": [],
+        "lastReclamation": null
+      },
+      "runtime": {
+        "runtimeVersion": "0.4.0+codex.20260912132803",
+        "contentDigest": "9d23b8ae47f6d9bd6b388a33b75c7f94741546116efa29d3e33d9ebc72a1c9b2",
+        "shellProtocolVersion": 2,
+        "taskIsolation": true,
+        "migrationPending": false
+      },
+      "checkedAt": "2026-09-14T09:17:00.200Z"
+    }
+  },
+  "userActionRequired": false,
+  "git": {
+    "branch": "codex/runtime-upgrade-isolation",
+    "committed": false,
+    "pushed": false,
+    "observation": "Snapshot at host acceptance, before the later user-authorized commit and merge"
+  },
+  "hostAcceptanceCompleted": true,
+  "independentChecks": {
+    "installedPackageFiles": 163,
+    "stableCachePublishedDigestsMatch": true,
+    "historicalCacheFiles": 1396,
+    "vaultFiles": 1235,
+    "frozenInstallerFiles": 9,
+    "oldDefaultsAndBindingsPreserved": true,
+    "registrationSnapshotTables": 39,
+    "onlyNewGenerationAndHostEntryAdded": true,
+    "otherTablesUnchanged": 37,
+    "sourceFileHashesMatchInstalled": true,
+    "nativeTranscriptAuditReplayedByReviewer": false,
+    "latestDatabaseEvidence": "Root-owned stable double-read file-copy snapshot; production SQLite was not opened by reviewer",
+    "pluginValidatorEvidence": "Previous root verification; not independently rerun in this review"
+  },
+  "limitations": [
+    "Legacy v1 tasks keep their exact v1 runtime and do not automatically migrate",
+    "Arbitrary writer/Hook/MCP changes are outside the generic hot-publication contract",
+    "Native Windows logged-in acceptance was not run",
+    "Task archiving does not yet automatically retire runtime references"
+  ]
+}

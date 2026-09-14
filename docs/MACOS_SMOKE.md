@@ -1,5 +1,7 @@
 # Native macOS smoke test
 
+> Protocol v2 scope: this document retains historical v1 release/recovery evidence. Its `install`/`upgrade`/`repair` and automatic sibling-activation procedures do not apply to this checkout. Use [the v2 runbook](RUNTIME-UPGRADE-ISOLATION-IMPLEMENTATION.zh-CN.md); controlled macOS installation and retained-task delegation acceptance passed on 2026-09-14; native Windows logged-in acceptance remains pending.
+
 This is the blocking logged-in macOS gate for `v0.4.0`. Run the continuity
 portion in Codex Desktop on native macOS against the frozen
 `codex/v040-hot-upgrade-release` ref. CLI checks remain supplementary and cannot replace

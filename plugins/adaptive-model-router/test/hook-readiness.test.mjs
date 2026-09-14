@@ -15,6 +15,8 @@ import { payloadHash } from "../scripts/lib/io.mjs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
 import { recordHookIdentityDiagnostic } from "../scripts/lib/hook-diagnostics.mjs";
 import { resolveHookIdentity } from "../scripts/lib/hook-identity.mjs";
+import * as lifecycleApi from "../scripts/lib/lifecycle-qualification.mjs";
+import { equivalentMaterializedHookEntries } from "../scripts/lib/runtime-lifecycle.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -26,6 +28,52 @@ function observeCurrentHook(contextId, turnId = nativeTurn) {
 function nativeRead(method, contextId, cwd) {
   return method === "thread/turns/list" ? { data: [{ id: nativeTurn }] } : { thread: { id: contextId, cwd } };
 }
+
+test("a retained template shell can request a fresh qualification after materialized cutover without borrowing trust", async () => {
+  const project = await temporaryProject("router-materialized-readiness-");
+  try { await withRouterEnvironment(project, async () => {
+    const old = join(project.root, "old"), shell = join(project.root, "stable");
+    await mkdir(join(old, "hooks"), { recursive: true });
+    await mkdir(join(shell, "hooks"), { recursive: true });
+    const original = readFileSync(join(pluginRoot, "hooks/hooks.json"), "utf8");
+    await writeFile(join(old, "hooks/hooks.json"), original);
+    const document = JSON.parse(original);
+    for (const groups of Object.values(document.hooks)) for (const group of groups) for (const hook of group.hooks) {
+      hook.command = hook.command.replaceAll("$PLUGIN_ROOT", shell);
+    }
+    await writeFile(join(shell, "hooks/hooks.json"), JSON.stringify(document));
+    const inventory = fixture(project.root);
+    for (const entry of inventory.data[0].hooks) {
+      entry.sourcePath = join(shell, "hooks/hooks.json");
+      if (process.platform !== "win32") entry.command = entry.command.replaceAll("$PLUGIN_ROOT", shell);
+    }
+    const store = new RouterStore();
+    try {
+      const contextId = "retained-materialized", context = store.context({ cwd: project.root, contextId });
+      observeCurrentHook(contextId);
+      const options = { store, context, contextId, cwd: project.root, pluginRoot: shell,
+        lifecycle: { ...lifecycleApi, provenQualificationShellRoots: () => [payloadHash(realpathSync(old))] },
+        nativeHost: async () => ({ platform: "darwin", cliVersion: "0.153.4" }),
+        appServer: async (run) => run({ start: async () => {}, request: async (method) => nativeRead(method, contextId, project.root),
+          listHooks: async () => inventory }),
+      };
+      if (process.platform !== "win32") assert.equal((await inspectLifecycleHookReadiness(options)).qualificationBinding, undefined,
+        "the old exact-string comparison reproduces the post-install refusal");
+      options.equivalentEntries = (before, after) => equivalentMaterializedHookEntries(before, after, shell);
+      const result = await inspectLifecycleHookReadiness(options);
+      assert.equal(result.ready, false);
+      assert.ok(result.qualificationBinding);
+      assert.ok(result.binding.shellRoots.includes(payloadHash(realpathSync(old))));
+      assert.equal(result.binding.runtimeDigest, lifecycleApi.runtimeSourceDigest());
+      inventory.data[0].hooks[0].trustStatus = "modified";
+      assert.equal((await inspectLifecycleHookReadiness(options)).reasonCode, "HOOK_TRUST_REQUIRED");
+      inventory.data[0].hooks[0].trustStatus = "trusted";
+      inventory.data[0].hooks[0].command += " --unexpected";
+      assert.equal((await inspectLifecycleHookReadiness(options)).reasonCode, "HOST_HOOK_SET_MISMATCH");
+      assert.equal(store.db.prepare("SELECT count(*) AS n FROM delegation_attempts").get().n, 0);
+    } finally { store.close(); }
+  }); } finally { await project.cleanup(); }
+});
 
 test("lifecycle readiness resolves the pinned host shell before a hot runtime module", () => {
   assert.equal(resolveLifecyclePluginRoot({

@@ -10,10 +10,10 @@ import { desiredRoute } from "../scripts/lib/scorer.mjs";
 const root = dirname(fileURLToPath(import.meta.url));
 const dataset = JSON.parse(await readFile(join(root, "routes.json"), "utf8"));
 const temporary = await mkdtemp(join(tmpdir(), "adaptive-router-eval-"));
-const previousHome = process.env.ADAPTIVE_ROUTER_HOME;
-const previousLocal = process.env.ADAPTIVE_ROUTER_LOCAL_ONLY;
-process.env.ADAPTIVE_ROUTER_HOME = join(temporary, "state");
-process.env.ADAPTIVE_ROUTER_LOCAL_ONLY = "1";
+const isolatedKeys = ["ADAPTIVE_ROUTER_HOME", "PLUGIN_DATA", "CODEX_HOME", "ADAPTIVE_ROUTER_LOCAL_ONLY", "ADAPTIVE_ROUTER_INVOCATION_ID"];
+const previousEnvironment = Object.fromEntries(isolatedKeys.map((key) => [key, process.env[key]]));
+Object.assign(process.env, { ADAPTIVE_ROUTER_HOME: join(temporary, "state"), PLUGIN_DATA: join(temporary, "state"),
+  CODEX_HOME: join(temporary, "codex"), ADAPTIVE_ROUTER_LOCAL_ONLY: "1", ADAPTIVE_ROUTER_INVOCATION_ID: "" });
 
 const catalog = [{ slug: "gpt-6-astra", visibility: "list", supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] }];
 const hostCapabilities = { delegation: { available: true, invocation: "direct",
@@ -38,6 +38,7 @@ try {
   let routeIndex = 0;
   for (const item of dataset.routes) {
     process.env.ADAPTIVE_ROUTER_HOME = join(temporary, `state-${routeIndex}`);
+    process.env.PLUGIN_DATA = process.env.ADAPTIVE_ROUTER_HOME;
     routeIndex += 1;
     const result = await routeStage({
       goal: item.goal,
@@ -106,9 +107,8 @@ try {
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (riskRecall !== 1 || agreement !== 1 || negativeControlMutations !== 0 || positiveControlMisses !== 0) process.exitCode = 1;
 } finally {
-  if (previousHome == null) delete process.env.ADAPTIVE_ROUTER_HOME;
-  else process.env.ADAPTIVE_ROUTER_HOME = previousHome;
-  if (previousLocal == null) delete process.env.ADAPTIVE_ROUTER_LOCAL_ONLY;
-  else process.env.ADAPTIVE_ROUTER_LOCAL_ONLY = previousLocal;
+  for (const [key, value] of Object.entries(previousEnvironment)) {
+    if (value == null) delete process.env[key]; else process.env[key] = value;
+  }
   await rm(temporary, { recursive: true, force: true });
 }

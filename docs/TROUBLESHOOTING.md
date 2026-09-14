@@ -1,5 +1,7 @@
 # Troubleshooting
 
+> Protocol v2 scope: this document retains historical v1 release/recovery evidence. Its `install`/`upgrade`/`repair` and automatic sibling-activation procedures do not apply to this checkout. Use [the v2 runbook](RUNTIME-UPGRADE-ISOLATION-IMPLEMENTATION.zh-CN.md); controlled macOS installation and retained-task delegation acceptance passed on 2026-09-14; native Windows logged-in acceptance remains pending.
+
 Start with the redacted `diagnose_router` tool. For source-tree development,
 the equivalent command below diagnoses the current repository project:
 

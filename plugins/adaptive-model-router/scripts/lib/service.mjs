@@ -12,7 +12,7 @@ import {
 import { routeStage } from "./router.mjs";
 import { recoverFailedHostCapacityDelegation } from "./delegation-recovery.mjs";
 import { inspectLifecycleHookReadiness } from "./hook-readiness.mjs";
-import { prepareQualificationOutcome, nativeTaskWorkingDirectory } from "./lifecycle-qualification.mjs";
+import { prepareQualificationOutcome, nativeTaskWorkingDirectory, verifiedRuntimeQualification } from "./lifecycle-qualification.mjs";
 import { withAppServer } from "./app-server.mjs";
 import { assertSchema } from "./schema.mjs";
 import { isTrivialTask, scoreTask } from "./scorer.mjs";
@@ -476,4 +476,10 @@ export async function callRouterTool(name, args, { store, cwd = process.cwd(), r
 
 export function createServiceStore(options = {}) {
   return new RouterStore(options);
+}
+
+export async function runtimeQualificationStatus({ store, contextId, pluginRoot, generation = null, cwd = process.cwd() }) {
+  const context = { ...store.context({ cwd, contextId }), ...(generation ? { runtimeDigest: generation } : {}) };
+  const readiness = await inspectLifecycleHookReadiness({ cwd, pluginRoot, store, context, contextId });
+  return { ready: readiness.ready === true, qualification: verifiedRuntimeQualification(store.db, context) };
 }
