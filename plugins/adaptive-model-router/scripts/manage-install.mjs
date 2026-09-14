@@ -21,6 +21,7 @@ import { canonicalJson, sanitizedError } from "./lib/io.mjs";
 import { defaultPluginData } from "./lib/plugin-data.mjs";
 import { withAppServer } from "./lib/app-server.mjs";
 import { createManagedMarketplace, inspectManagedMarketplace, isManagedMarketplacePath, switchManagedMarketplace } from "./lib/materialized-marketplace.mjs";
+import { ownsRuntimeHostMarketplace } from "./lib/runtime-host-entry.mjs";
 import { isNodeCommand, parseHookNodeCommand as parsedCommandExecutable, renderHookNodeCommand, windowsPowerShellCommand } from "./lib/hook-command.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
 import {
@@ -2169,7 +2170,8 @@ async function repairInstallation(args, state) {
 
 function uninstall(args, state) {
   const currentMarketplace = state.marketplaces.find((entry) => entryName(entry) === MARKETPLACE);
-  if (currentMarketplace && !desiredMarketplace(currentMarketplace, args.ref)) {
+  if (currentMarketplace && !desiredMarketplace(currentMarketplace, args.ref)
+    && !ownsRuntimeHostMarketplace(localMarketplaceSource(currentMarketplace), PLUGIN_ROOT)) {
     throw new InstallError("refusing to remove a same-name marketplace from a different source", 4);
   }
   if (state.installed.some((entry) => pluginId(entry) === PLUGIN_ID)) codex(["plugin", "remove", PLUGIN_ID]);
@@ -2181,6 +2183,9 @@ function uninstall(args, state) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  if (SOURCE_RUNTIME.shellProtocolVersion >= 2 && args.action !== "uninstall") {
+    throw new InstallError("Protocol v2 refuses legacy hot-install/repair. Prepare and qualify candidates outside the cache with runtime-admin.mjs. Initial stable-shell registration requires the deferred verified cold transition; ordinary publication must not rewrite old shell files.", 2, "COLD_BOOTSTRAP_REQUIRED");
+  }
   refreshResidencySurface = args.refreshHostSurface;
   preflight();
   const lifecycleLock = acquireInstallerLifecycleLock();

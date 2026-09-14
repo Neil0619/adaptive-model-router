@@ -1,6 +1,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { realpathSync } from "node:fs";
+import { dirname } from "node:path";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { recordOutcome } from "../scripts/lib/learning.mjs";
 import { consumeDelegationTicket, observeAgentResult } from "../scripts/lib/delegation-gate.mjs";
@@ -37,17 +39,14 @@ export function routeInput(overrides = {}) {
 }
 
 export async function withRouterEnvironment(project, callback) {
-  const previousHome = process.env.ADAPTIVE_ROUTER_HOME;
-  const previousLocal = process.env.ADAPTIVE_ROUTER_LOCAL_ONLY;
-  process.env.ADAPTIVE_ROUTER_HOME = project.home;
-  process.env.ADAPTIVE_ROUTER_LOCAL_ONLY = "1";
+  if (realpathSync(dirname(project.root)) !== realpathSync(tmpdir()) || project.home !== join(project.root, "state")) throw new Error("Router tests require an explicit disposable fixture home");
+  const environment = { ADAPTIVE_ROUTER_HOME: project.home, ADAPTIVE_ROUTER_LOCAL_ONLY: "1", CODEX_HOME: join(project.root, "codex"), PLUGIN_DATA: project.home };
+  const previous = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, environment);
   try {
     return await callback();
   } finally {
-    if (previousHome == null) delete process.env.ADAPTIVE_ROUTER_HOME;
-    else process.env.ADAPTIVE_ROUTER_HOME = previousHome;
-    if (previousLocal == null) delete process.env.ADAPTIVE_ROUTER_LOCAL_ONLY;
-    else process.env.ADAPTIVE_ROUTER_LOCAL_ONLY = previousLocal;
+    for (const [key, value] of Object.entries(previous)) { if (value == null) delete process.env[key]; else process.env[key] = value; }
   }
 }
 

@@ -6,6 +6,9 @@ specification.
 
 ## Users
 
+- [Runtime protocol v2](RUNTIME-UPGRADE-ISOLATION-IMPLEMENTATION.zh-CN.md): current cold installation, source-to-candidate publication, exact compatibility boundary, and validation limits.
+- [任务归档与版本退休复查](evidence/task-archive-runtime-retirement-20260913.zh-CN.md)：本机缓存/备份实际归档结果、保留依据和取消归档的恢复边界。
+
 - [English README](../README.md): product boundary, installation, upgrade, and
   basic routing behavior.
 - [中文 README](../README.zh-CN.md)：产品定位、安装、升级和基本路由规则。

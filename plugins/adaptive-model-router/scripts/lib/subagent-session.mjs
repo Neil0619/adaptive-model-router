@@ -35,6 +35,19 @@ function readFirstLine(path, byteLimit = SESSION_META_BYTE_LIMIT) {
   }
 }
 
+const rootBirths = new WeakSet();
+export function readNativeRootBirth(input) {
+  try {
+    const entry = JSON.parse(readFirstLine(input.transcript_path));
+    const meta = entry.type === "session_meta" ? entry.payload : null;
+    const time = Date.parse(meta?.timestamp || entry.timestamp);
+    if (meta?.id !== input.session_id || meta.parent_thread_id || meta.source?.subagent || !Number.isFinite(time)
+      || (meta.cwd && input.cwd && directoryIdentity(meta.cwd) !== directoryIdentity(input.cwd))) return null;
+    const proof = Object.freeze({ time }); rootBirths.add(proof); return proof;
+  } catch { return null; }
+}
+export const isNativeRootBirth = (proof) => rootBirths.has(proof);
+
 /**
  * Read and validate the immutable thread-spawn identity written by Codex before
  * SubagentStart. This is the sole adapter for host rollout metadata; callers

@@ -1,21 +1,15 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { ROUTER_VERSION } from "./lib/constants.mjs";
 import { sanitizedError, writeJsonLine } from "./lib/io.mjs";
 import { compatibleToolDefinitions } from "./lib/tool-contract-compatibility.mjs";
+import { assertSchema } from "./lib/schema.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
-import {
-  activateRuntimeTrial,
-  markRuntimeFailed,
-  markRuntimeHealthy,
-  pluginRootFrom,
-  resolveRuntime,
-  RUNTIME_PROBE_TIMEOUT_MS,
-  runtimeEntrypoint,
-  runtimeModuleUrl,
-  runtimePublicState,
-} from "./lib/runtime-loader.mjs";
+import { pluginRootFrom, resolveRuntime, runtimeModuleUrl } from "./lib/runtime-loader.mjs";
+import { beginMcpDispatch, endRuntimeDispatch } from "./lib/runtime-dispatch.mjs";
+import { createRuntimeLifecycleProbe, inspectRuntimeQualification } from "./lib/runtime-lifecycle.mjs";
+import { acquireRuntimeInvocation, runtimeGeneration, runtimeTask, finishRuntimeInvocation, settleRuntimeMigration } from "./lib/runtime-isolation.mjs";
+
 
 try {
   assertRuntime();
@@ -30,32 +24,9 @@ function contractMatches(service) {
   return compatibleToolDefinitions(TOOL_DEFINITIONS, service.TOOL_DEFINITIONS);
 }
 
-function probeRuntime(resolution) {
-  try {
-    const contract = spawnSync(process.execPath, [
-      runtimeEntrypoint(resolution.current, "probe"),
-      resolution.candidate.root,
-    ], {
-      env: process.env,
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: RUNTIME_PROBE_TIMEOUT_MS,
-    });
-    if (contract.error || contract.status !== 0) return false;
-    const health = spawnSync(process.execPath, [runtimeEntrypoint(resolution.candidate, "probe")], {
-      env: process.env,
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: RUNTIME_PROBE_TIMEOUT_MS,
-    });
-    return !health.error && health.status === 0;
-  } catch {
-    return false;
-  }
-}
 
 async function importRuntime(resolution) {
-  const service = await import(runtimeModuleUrl(resolution.candidate, "service"));
+  const service = await import(runtimeModuleUrl(resolution, "service"));
   if (!contractMatches(service)) throw new Error("runtime tool contract is incompatible");
   if (
     typeof service.callRouterTool !== "function" ||
@@ -66,20 +37,29 @@ async function importRuntime(resolution) {
   return service;
 }
 
-async function loadRuntime() {
-  let resolution = resolveRuntime(pluginRoot);
-  if (resolution.provisional) {
-    resolution = activateRuntimeTrial(pluginRoot, { probe: probeRuntime });
-  }
+async function settleCandidate(dispatch, args) {
+  const candidate = await importRuntime(dispatch.selected);
+  let store = candidate.createServiceStore({ runtimeInvocation: dispatch.invocation });
   try {
-    const service = await importRuntime(resolution);
-    return { resolution, service };
-  } catch (error) {
-    if (resolution.candidate.root === resolution.current.root) throw error;
-    markRuntimeFailed(resolution);
-    const fallback = resolveRuntime(pluginRoot, { allowTrial: false });
-    return { resolution: fallback, service: await importRuntime(fallback) };
-  }
+    const task = runtimeTask(store.db, dispatch.context);
+    if (!task?.candidate || task.candidate !== dispatch.invocation.generation) return dispatch;
+    const status = await inspectRuntimeQualification(dispatch.selected, pluginRoot, { store, contextId: args.contextId });
+    const old = await inspectRuntimeQualification(runtimeGeneration(store.db, task.generation), pluginRoot,
+      { store, contextId: args.contextId });
+    store.transaction(() => {
+      const settled = settleRuntimeMigration(store.db, dispatch.context, {
+        candidateQualification: status.qualification, oldQualificationValid: old.ready,
+        candidateReady: status.ready,
+        ignoreInvocation: dispatch.invocation.id,
+      });
+      if (["migrated", "restored"].includes(settled.state)) {
+        finishRuntimeInvocation(store.db, dispatch.invocation);
+        const next = acquireRuntimeInvocation(store.db, dispatch.context, { kind: "mcp:route_stage" });
+        dispatch = { ...dispatch, ...next };
+      }
+    });
+    return dispatch;
+  } finally { store.close(); }
 }
 
 function send(value) {
@@ -113,25 +93,16 @@ async function handle(message) {
     return;
   }
   if (message.method === "tools/call") {
-    let store;
+    let store, dispatch;
     try {
-      let runtime = await loadRuntime();
-      try {
-        store = runtime.service.createServiceStore();
-      } catch (error) {
-        if (runtime.resolution.candidate.root === runtime.resolution.current.root) throw error;
-        markRuntimeFailed(runtime.resolution);
-        const fallback = resolveRuntime(pluginRoot, { allowTrial: false });
-        runtime = { resolution: fallback, service: await importRuntime(fallback) };
-        store = runtime.service.createServiceStore();
-      }
-      if (runtime.resolution.provisional) {
-        markRuntimeHealthy(runtime.resolution);
-        runtime = {
-          ...runtime,
-          resolution: { ...runtime.resolution, provisional: false },
-        };
-      }
+      const definition = TOOL_DEFINITIONS.find((tool) => tool.name === message.params?.name);
+      if (!definition) throw new Error("Unknown Router tool");
+      assertSchema(definition.inputSchema, message.params?.arguments || {}, `${definition.name} input`);
+      dispatch = beginMcpDispatch(message.params?.name, message.params?.arguments || {}, { shellRoot: pluginRoot });
+      if (message.params?.name === "route_stage") dispatch = await settleCandidate(dispatch, message.params.arguments);
+      const runtime = { resolution: dispatch.selected, service: await importRuntime(dispatch.selected) };
+      store = runtime.service.createServiceStore({ runtimeInvocation: dispatch.invocation });
+      const lifecycleHookProbe = createRuntimeLifecycleProbe(dispatch.selected, pluginRoot);
       let result = await runtime.service.callRouterTool(
         message.params?.name,
         message.params?.arguments || {},
@@ -140,7 +111,13 @@ async function handle(message) {
           routeOptions: {
             enforceLifecycleHooks: true,
             pluginRoot,
+            lifecycleHookProbe,
           },
+          qualificationOptions: { inspectBinding: () => lifecycleHookProbe({
+            store, contextId: message.params.arguments.contextId,
+            context: store.context({ cwd: process.cwd(), contextId: message.params.arguments.contextId }),
+            cwd: process.cwd(),
+          }) },
         },
       );
       if (
@@ -149,7 +126,9 @@ async function handle(message) {
         typeof result === "object" &&
         !Array.isArray(result)
       ) {
-        result = { ...result, runtime: runtimePublicState(runtime.resolution) };
+        result = { ...result, runtime: { runtimeVersion: runtime.resolution.descriptor.runtimeVersion,
+          contentDigest: runtime.resolution.digest, shellProtocolVersion: 2, taskIsolation: true,
+          migrationPending: Boolean(runtimeTask(store.db, dispatch.context)?.candidate) } };
       }
       send({
         jsonrpc: "2.0",
@@ -168,6 +147,7 @@ async function handle(message) {
       });
     } finally {
       store?.close();
+      endRuntimeDispatch(dispatch);
     }
     return;
   }

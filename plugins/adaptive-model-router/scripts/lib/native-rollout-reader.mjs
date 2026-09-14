@@ -45,6 +45,7 @@ export function readStableRollout(path, accept, { allowAppend = false, deadline 
       fragment = Buffer.concat([fragment, chunk.subarray(0, count)]);
       let end;
       while ((end = fragment.indexOf(0x0a)) >= 0) {
+        if (Date.now() > deadline) throw new Error("native evidence read budget exhausted");
         if (end > 16 * 1024 * 1024) throw new Error("native transcript line exceeds evidence bounds");
         accept(JSON.parse(fragment.subarray(0, end).toString("utf8")), ++line);
         fragment = fragment.subarray(end + 1);
@@ -61,6 +62,7 @@ export function readStableRollout(path, accept, { allowAppend = false, deadline 
       const verified = createHash("sha256");
       let position = 0;
       while (position < size) {
+        if (Date.now() > deadline) throw new Error("native evidence read budget exhausted");
         const chunk = Buffer.alloc(Math.min(64 * 1024, size - position));
         const count = readSync(fd, chunk, 0, chunk.length, position);
         if (!count) throw new Error("native transcript changed during evidence read");
@@ -73,4 +75,13 @@ export function readStableRollout(path, accept, { allowAppend = false, deadline 
     const allocated = Number(before.blocks) * 512;
     return { transcriptDigest, transcriptBytes: Math.max(size, Number.isSafeInteger(allocated) ? allocated : size) };
   } finally { closeSync(fd); }
+}
+
+// A cheap freshness check after an expensive read. Never treat this metadata as
+// content evidence by itself: callers first hash/verify the same stable file.
+export function rolloutIdentity(path) {
+  path = resolveRolloutPath(path);
+  const stat = statSync(path, { bigint: true });
+  if (!stat.isFile()) throw new Error("native transcript is not a regular file");
+  return JSON.stringify([resolve(path), ...["dev", "ino", "size", "mtimeNs", "ctimeNs"].map((key) => String(stat[key]))]);
 }

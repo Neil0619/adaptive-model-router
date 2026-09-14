@@ -1,0 +1,153 @@
+{
+  "checkedAt": "2026-09-13T03:38:46.236Z",
+  "before": {
+    "cache": 39,
+    "vault": 39,
+    "index": 39
+  },
+  "after": {
+    "cache": 10,
+    "vault": 10,
+    "index": 10
+  },
+  "archivedPairs": 29,
+  "archivedDirectories": 58,
+  "archivedFiles": 6802,
+  "archivedBytes": 79849537,
+  "originalTreesPreservedIncludingPriorArchive": 100,
+  "currentBatchTreesVerified": 78,
+  "fixedFilesVerified": 148,
+  "activePointerUnchanged": true,
+  "registrationUnchanged": true,
+  "activeVersion": "0.4.0+codex.20260912132803",
+  "v2RuntimeTables": [],
+  "databaseQuickCheck": "ok",
+  "retainedVersions": [
+    "0.4.0+codex.20260906095738",
+    "0.4.0+codex.20260907031726",
+    "0.4.0+codex.20260907074802",
+    "0.4.0+codex.20260907122923",
+    "0.4.0+codex.20260908152156",
+    "0.4.0+codex.20260909004322",
+    "0.4.0+codex.20260909030332",
+    "0.4.0+codex.20260911075751",
+    "0.4.0+codex.20260912132046",
+    "0.4.0+codex.20260912132803"
+  ],
+  "archivedVersions": [
+    "0.4.0+codex.20260905151630",
+    "0.4.0+codex.20260905162520",
+    "0.4.0+codex.20260905165300",
+    "0.4.0+codex.20260905165731",
+    "0.4.0+codex.20260905170206",
+    "0.4.0+codex.20260906104230",
+    "0.4.0+codex.20260907030730",
+    "0.4.0+codex.20260907041403",
+    "0.4.0+codex.20260907043408",
+    "0.4.0+codex.20260907070245",
+    "0.4.0+codex.20260907071420",
+    "0.4.0+codex.20260907102248",
+    "0.4.0+codex.20260907103648",
+    "0.4.0+codex.20260907105745",
+    "0.4.0+codex.20260908083042",
+    "0.4.0+codex.20260908152938",
+    "0.4.0+codex.20260908161912",
+    "0.4.0+codex.20260908162953",
+    "0.4.0+codex.20260908170449",
+    "0.4.0+codex.20260908173426",
+    "0.4.0+codex.20260908175013",
+    "0.4.0+codex.20260908183527",
+    "0.4.0+codex.20260908204652",
+    "0.4.0+codex.20260908212209",
+    "0.4.0+codex.20260909024100",
+    "0.4.0+codex.20260911070109",
+    "0.4.0+codex.20260911074537",
+    "0.4.0+codex.20260912120512",
+    "0.4.0+codex.20260912130253"
+  ],
+  "loaderSelections": [
+    {
+      "entry": "0.4.0+codex.20260906095738",
+      "selected": "0.4.0+codex.20260912132803",
+      "provisional": false
+    },
+    {
+      "entry": "0.4.0+codex.20260907031726",
+      "selected": "0.4.0+codex.20260912132803",
+      "provisional": false
+    },
+    {
+      "entry": "0.4.0+codex.20260907074802",
+      "selected": "0.4.0+codex.20260912132803",
+      "provisional": false
+    },
+    {
+      "entry": "0.4.0+codex.20260907122923",
+      "selected": "0.4.0+codex.20260912132803",
+      "provisional": false
+    },
+    {
+      "entry": "0.4.0+codex.20260908152156",
+      "selected": "0.4.0+codex.20260912132803",
+      "provisional": false
+    },
+    {
+      "entry": "0.4.0+codex.20260909004322",
+      "selected": "0.4.0+codex.20260912132803",
+      "provisional": false
+    },
+    {
+      "entry": "0.4.0+codex.20260909030332",
+      "selected": "0.4.0+codex.20260912132803",
+      "provisional": false
+    },
+    {
+      "entry": "0.4.0+codex.20260911075751",
+      "selected": "0.4.0+codex.20260912132803",
+      "provisional": false
+    },
+    {
+      "entry": "0.4.0+codex.20260912132046",
+      "selected": "0.4.0+codex.20260912132803",
+      "provisional": false
+    },
+    {
+      "entry": "0.4.0+codex.20260912132803",
+      "selected": "0.4.0+codex.20260912132803",
+      "provisional": false
+    }
+  ],
+  "manifestDigest": "24bfc06ce7802e5164ddbfd39df587e2009e3da8ac13ab6e760cba06693a8451",
+  "archiveScriptDigest": "97f1e1a25c3200455d93e58f2dd7cd3317cd111f9c39d72de23281277164014d",
+  "noGlobalInstall": true,
+  "scope": "Current installed v1 reference-aware maintenance only; global v2 installation remains deferred.",
+  "archiveCompletedAt": "2026-09-13T03:36:48.251Z",
+  "archiveRoot": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260913-task-archive-audit",
+  "automaticNativeTaskArchiveIntegration": false,
+  "unarchiveRestoresPluginAutomatically": false,
+  "tests": {
+    "archiveScriptRegressionsPassed": 10,
+    "independentFaultInjectionCasesPassed": 2,
+    "oldLoaderAndQualificationAssertionsPassed": 8,
+    "actualProductionUnarchiveOrRestore": false,
+    "nativeWindowsAcceptance": false
+  },
+  "independentFinalAcceptance": {
+    "passed": true,
+    "checkedAt": "2026-09-13T03:39:24Z",
+    "verifiedTrees": 78,
+    "verifiedFiles": 9270,
+    "protectedFileDigests": 148,
+    "nativeRootArchiveFlagsUnchanged": 314,
+    "processReferences": 18,
+    "allProcessReferencesUseActiveVersion": true
+  },
+  "auditLifecycle": {
+    "outcome": "passed",
+    "gate": "full-checks",
+    "outcomeSequence": 1392,
+    "stageClosure": null,
+    "pendingOutcomes": 0,
+    "delegationGate": "available"
+  }
+}

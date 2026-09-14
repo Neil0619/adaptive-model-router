@@ -5,7 +5,7 @@ import { NATIVE_LIFECYCLE_CLI_VERSIONS } from "./native-lifecycle-audit.mjs";
 
 const DURATION_MS = 60 * 60 * 1000;
 const digest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
-const qualificationKey = (context) => `native_qualification:${context.projectId}:${context.contextKey}`;
+const qualificationKey = (context) => `native_qualification:${context.projectId}:${context.contextKey}${context.runtimeDigest ? `:runtime:${context.runtimeDigest}` : ""}`;
 const retryKey = (routeId) => `native_requalification:${routeId}`;
 const diagnosticKey = (contextDigest) => `native_lifecycle_diagnostic:${contextDigest}`;
 const denied = () => ({ status: "unresolved", ordinaryDelegationEnabled: false });

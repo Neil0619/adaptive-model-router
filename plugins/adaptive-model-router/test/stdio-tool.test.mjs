@@ -5,12 +5,14 @@ import { access, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { enrollRuntimeFixture } from "./runtime-fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const bridge = join(pluginRoot, "scripts", "stdio-tool.mjs");
 
 test("stdio bridge calls the installed route_stage contract for a frozen task inventory", async () => {
   const home = await mkdtemp(join(tmpdir(), "adaptive-router-stdio-test-"));
+  enrollRuntimeFixture({ home, shellRoot: pluginRoot, cwd: pluginRoot, contextId: "frozen-task-bridge-test" });
   try {
     const result = spawnSync(process.execPath, [bridge], {
       cwd: pluginRoot,
@@ -18,6 +20,7 @@ test("stdio bridge calls the installed route_stage contract for a frozen task in
       env: {
         ...process.env,
         ADAPTIVE_ROUTER_HOME: home,
+        CODEX_THREAD_ID: "frozen-task-bridge-test",
         ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
       },
       input: JSON.stringify({
@@ -67,6 +70,7 @@ test("stdio bridge rejects tools not auto-approved by the installed MCP contract
 
 test("stdio bridge processes one JSON line without waiting for stdin to close", async () => {
   const home = await mkdtemp(join(tmpdir(), "adaptive-router-stdio-line-test-"));
+  enrollRuntimeFixture({ home, shellRoot: pluginRoot, cwd: pluginRoot, contextId: "open-stdin-line-test" });
   try {
     const output = await new Promise((resolveOutput, reject) => {
       const child = spawn(process.execPath, [bridge], {
@@ -74,6 +78,7 @@ test("stdio bridge processes one JSON line without waiting for stdin to close", 
         env: {
           ...process.env,
           ADAPTIVE_ROUTER_HOME: home,
+          CODEX_THREAD_ID: "open-stdin-line-test",
           ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
         },
         stdio: ["pipe", "pipe", "pipe"],
@@ -174,6 +179,7 @@ test("POSIX one-shot command execution delivers a literal bridge request atomica
     return;
   }
   const home = await mkdtemp(join(tmpdir(), "adaptive-router-stdio-atomic-test-"));
+  enrollRuntimeFixture({ home, shellRoot: pluginRoot, cwd: pluginRoot, contextId: "one-shot-command-test" });
   try {
     const request = JSON.stringify({
       name: "get_route_status",
@@ -192,6 +198,7 @@ test("POSIX one-shot command execution delivers a literal bridge request atomica
         env: {
           ...process.env,
           ADAPTIVE_ROUTER_HOME: home,
+          CODEX_THREAD_ID: "one-shot-command-test",
           ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
           ADAPTIVE_ROUTER_TEST_NODE: nodePath,
           ADAPTIVE_ROUTER_TEST_BRIDGE: bridgePath,
@@ -220,12 +227,14 @@ test("source-checkout bridge shares the installed plugin data directory with Hoo
     "adaptive-model-router-adaptive-model-router",
   );
   try {
+    enrollRuntimeFixture({ home: pluginData, shellRoot: pluginRoot, cwd: pluginRoot, contextId: "source-checkout-installed-data-test" });
     const result = spawnSync(process.execPath, [bridge], {
       cwd: pluginRoot,
       encoding: "utf8",
       env: {
         PATH: process.env.PATH || "",
         CODEX_HOME: codexHome,
+        CODEX_THREAD_ID: "source-checkout-installed-data-test",
         ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
       },
       input: JSON.stringify({

@@ -1,0 +1,152 @@
+{
+  "schema": 1,
+  "date": "2026-09-13",
+  "scope": "Completed development and offline verification; first global v2 registration and logged-in cross-upgrade acceptance deferred by user. Disclosed fallback incident retained below.",
+  "package": {
+    "digest": "d1099839b136945f837aa7b55d6c0bc7170c167d62b956587bda5952509aba59",
+    "writerDigest": "e4e5b9777b432fccf93159bd250f54a763e3c44689f2e5b666f20bcfe328f3b6",
+    "shellDigest": "3c4ae3c50cd2bb210ebd5ba336b237acb13f75c46af5e40028490808c8159ff0"
+  },
+  "tests": {
+    "total": 449,
+    "passed": 446,
+    "failed": 0,
+    "skipped": 3,
+    "skips": [
+      "native Windows executable discovery",
+      "exact Windows Hook commands",
+      "native PowerShell gate adapter"
+    ],
+    "logDigest": "d3a56dc23568ed38e3bcfc754b5a0edf658961bf356b55a54fba500d80ee0ea6",
+    "log": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260912-upgrade-isolation/final-suite.log"
+  },
+  "validate": {
+    "passed": true,
+    "logDigest": "9ba10166d2ffa4df31fe2288adb2745bba4783e1860a1ca40edb1bf5e5023f4a"
+  },
+  "eval": {
+    "cases": 232,
+    "routeAgreement": 1,
+    "riskFloorRecall": 1,
+    "negativeControlMutations": 0,
+    "positiveControlMisses": 0,
+    "measuresModelQuality": false,
+    "logDigest": "52aae060f0a1ac9b83e415add5eb65750d7b7a8091ee7a77b767ace386a11388"
+  },
+  "nativeRegistration": {
+    "platform": "darwin",
+    "isolatedCodexHome": true,
+    "actualCli": true,
+    "legacyCacheRestoration": true,
+    "loggedInLifecycle": false,
+    "productionInstalled": false,
+    "cliVersion": "0.153.4",
+    "nativeUninstallWrapper": true
+  },
+  "legacy": {
+    "version": "0.4.0+codex.20260912132803",
+    "files": 143,
+    "digest": "9d23b8ae47f6d9bd6b388a33b75c7f94741546116efa29d3e33d9ebc72a1c9b2",
+    "basis": "exact installed package independently copied and checked against production baseline",
+    "testSuiteUsesSyntheticData": true
+  },
+  "incident": {
+    "fallbackSyntheticOutcomes": 20,
+    "preservedOriginalOutcomes": 6,
+    "fixturePackagesArchived": 3,
+    "exactCleanupAuthorized": true,
+    "wholeDatabaseRollback": false,
+    "unknownSchemaMetaPreserved": true,
+    "evidence": "adaptive-model-router-archives/20260912-upgrade-isolation/fallback-test-incident",
+    "postSuiteVerification": {
+      "checkedAt": "2026-09-12T16:57:32.833818+00:00",
+      "tablesExactlyEqualToPostCleanup": 39,
+      "historicalOutcomes": 6,
+      "schemaAndSequencesUnchanged": true,
+      "newFallbackPackages": 0,
+      "allOriginalIncidentEvidenceCopied": true,
+      "integrity": "ok",
+      "foreignKeys": "ok",
+      "scope": "Independent stable file copy after final complete suite; compares to post-cleanup backup, not unknown pre-incident schema.",
+      "afterReviewFixCompleteSuite": true
+    },
+    "wholePreIncidentBaselineAvailable": false
+  },
+  "source": {
+    "branch": "codex/runtime-upgrade-isolation",
+    "baseCommit": "2ffccd911cd49c0a311584176aff488a56be1558",
+    "uncommitted": true,
+    "globallyInstalled": false
+  },
+  "productionHistoryCopy": {
+    "checkedAt": "2026-09-12T16:55:30.286Z",
+    "productionHistoryCopyPreserved": true,
+    "pendingLegacyAttempts": 5,
+    "retainedLegacyStages": 1400,
+    "dormantWithoutBirthRemainsLegacy": true,
+    "originalPoliciesSaltOutcomesAndReleasedReservationsPreserved": true,
+    "legacyStagesPinnedAndNewTaskUsesV2": true,
+    "sameDatabase": true,
+    "scope": "Private online backup with an explicit offline cold-boundary fixture; no native registration, login acceptance, or live runtime change.",
+    "sourcePackageDigest": "d1099839b136945f837aa7b55d6c0bc7170c167d62b956587bda5952509aba59"
+  },
+  "independentReview": {
+    "model": "gpt-6-astra",
+    "effort": "xhigh",
+    "routeId": "67719ff6-dbed-40e4-95f2-c9f688290e53",
+    "outcomeSeq": 1378,
+    "gate": "full-checks",
+    "status": "passed",
+    "confirmedFindings": 2,
+    "fixedAndIndependentlyVerified": 2,
+    "unresolvedSubstantiveFindings": 0,
+    "scope": "Read-only source review and fresh isolated reproductions. No native login or global install."
+  },
+  "productionBoundary": {
+    "checkedAt": "2026-09-12T16:57:33.552881+00:00",
+    "verifiedOriginalTreesIncludingArchives": 100,
+    "versionDirectories": {
+      "cache": 39,
+      "vault": 39
+    },
+    "archivedDirectories": 22,
+    "activePointerUnchanged": true,
+    "vaultIndexUnchanged": true,
+    "registrationAndMarketplaceUnchanged": true,
+    "v2TablesInProduction": [],
+    "scope": "File hashes and read-only SQLite schema; normal v1 task records may continue to change."
+  },
+  "archive": {
+    "vaultBefore": 61,
+    "vaultAfter": 39,
+    "cacheBefore": 39,
+    "cacheAfter": 39,
+    "archivedVersions": 22,
+    "files": 1671,
+    "bytes": 18564064,
+    "location": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260912-upgrade-isolation/orphan-vault",
+    "deletion": false
+  },
+  "currentTask": {
+    "rootModel": "gpt-6-astra",
+    "rootEffort": "host-managed",
+    "stageClosure": null,
+    "pendingOutcomes": 0,
+    "delegationGate": "available",
+    "globalReservations": {
+      "limit": 10,
+      "pending": 1,
+      "released": 3,
+      "verificationDeferred": 0
+    }
+  },
+  "deferredAcceptance": [
+    "User-authorized future cold registration and Hook trust",
+    "macOS and native Windows logged-in in-flight cross-upgrade acceptance"
+  ],
+  "knownLimitations": [
+    "Current compatible code seam is validated pure inferCategory branch logic; other writer/Hook/shell updates require a new reviewed compatibility transition.",
+    "Legacy tasks remain on exact v1 until a separately proven native entry retirement protocol exists.",
+    "Unknown root operations or missing native coverage may retain old versions indefinitely; no forced count/age deletion."
+  ]
+}

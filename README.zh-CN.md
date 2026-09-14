@@ -6,161 +6,35 @@ Adaptive Model Router 是一个 local-first 的 Codex 插件。它会在有意�
 
 [English README](README.md) · [文档导航](docs/README.md) · [工具接口](docs/TOOLS.md)
 
-## 安装
+## 运行时协议 v2：隔离发布与受控安装
 
-要求：Codex Desktop 或 CLI、Git、Node.js 24.15.0 及以上。支持 Windows 11 原生 PowerShell、macOS 和 Linux。
+当前源码采用显式发布、任务绑定与阶段绑定。2026-09-14 已完成 macOS 受控安装及旧任务真实委派验收，见[安装证据](docs/evidence/runtime-v2-shell-repair-20260914.zh-CN.md)。原生 Windows 登录态验收仍待完成；本次通过不代表任意运行时改动都可以热发布。
 
-Codex Desktop 的 `PATH` 可能比交互式终端更精简。安装器会把合格 Node 的绝对路径物化到已安装 MCP transport 和当前平台的全部 Hook 命令，并用空 `PATH` 验证这些真实启动命令。启动后，插件启动器仍严格要求 24.15+，并会依次从 `ADAPTIVE_ROUTER_NODE`、`PATH`、常见 Node 版本管理器及 Windows/macOS/Linux 标准安装位置寻找合格运行时；不会退回旧版 Node 执行路由器。
+需要 Node.js 24.15.0 或更新版本。当前源码的 `manage-install.mjs install`、`upgrade`、`repair` 会在宿主变更前拒绝。不要对本分支执行旧的 `./install.sh`、`./install.sh upgrade` 或 `./install.sh repair`；旧版发布文档对应 v1 loader。
 
-如果任务是在 MCP 启动故障期间创建的，其原生函数清单可能已经冻结。兼容升级会让该任务通过已验证的一次性 stdio bridge 调用同一个已安装 MCP `tools/call`，无需重启 Desktop，也无需新建替代任务。
+请使用 [v2 安装与发布流程](docs/RUNTIME-UPGRADE-ISOLATION-IMPLEMENTATION.zh-CN.md) 和 [插件内命令说明](plugins/adaptive-model-router/RUNTIME.md)。首次转换需要明确的冷窗口：准备稳定入口、完整保留全部旧缓存路径、对精确已安装 v1 与 v2 做隔离同库验证，在**原数据库**登记两代运行时，再注册新入口并恢复历史路径后重开宿主。原模型策略、GPT-6 only、全局开启设置、未知责任、结果及全局 10 个未收尾预留的共同口径均保留。
 
-受审阅的仓库包装脚本是受支持的安装路径。它在内部使用原生 Codex 命令，并继续物化、
-验证真实的 Desktop 启动契约：
-
-```bash
-git clone --branch stable --single-branch https://github.com/Neil0619/adaptive-model-router.git
-cd adaptive-model-router
-./install.sh
-```
-
-```powershell
-git clone --branch stable --single-branch https://github.com/Neil0619/adaptive-model-router.git
-Set-Location adaptive-model-router
-.\install.ps1
-```
-
-直接执行 `codex plugin add` 会把源码中的可移植占位命令 `node` 写入宿主缓存。它只是
-冷注册操作，不是本插件完整的 Desktop 安全安装。若开发或恢复时执行过该命令，必须
-立即运行 `./install.sh repair` 或 `.\install.ps1 -Action Repair`。repair 不改变
-marketplace 身份，也不重新注册插件；它会物化当前安装、恢复正在运行的 Desktop
-兼容 shim，并验证 MCP、Hooks 与旧任务 bridge。
-
-安装后请启动一个新任务，打开 `/hooks`，分别审阅并信任插件提供的
-`SessionStart(source=compact)`、`SubagentStart`、`SubagentStop`、
-`PreToolUse(Agent)`、`PostToolUse(Agent)`、`UserPromptSubmit` 和 `Stop`
-命令处理器。如果 ChatGPT 桌面端仍显示旧的插件状态，请重启应用并再创建一个新任务。
-
-Router 只接受 Codex 提供的非空 `session_id` 作为稳定任务身份，绝不使用
-`turn_id` 兜底。可信压缩会话处理器会在自动或手动压缩后、同一回合立即继续之前
-重新注入相同的路由上下文。
-
-自动路由需要明确开启。在这个新任务中单独发送一次以下命令，即可为共享同一插件
-数据的所有本地 Codex 项目开启默认自动路由：
-
-```text
-路由器：全局开启
-```
-
-安装或升级不会静默替你打开这个设置。
-
-包装脚本还支持在明确请求时写入 AGENTS 规则：
+日常代码发布从普通源码修改开始；命令自动继承已经登记的固定入口：
 
 ```bash
-./install.sh
-./install.sh --patch-agents
+node /绝对路径/stable-entry/plugin/scripts/runtime-admin.mjs prepare \
+  --source=/绝对路径/开发仓库/plugins/adaptive-model-router \
+  --shell-root=/绝对路径/stable-entry/plugin \
+  --candidates=/绝对路径/offline-candidates
+node /绝对路径/stable-entry/plugin/scripts/runtime-admin.mjs publish \
+  --candidate=/绝对路径/offline-candidates/返回的摘要 \
+  --home=/绝对路径/原Router数据目录
 ```
 
-```powershell
-.\install.ps1
-.\install.ps1 -PatchAgents
-```
+`prepare` 不激活候选。`publish` 只改变新绑定任务的默认版本；A 的活动阶段继续使用 A。已有 v2 任务需要原生终态、无未决责任和候选资格才能迁移，失败或未知状态不会被当成已完成。
 
-默认不会修改 `~/.codex/AGENTS.md`。只有显式使用 `--patch-agents` 或 `-PatchAgents` 才写入带起止标记的自有段落；重复执行不会重复写入，卸载只删除该段落。
+当前可兼容发布的**真实代码更新**限定为 `inferCategory` 中经过非执行语法验证的纯类别分支，并运行 A/B 交错、并发同库验收。其余 scorer、共享 writer、Hook 代码及原生适配器仍冻结；这些改动需要另行实现并验证兼容过渡，不能宣称所有日常运行时代码修复都已支持热升级。每个发布包的全部普通文件始终受完整性摘要覆盖。
 
-检测到旧 `adaptive-local` 安装时，交互模式会先询问；非交互模式会在任何修改前停止并打印两条精确清理命令。旧历史不会自动加入当前学习窗口。
+普通原生子代理保持未托管旁路；Router 自身故障不应拦截根任务的普通诊断命令。Router 管理的调用仍保守拒绝，缺失的命令覆盖不会成为迁移证明。
 
-## 升级与卸载
+现有显式 `uninstall` 路径保留，卸载不清除共享学习或无关配置。先停止 Router 进程并保存仍需要的旧任务入口；不要通过移除 marketplace 更新普通运行时，因为原生移除会删除旧缓存路径。
 
-```bash
-./install.sh upgrade
-```
-
-```powershell
-.\install.ps1 -Action Upgrade
-```
-
-如果健康注册由裸 `plugin add` 创建，或 Codex 更新替换了 Desktop runtime 目录，可
-执行原地修复：
-
-```bash
-./install.sh repair
-```
-
-```powershell
-.\install.ps1 -Action Repair
-```
-
-如果注册来源是本地源码目录，可执行以下命令，让缓存重建继续使用已验证的包和启动定义：
-
-```bash
-node plugins/adaptive-model-router/scripts/manage-install.mjs repair --pin-local-marketplace
-```
-
-安装器会在稳定 plugin data 中发布经过校验的物化 marketplace，并通过 Codex 原生配置
-接口只切换该 marketplace 的来源。有效的 Hook 定义保持原样，缓存重建不会将它们恢复
-成裸 `node`，相同定义也不需要重新信任。之后的 `repair`、`upgrade` 和 `install` 会
-自动从原源码目录更新该来源；应在该目录执行，不能把历史副本或其他 worktree 当作上游。
-旧副本会保留；切换失败时只回滚本次写入，不覆盖并发配置修改。Hook 信任仍由宿主单独管理。
-
-```bash
-codex plugin remove adaptive-model-router@adaptive-model-router
-codex plugin marketplace remove adaptive-model-router
-```
-
-卸载包装脚本为 `./install.sh uninstall` 和 `.\install.ps1 -Action Uninstall`。
-
-安装器始终核验不可变安装包、已注册 MCP 命令和 MCP 工具契约。冷首次安装时，
-`--verify-task-tools`（macOS/Linux）或 `-VerifyTaskTools`（Windows）还会启动一个
-一次性登录态 Codex CLI 任务，并要求实际调用 `diagnose_router` 与 `route_stage`。
-兼容热升级时，同一参数只执行固定壳内的 MCP、Hook 与 stdio bridge 探针，不启动
-新 CLI 任务，因为新任务可能触发宿主重整正在使用的插件缓存。两类结果都不能代替
-下文“同一个 Desktop 任务跨升级”的连续性验收。
-
-兼容热升级必须使用仓库包装脚本。脚本在刷新 marketplace 前，先把所有已验证的兼容
-运行壳归档到稳定 plugin data 下的严格原子 vault；刷新后重新读取宿主注册，再把已
-审阅的新包原子旁加载成不可变兄弟运行时。若 Codex 在重整时清理了旧的宿主缓存，包装
-脚本会先把索引中的历史壳恢复到原来的不可变路径，再刷新其 live bridge。冷安装也会
-为当前运行时建立首个归档；若刷新在清理缓存后失败，脚本会先恢复历史壳再返回失败。
-整个安装生命周期由 plugin data 下的 SQLite 事务跨进程串行化，安装器退出或崩溃后
-事务会自动释放；索引只在持锁时合并写入，已验证的不可变归档不会被原地替换。整个热
-路径不会调用 `codex plugin add`，也不会请求插件
-重新注册；直接执行 `plugin add` 属于冷安装/替换，不是热升级操作。
-
-vault 只保存经过验证的插件包副本和运行时目录名索引，位于宿主管理缓存之外；它不
-保存 prompt、项目数据或路由数据库，也不是可绕过校验的备用执行源。历史壳恢复前
-必须匹配自身已索引的 host surface、受支持 Hook 集合和当前共享 runtime/storage
-兼容契约；当前版本还必须完整匹配当前源码表面，再以目录 rename 原子安装。索引、
-历史 Hook 集合或归档损坏时升级会 fail closed。
-
-宿主缓存丢失已激活版本时，Hook 和 MCP 启动壳会只读加载索引中的该版本备份，检查
-包版本、入口、兼容契约与符号链接，不选择未索引或已隔离的版本，也不并发重写缓存。
-诊断会同时显示请求版本、实际来源和活动指针是否可用，避免隐藏旧版回退。
-
-v0.4.0 增加了稳定启动壳。安装后续兼容的 v0.4.x 或更高版本后，已经打开的任务会在
-下一次 Hook 或 MCP 调用时加载新实现，不需要更换根模型，也不必重新开任务。旧壳会先
-核对 shell、工具和存储契约，在隔离目录运行健康探针，再原子切换活动运行时；候选
-失败会被隔离，并继续使用上一版。
-
-升级边界固定如下：
-
-| 操作 | 已有原生 Router 工具的任务 | 原生工具库存已冻结的任务 |
-| --- | --- | --- |
-| 兼容热升级 | 保留原生函数，并在下次调用激活兼容兄弟运行时 | 保留同一任务并使用受限 stdio bridge；升级不会向库存注入原生工具 |
-| 冷安装/替换 | 审阅变化的 Hook/契约，并创建真正全新的非派生任务 | 审阅变化的 Hook/契约，并创建真正全新的非派生任务 |
-
-从 v0.3.x 升到 v0.4.0 属于冷替换，因为 v0.3 没有稳定启动壳。Skill 的名称和描述
-是固定的宿主身份；live-read 工作流 body 与 bridge 只有在候选版本声明匹配的
-插件根目录 `compatibility.json` 中的 `liveWorkflowContractVersion` 和
-`stdioBridgeContractVersion` 时才允许兼容刷新。Hook JSON、MCP Schema、存储语义、
-Skill identity、UI metadata 或任一工作流契约发生不兼容变化时，升级必须在改写
-宿主注册前返回 `HOST_RELOAD_REQUIRED`。重启 Desktop 或 fork 都不会改变任务的
-原生工具库存；bridge 是兼容升级的连续性通道，不是原生工具注入。
-
-Windows 环境问题参见[故障排查](docs/TROUBLESHOOTING.md)。发布维护者应直接使用
-[原生 Windows 11](docs/WINDOWS_SMOKE.md)和
-[原生 macOS](docs/MACOS_SMOKE.md)冒烟手册，不要根据 README 临时拼装发布测试。
-在 Windows 上打开仓库后，可以直接让 Codex“完整读取该手册、逐项执行、按模板回传，
-但不要创建或推送 `v0.4.0` tag”。
+自动路由仍需显式 `router: global on`，安装与发布不擅自更改原开关或根模型。
 
 ## 路由规则
 

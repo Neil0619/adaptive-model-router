@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { temporaryProject } from "./fixtures.mjs";
+import { enrollRuntimeFixture } from "./runtime-fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -39,6 +40,8 @@ test("installed hook and MCP share state and observed context without inherited 
 
   try {
     const contextId = "shared-plugin-data-session";
+    enrollRuntimeFixture({ home: pluginData, shellRoot: installedRoot, cwd: project.root });
+    mcpEnv.CODEX_THREAD_ID = contextId;
     const installedLauncher = join(installedRoot, "scripts", "node-launcher.mjs");
     const installedHook = join(installedRoot, "scripts", "hook.mjs");
     const installedServer = join(installedRoot, "scripts", "mcp-server.mjs");

@@ -9,21 +9,22 @@ import { canonicalJson, payloadHash } from "./io.mjs";
 import { auditNativeLifecycleNoop, NATIVE_LIFECYCLE_CLI_VERSIONS, supportsNativeLifecycleHost } from "./native-lifecycle-audit.mjs";
 import { activeRequalification, consumeRequalification } from "./qualification-retry.mjs";
 import { verifyStageClosure } from "./stage-closure.mjs";
+import { scoringWriterProjection } from "./scoring-boundary.mjs";
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PROOFS = new WeakMap();
 const EVENTS = ["pre", "post", "start", "stop"];
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const digest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
-const key = (context) => `native_qualification:${context.projectId}:${context.contextKey}`;
+export const taskQualificationKey = (context) => `native_qualification:${context.projectId}:${context.contextKey}${context.runtimeDigest ? `:runtime:${context.runtimeDigest}` : ""}`;
+const key = taskQualificationKey;
 
 export function runtimeSourceDigest(root = MODULE_ROOT) {
   const entries = ["hook.mjs", ...readdirSync(join(root, "scripts", "lib"))
     .filter((name) => name.endsWith(".mjs")).map((name) => `lib/${name}`)].sort();
-  return payloadHash([
-    ...entries.map((name) => [name, sha(readFileSync(join(root, "scripts", name)))]),
-    ["model-policy.json", sha(readFileSync(join(root, "model-policy.json")))],
-  ]);
+  return payloadHash(entries.map((name) => { let content = readFileSync(join(root, "scripts", name), "utf8");
+    if (name === "lib/scorer.mjs") content = scoringWriterProjection(content);
+    return [name, sha(content.replace(/export const ROUTER_VERSION = "[^"]+";/u, 'export const ROUTER_VERSION = "VERSION";'))]; }));
 }
 
 export async function nativeQualificationHost() {
@@ -91,7 +92,18 @@ export function reserveTaskQualification(db, context, qualification, ticketHash)
 }
 
 export function qualificationReadiness(db, context, binding) {
-  const existing = readTaskQualification(db, context);
+  let existing = readTaskQualification(db, context);
+  if (!existing && context.runtimeDigest) {
+    const task = db.prepare("SELECT * FROM runtime_tasks WHERE project_id=? AND context_key=?").get(context.projectId, context.contextKey);
+    if (task?.candidate === context.runtimeDigest) {
+      const previous = readTaskQualification(db, { ...context, runtimeDigest: task.generation });
+      if (previous?.binding?.digest === binding.digest && passedQualificationBasis(db, context, previous)) {
+        db.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES(?,?)").run(key(context), canonicalJson({ ...previous,
+          inheritedFromRuntime: task.generation }));
+        existing = readTaskQualification(db, context);
+      }
+    }
+  }
   if (!existing) return { ready: false, reasonCode: "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN", qualificationBinding: binding, binding };
   const requalification = activeRequalification(db, context, existing, binding);
   if (requalification) return { ready: false, reasonCode: "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN",
@@ -356,4 +368,19 @@ export function consumeQualificationOutcome(db, context, routeId, input, token) 
   write(db, context, { ...value, state: input.status === "passed" ? "passed" : "failed",
     proof: proof.proof, completedAt: new Date().toISOString() });
   return true;
+}
+
+// Only retained, source-verified proof/outcome pairs can finish a migration.
+export function verifiedRuntimeQualification(db, context) {
+  const value = readTaskQualification(db, context);
+  if (value?.state === "passed" && passedQualificationBasis(db, context, value)) return value;
+  if (value?.state === "failed") {
+    const attempt = db.prepare("SELECT * FROM delegation_attempts WHERE route_id=? AND project_id=? AND context_key=?")
+      .get(value.routeId, context.projectId, context.contextKey);
+    const outcome = db.prepare("SELECT * FROM outcomes WHERE route_id=? AND project_id=? AND context_key=?")
+      .get(value.routeId, context.projectId, context.contextKey);
+    if (attempt?.finalized_at && attempt.outcome_recorded === 1 && !attempt.ambiguous
+      && outcome?.status === "failed" && (attempt.no_child === 1 || attempt.stop_observed === 1)) return value;
+  }
+  return null;
 }

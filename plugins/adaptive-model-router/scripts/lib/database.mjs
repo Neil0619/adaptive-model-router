@@ -1,3 +1,4 @@
+import { ensureRuntimeIsolationSchema, bindRuntimeStage } from "./runtime-isolation.mjs";
 import { capacityAdmissionDecision, createCapacitySchema } from "./host-capacity-recovery.mjs";
 import { randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
@@ -172,7 +173,7 @@ function configureWal(db, timeout) {
 }
 
 export class RouterStore {
-  constructor({ path = databasePath(), timeout = 5_000 } = {}) {
+  constructor({ path = databasePath(), timeout = 5_000, runtimeInvocation = null } = {}) {
     this.path = path;
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path, sqliteOptions(timeout));
@@ -190,6 +191,10 @@ export class RouterStore {
       this.db.exec("PRAGMA foreign_keys = ON");
       this.db.exec("PRAGMA trusted_schema = OFF");
       this.migrate();
+      this.transaction(() => ensureRuntimeIsolationSchema(this.db));
+      this.runtimeInvocation = runtimeInvocation || (process.env.ADAPTIVE_ROUTER_INVOCATION_ID
+        ? this.db.prepare("SELECT id,generation,project_id AS projectId,context_key AS contextKey FROM runtime_invocations WHERE id=? AND state='active'")
+          .get(process.env.ADAPTIVE_ROUTER_INVOCATION_ID) : null);
       if (!this.forwardDatabaseVersion) {
         this.transaction(() => reconcileLegacyPredispatchOutcomes(this.db));
       }
@@ -665,7 +670,7 @@ export class RouterStore {
       `).all().find((row) => (
         opaqueId(this.salt, "context", `${row.project_id}\0${normalizedContextId}`) === row.context_key
       ));
-      if (observed) return { projectId: observed.project_id, contextKey: observed.context_key };
+      if (observed) return this.runtimeContext({ projectId: observed.project_id, contextKey: observed.context_key });
     }
     let material = this.identityCache.get(cwd);
     if (!material) {
@@ -677,7 +682,13 @@ export class RouterStore {
     if (create) {
       this.db.prepare("INSERT OR IGNORE INTO projects(project_id, created_at) VALUES(?, ?)").run(projectId, nowIso());
     }
-    return { projectId, contextKey };
+    return this.runtimeContext({ projectId, contextKey });
+  }
+
+  runtimeContext(context) {
+    const invocation = this.runtimeInvocation;
+    return invocation?.projectId === context.projectId && invocation?.contextKey === context.contextKey
+      ? { ...context, runtimeDigest: invocation.generation } : context;
   }
 
   inspectionGuardKey(context) {
@@ -1076,6 +1087,7 @@ export class RouterStore {
         return { committed: false, retry: false, fallback: "HOST_LIFECYCLE_QUALIFICATION_FAILED" };
       }
       if (route.action === "delegate") {
+        bindRuntimeStage(this.db, context, route.routeId, this.runtimeInvocation, Boolean(admission?.qualification));
         insertDelegationAttempt(this.db, context, route, admission.ticket, admission.contextPackage);
       }
       this.db.prepare(`

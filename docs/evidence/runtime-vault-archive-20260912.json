@@ -1,0 +1,235 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-09-12",
+  "state": "verified",
+  "summary": {
+    "archived": 22,
+    "cacheBefore": 39,
+    "cacheAfter": 39,
+    "vaultBefore": 61,
+    "vaultAfter": 39,
+    "files": 1671,
+    "bytes": 18564064,
+    "cacheContentUnchanged": true,
+    "retainedVaultContentUnchanged": true,
+    "activePointerUnchanged": true,
+    "vaultIndexUnchanged": true
+  },
+  "archiveDirectory": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260912-upgrade-isolation/orphan-vault",
+  "privateManifest": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260912-upgrade-isolation/orphan-vault-manifest.json",
+  "unchangedControls": {
+    "pointer": {
+      "path": "/Users/niuzhenya/.codex/plugins/data/adaptive-model-router-adaptive-model-router/runtime/active.json",
+      "sha256": "f2d91726171d085dea85b53e497127b8547cfa1d18439c93edd4546ee0ba4972"
+    },
+    "vaultIndex": {
+      "path": "/Users/niuzhenya/.codex/plugins/data/adaptive-model-router-adaptive-model-router/runtime-shell-vault/index.json",
+      "sha256": "8c0de05d6e8b229a312d84941fa1b3a6a1edb3bcc19d4f253102b1379984c788"
+    }
+  },
+  "versions": [
+    {
+      "version": "0.4.0+codex.20260814034230",
+      "contract": [
+        1,
+        3,
+        1
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260814092405",
+      "contract": [
+        1,
+        3,
+        1
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260814095433",
+      "contract": [
+        1,
+        3,
+        1
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260814181412",
+      "contract": [
+        1,
+        3,
+        1
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260814185904",
+      "contract": [
+        1,
+        3,
+        1
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260814195255",
+      "contract": [
+        1,
+        3,
+        1
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260820091422",
+      "contract": [
+        1,
+        3,
+        1
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260820095441",
+      "contract": [
+        1,
+        3,
+        1
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260820103226",
+      "contract": [
+        1,
+        3,
+        1
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260822031202",
+      "contract": [
+        1,
+        3,
+        1
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260902095524",
+      "contract": [
+        1,
+        4,
+        2
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260902100508",
+      "contract": [
+        1,
+        4,
+        2
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260904002526",
+      "contract": [
+        1,
+        6,
+        2
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260904003715",
+      "contract": [
+        1,
+        6,
+        2
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260904005537",
+      "contract": [
+        1,
+        6,
+        2
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260904021201",
+      "contract": [
+        1,
+        6,
+        2
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260904092508",
+      "contract": [
+        1,
+        6,
+        2
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260904094111",
+      "contract": [
+        1,
+        6,
+        2
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260904111857",
+      "contract": [
+        1,
+        6,
+        2
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260904113131",
+      "contract": [
+        1,
+        6,
+        2
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260904120659",
+      "contract": [
+        1,
+        6,
+        2
+      ],
+      "state": "archived"
+    },
+    {
+      "version": "0.4.0+codex.20260904131336",
+      "contract": [
+        1,
+        6,
+        2
+      ],
+      "state": "archived"
+    }
+  ],
+  "limits": [
+    "Existing cache and indexed backups remain required by legacy loaders and historical paths.",
+    "No global install, active pointer edit, index edit or database rollback performed.",
+    "Historical cache path references do not imply vault path references."
+  ]
+}

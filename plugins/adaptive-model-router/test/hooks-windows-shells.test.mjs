@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { enrollRuntimeFixture } from "./runtime-fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const powershell = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
@@ -21,6 +22,13 @@ test("exact Windows hook commands run through cmd.exe and Windows PowerShell", {
   await mkdir(codexHome, { recursive: true });
 
   try {
+    const transcript = join(temporaryRoot, "child transcript 子任务.jsonl");
+    const agentPath = "/root/shell_worker";
+    await writeFile(transcript, JSON.stringify({ type: "session_meta", payload: {
+      id: "shell-agent", session_id: "shell-subagent", parent_thread_id: "shell-subagent",
+      cwd: projectCwd, agent_path: agentPath,
+      source: { subagent: { thread_spawn: { parent_thread_id: "shell-subagent", depth: 1, agent_path: agentPath } } },
+    } }) + "\n");
     const config = JSON.parse(await readFile(join(pluginRoot, "hooks", "hooks.json"), "utf8"));
     const cases = [
       {
@@ -35,6 +43,7 @@ test("exact Windows hook commands run through cmd.exe and Windows PowerShell", {
           turn_id: "shell-subagent-turn",
           agent_id: "shell-agent",
           agent_type: "worker",
+          transcript_path: transcript,
           model: "gpt-5.6-terra",
         },
       },
@@ -58,6 +67,8 @@ test("exact Windows hook commands run through cmd.exe and Windows PowerShell", {
     ];
 
     for (const { event, input } of cases) {
+      if (!input.agent_id) enrollRuntimeFixture({ home: pluginData, shellRoot: pluginRoot,
+        cwd: projectCwd, contextId: input.session_id });
       const command = config.hooks[event][0].hooks[0].commandWindows;
       for (const shell of shells) {
         const result = spawnSync(shell.executable, shell.args(command), {
@@ -66,15 +77,20 @@ test("exact Windows hook commands run through cmd.exe and Windows PowerShell", {
             ...process.env,
             PLUGIN_ROOT: pluginRoot,
             PLUGIN_DATA: pluginData,
+            ADAPTIVE_ROUTER_HOME: pluginData,
             CODEX_HOME: codexHome,
             ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
           },
-          input: JSON.stringify(input),
+          input: JSON.stringify({ ...input, hook_event_name: event }),
           encoding: "utf8",
           windowsHide: true,
           windowsVerbatimArguments: shell.windowsVerbatimArguments,
         });
+        assert.ifError(result.error);
         assert.equal(result.status, 0, `${event} via ${shell.name}: ${result.stderr}`);
+        assert.doesNotMatch(result.stderr, /runtime dispatch refused|runtime_coverage_gap|hook failed safely/i,
+          `${event} via ${shell.name} must execute the enrolled Hook`);
+        if (input.agent_id) assert.equal(result.stdout, "", "unmanaged native children keep the Hook bypass");
       }
       assert.doesNotMatch(command, /%PLUGIN_ROOT%|\$env:PLUGIN_ROOT|\$PLUGIN_ROOT/);
       assert.match(command, /process\.env\.PLUGIN_ROOT/);

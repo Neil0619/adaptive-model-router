@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { temporaryProject } from "./fixtures.mjs";
+import { enrollRuntimeFixture } from "./runtime-fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const serverPath = join(pluginRoot, "scripts", "mcp-server.mjs");
@@ -19,6 +20,7 @@ function checkClosed(schema, path = "schema") {
 test("MCP implements parse errors, discovery, strict validation, and unknown methods", async () => {
   const project = await temporaryProject();
   try {
+    enrollRuntimeFixture({ home: project.home, shellRoot: pluginRoot, cwd: project.root, contextId: "mcp" });
     const messages = [
       "not-json",
       JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } }),
@@ -38,7 +40,7 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
         goal: "Rename 100 generated fixture keys using the fixed mapping.",
         phase: "implementation",
         evidence: { workProduct: true, mechanical: true, requirementsSettled: true, batchSize: 100 },
-        contextId: "mcp-capabilities",
+        contextId: "mcp",
         hostCapabilities: {
           delegation: {
             available: true,
@@ -54,7 +56,7 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
       input: `${messages.join("\n")}\n`,
       encoding: "utf8",
       cwd: project.root,
-      env: { ...process.env, ADAPTIVE_ROUTER_HOME: project.home, ADAPTIVE_ROUTER_LOCAL_ONLY: "1" },
+      env: { ...process.env, ADAPTIVE_ROUTER_HOME: project.home, CODEX_THREAD_ID: "mcp", ADAPTIVE_ROUTER_LOCAL_ONLY: "1" },
       timeout: 10_000,
     });
     assert.equal(result.status, 0, result.stderr);

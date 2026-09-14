@@ -1,5 +1,7 @@
 # v0.4.0 release checklist
 
+> Protocol v2 scope: this document retains historical v1 release/recovery evidence. Its `install`/`upgrade`/`repair` and automatic sibling-activation procedures do not apply to this checkout. Use [the v2 runbook](RUNTIME-UPGRADE-ISOLATION-IMPLEMENTATION.zh-CN.md); controlled macOS installation and retained-task delegation acceptance passed on 2026-09-14; native Windows logged-in acceptance remains pending.
+
 This file is the maintainer release gate. The detailed native Windows procedure
 lives in [WINDOWS_SMOKE.md](WINDOWS_SMOKE.md). Do not create the release tag
 until every blocking item below has fresh evidence for the exact candidate
