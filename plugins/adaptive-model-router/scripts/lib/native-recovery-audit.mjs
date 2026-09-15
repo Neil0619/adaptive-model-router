@@ -34,8 +34,8 @@ export function readNativeRecoveryTranscript(path) {
 
 // thread/read's full projection omits code-mode calls. This deliberately narrow
 // adapter checks the complete bounded source stream as well, not message text.
-// The transcript is not a stable public Hook interface: unknown builds, record
-// types or actions fail closed and require a separately reviewed adapter.
+// Historical readers keep their original labels and constraints. New calls use
+// the semantic contract below; unknown executable records/actions still fail.
 export function auditNativeRecoveryTranscript(bytes, child, parentId) {
   return auditNoWorkTranscript(bytes, child, parentId, "0.153.0-alpha.5", RECOVERY_AUDIT_ADAPTER);
 }
@@ -66,7 +66,7 @@ export function auditNativeLifecycle1540Alpha62Transcript(bytes, child, parentId
 
 function auditNoWorkTranscript(bytes, child, parentId, version, adapter) {
   requireFact(Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.length <= MAX_BYTES);
-  requireFact(child.cliVersion === version);
+  if (version !== null) requireFact(child.cliVersion === version);
   const source = bytes.toString("utf8");
   requireFact(source.endsWith("\n") && !source.includes("\uFFFD"));
   const records = source.trimEnd().split("\n").map((line) => JSON.parse(line));
@@ -76,7 +76,8 @@ function auditNoWorkTranscript(bytes, child, parentId, version, adapter) {
   const [turn] = child.turns;
   const metas = select("session_meta");
   requireFact(metas.length === 1 && metas[0].id === child.id
-    && metas[0].parent_thread_id === parentId && metas[0].cli_version === child.cliVersion);
+    && metas[0].parent_thread_id === parentId
+    && (version === null || metas[0].cli_version === child.cliVersion));
   const contexts = select("turn_context");
   requireFact(contexts.length === 1 && contexts[0].turn_id === turn.id
     && contexts[0].model === child.model && contexts[0].effort === child.reasoningEffort);
@@ -117,4 +118,8 @@ function auditNoWorkTranscript(bytes, child, parentId, version, adapter) {
   requireFact(finals.length === 1 && calls.size === allowedInteractions.size && calls.size === outputs.size);
   return { rawAuditAdapter: adapter,
     rawAuditDigest: createHash("sha256").update(bytes).digest("hex"), sourceBytes: bytes.length };
+}
+
+export function auditNativeContractNoWorkTranscript(bytes, child, parentId) {
+  return auditNoWorkTranscript(bytes, child, parentId, null, "native-child-no-work/1");
 }

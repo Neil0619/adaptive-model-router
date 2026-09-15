@@ -21,10 +21,31 @@ export function resolveRolloutPath(path) {
   return path;
 }
 
+const BUSINESS_LINE_LIMIT = 16 * 1024 * 1024;
+const COMPACTED_LINE_LIMIT = 32 * 1024 * 1024;
+const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+// Native compaction carries complete replacement/guardian histories. It is
+// metadata, never a live operation or input. Permit the observed native shape
+// only; consumers still receive the complete parsed record and hash its bytes.
+function compactedMetadata(entry) {
+  const p = entry?.payload, usage = p?.latest_token_usage_record;
+  const uuid = (value) => typeof value === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu.test(value);
+  const history = (value, types) => Array.isArray(value) && value.every((item) => object(item) && types.includes(item.type));
+  return entry?.type === "compacted" && typeof entry.timestamp === "string" && Number.isFinite(Date.parse(entry.timestamp))
+    && Number.isSafeInteger(entry.ordinal) && entry.ordinal >= 0 && object(p) && typeof p.message === "string"
+    && history(p.replacement_history, ["message", "compaction"])
+    && history(p.guardian_history, ["message", "compaction", "custom_tool_call", "custom_tool_call_output", "agent_message", "reasoning", "function_call", "function_call_output"])
+    && Number.isSafeInteger(p.window_number) && p.window_number >= 0
+    && [p.first_window_id, p.previous_window_id, p.window_id].every(uuid)
+    && typeof p.compaction_response_id === "string" && p.compaction_response_id.length > 0 && object(usage)
+    && ["thread_id", "turn_id", "session_id", "root_turn_id", "response_id"].every((key) => typeof usage[key] === "string" && usage[key].length > 0)
+    && ["usage", "turn_token_usage", "thread_token_usage"].every((key) => object(usage[key]));
+}
+
 /** Child verification requires a stable whole file. Message reconciliation can
  * instead pin a complete prefix while the active parent appends new events;
  * that prefix is independently rehashed before it is accepted. */
-export function readStableRollout(path, accept, { allowAppend = false, deadline = Infinity } = {}) {
+export function readStableRollout(path, accept, { allowAppend = false, allowCompactedMetadata = false, deadline = Infinity } = {}) {
   path = resolveRolloutPath(path);
   const fd = openSync(path, "r");
   try {
@@ -34,7 +55,8 @@ export function readStableRollout(path, accept, { allowAppend = false, deadline 
     if (!before.isFile() || before.size > 512n * 1024n * 1024n) throw new Error("native transcript exceeds evidence bounds");
     const size = Number(before.size);
     const hash = createHash("sha256");
-    let offset = 0, line = 0, fragment = Buffer.alloc(0);
+    const lineLimit = allowCompactedMetadata ? COMPACTED_LINE_LIMIT : BUSINESS_LINE_LIMIT;
+    let offset = 0, line = 0, fragments = [], fragmentBytes = 0;
     while (offset < size) {
       if (Date.now() > deadline) throw new Error("native evidence read budget exhausted");
       const chunk = Buffer.alloc(Math.min(64 * 1024, size - offset));
@@ -42,21 +64,27 @@ export function readStableRollout(path, accept, { allowAppend = false, deadline 
       if (!count) throw new Error("native transcript changed during evidence read");
       offset += count;
       hash.update(chunk.subarray(0, count));
-      fragment = Buffer.concat([fragment, chunk.subarray(0, count)]);
-      let end;
-      while ((end = fragment.indexOf(0x0a)) >= 0) {
+      let start = 0, end;
+      while ((end = chunk.indexOf(0x0a, start)) >= 0 && end < count) {
         if (Date.now() > deadline) throw new Error("native evidence read budget exhausted");
-        if (end > 16 * 1024 * 1024) throw new Error("native transcript line exceeds evidence bounds");
-        accept(JSON.parse(fragment.subarray(0, end).toString("utf8")), ++line);
-        fragment = fragment.subarray(end + 1);
+        const length = fragmentBytes + end - start;
+        if (length > lineLimit) throw new Error("native transcript line exceeds evidence bounds");
+        const bytes = fragmentBytes ? Buffer.concat([...fragments, chunk.subarray(start, end)], length) : chunk.subarray(start, end);
+        const entry = JSON.parse(bytes.toString("utf8"));
+        if (length > BUSINESS_LINE_LIMIT && !compactedMetadata(entry)) throw new Error("native compaction metadata is unverified");
+        if (Date.now() > deadline) throw new Error("native evidence read budget exhausted");
+        accept(entry, ++line);
+        fragments = []; fragmentBytes = 0; start = end + 1;
       }
-      if (fragment.length > 16 * 1024 * 1024) throw new Error("native transcript line exceeds evidence bounds");
+      if (start < count) { fragments.push(chunk.subarray(start, count)); fragmentBytes += count - start; }
+      if (fragmentBytes > lineLimit) throw new Error("native transcript line exceeds evidence bounds");
     }
+    if (Date.now() > deadline) throw new Error("native evidence read budget exhausted");
     const after = fstatSync(fd, { bigint: true });
     const sameFile = (value) => value.dev === before.dev && value.ino === before.ino && value.size >= before.size;
     if (!sameFile(after) || !sameFile(statSync(path, { bigint: true }))) throw new Error("native transcript changed during evidence read");
     if (!allowAppend && !["size", "mtimeNs", "ctimeNs"].every((key) => before[key] === after[key])) throw new Error("native transcript changed during evidence read");
-    if (fragment.length || !line) throw new Error("native transcript has incomplete records");
+    if (fragmentBytes || !line) throw new Error("native transcript has incomplete records");
     const transcriptDigest = hash.digest("hex");
     if (allowAppend) {
       const verified = createHash("sha256");

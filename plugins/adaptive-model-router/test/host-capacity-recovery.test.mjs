@@ -56,6 +56,22 @@ async function apply(f) {
   return result;
 }
 
+test("capacity evidence survives new host labels while retaining its exact original receipt", async () => {
+  for (const cliVersion of ["0.154.0", "future-build", null]) await incident(async (f) => {
+    f.parent.cliVersion = cliVersion;
+    f.records[0].payload.cli_version = "older-session-version";
+    f.records[0].payload.originator = "Codex App renamed presentation";
+    const result = await apply(f);
+    assert.equal(result.receipt.rawAuditAdapter, "native-spawn-capacity-rejection/1");
+    assert.equal(result.receipt.cliVersion, cliVersion);
+    assert.deepEqual(readNativeRecoveryReceipt(f.store.db, f.context, f.route.routeId), result.receipt);
+    const stored = f.store.db.prepare("SELECT value FROM meta WHERE key=?").get(`native_recovery:${f.route.routeId}`).value;
+    f.parent.cliVersion = "another-upgrade";
+    assert.equal((await recoverDelegation(f.input, f.options)).idempotent, true);
+    assert.equal(f.store.db.prepare("SELECT value FROM meta WHERE key=?").get(`native_recovery:${f.route.routeId}`).value, stored);
+  });
+});
+
 for (const recorded of [false, true]) test(`capacity recovery preserves lifecycle and ${recorded ? "the existing" : "the absent"} outcome`, async () => {
   await incident(async (f) => {
     const before = attempt(f), budget = inspectRouterChildBudget(f.store.db, f.context);
@@ -190,8 +206,8 @@ test("incomplete, replayed, misbound and conflicting native rejection evidence c
     f => { f.records.push(structuredClone(f.records[4])); },
     f => { f.records.push({ type: "response_item", payload: { type: "custom_tool_call", name: "exec", call_id: "replay", input: f.args.task_name } }); },
     f => { [f.records[3], f.records[4]] = [f.records[4], f.records[3]]; },
-    f => { f.parent.cliVersion = "0.153.5"; },
-    f => { f.records[0].payload.cli_version = "0.153.3"; },
+    f => { f.parent.id = "different-parent"; },
+    f => { f.records[0].payload.id = "different-source-owner"; },
     f => { f.records[0].payload.cwd += "/other"; },
     f => { f.parent.turns[0].itemsView = "summary"; },
     f => { f.parent.turns[0].id = "other-turn"; },

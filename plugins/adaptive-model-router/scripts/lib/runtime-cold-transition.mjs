@@ -14,13 +14,26 @@ export function nativeProcessInventory() {
   if (result.error || result.status !== 0) throw new Error("Native process inventory is unavailable; cold transition is unproven");
   if (process.platform === "win32") {
     const rows = JSON.parse(result.stdout);
-    return (Array.isArray(rows) ? rows : [rows]).map((row) => ({ pid: row.ProcessId, executable: row.CommandLine || row.ExecutablePath || row.Name }));
+    return (Array.isArray(rows) ? rows : [rows]).map((row) => ({ pid: row.ProcessId,
+      executable: row.CommandLine || row.ExecutablePath || row.Name,
+      executablePath: row.ExecutablePath || null, name: row.Name || null }));
   }
-  return result.stdout.trim().split("\n").map((line) => {
+  const parse = (text) => text.trim().split("\n").map((line) => {
     const match = /^\s*(\d+)\s+(.+)$/u.exec(line);
     if (!match) throw new Error("Native process inventory is incomplete");
     return { pid: Number(match[1]), executable: match[2] };
   });
+  // Keep the OS executable identity as well as argv. The persistent Desktop
+  // shell can relaunch an old cache even when it has no codex child at this
+  // instant; argv alone also need not identify the actual executable image.
+  const identities = spawnSync("ps", ["-axo", "pid=,comm="], { encoding: "utf8", timeout: 5000 });
+  if (identities.error || identities.status !== 0) throw new Error("Native executable identity is unavailable; cold transition is unproven");
+  const commands = new Map(parse(result.stdout).map((row) => [row.pid, row]));
+  for (const row of parse(identities.stdout)) {
+    const prior = commands.get(row.pid);
+    commands.set(row.pid, { ...(prior || row), executablePath: row.executable });
+  }
+  return [...commands.values()];
 }
 
 function legacySnapshot(db) {
@@ -54,8 +67,11 @@ export function inspectColdRuntimeTransition(db, { inventory = nativeProcessInve
 }
 
 export function assertColdProcessInventory(processes = nativeProcessInventory()) {
-  if (!Array.isArray(processes) || processes.some((row) => !Number.isSafeInteger(row.pid) || typeof row.executable !== "string")
-    || processes.some((row) => row.pid !== process.pid && /(?:^|[\\/ ])codex(?:\.exe)?(?:\s|$)|Codex\.app[\\/]|(?:node-launcher|mcp-server)\.mjs/iu.test(row.executable))) {
+  const nativeOwner = /(?:^|[\\/\s"'])(?:codex|chatgpt)(?:\.exe)?(?:[\s"']|$)|(?:Codex|ChatGPT)\.app[\\/]|[\\/]Contents[\\/]MacOS[\\/](?:Codex|ChatGPT)(?:\s|$)|(?:node-launcher|mcp-server)\.mjs|[\\/]scripts[\\/](?:hook|stdio-tool)\.mjs(?:[\s"']|$)/iu;
+  if (!Array.isArray(processes) || processes.some((row) => !Number.isSafeInteger(row.pid) || row.pid < 0 || typeof row.executable !== "string"
+    || !row.executable.trim() || [row.executablePath, row.name].some((field) => field != null && typeof field !== "string"))
+    || processes.some((row) => row.pid !== process.pid && [row.executable, row.executablePath, row.name]
+      .some((field) => typeof field === "string" && nativeOwner.test(field)))) {
     throw new Error("Cold bootstrap requires native Codex hosts to be stopped; no live legacy writer may remain");
   }
   return processes;

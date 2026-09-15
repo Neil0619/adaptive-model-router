@@ -2,10 +2,10 @@ import { qualificationTargetMatches } from "./qualification-policy.mjs";
 import { realpathSync } from "node:fs";
 import { payloadHash, parseJson } from "./io.mjs";
 import { readTaskQualification } from "./lifecycle-qualification.mjs";
-import { auditNativeLifecycleTranscript } from "./native-recovery-audit.mjs";
+import { auditNativeContractNoWorkTranscript } from "./native-recovery-audit.mjs";
 import { readThreadSpawnIdentity } from "./subagent-session.mjs";
 
-export const QUALIFICATION_RECOVERY_SCHEMA = "native-thread-delegation-recovery/3";
+export const QUALIFICATION_RECOVERY_SCHEMA = "native-thread-delegation-recovery/5";
 const digest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 const present = (value) => typeof value === "string" && value.length > 0;
 
@@ -28,7 +28,6 @@ export function failedQualificationRecoverySubject(db, context, attempt, cwd) {
     if (qualification?.state !== "failed" || qualification.routeId !== attempt.route_id
       || qualification.proof !== null || qualification.ticketHash !== attempt.ticket_hash
       || !Number.isFinite(Date.parse(qualification.completedAt))
-      || qualification.binding.cliVersion !== "0.153.0"
       || qualification.binding.taskCwdDigest !== payloadHash(realpathSync(cwd))
       || Object.keys(qualification.hooks).sort().join(",") !== "post,pre"
       || !["pre", "post"].every((event) => {
@@ -56,7 +55,7 @@ export function failedQualificationRecoverySubject(db, context, attempt, cwd) {
 }
 
 export function auditFailedQualificationTranscript(bytes, child, parentId, cwd) {
-  const audit = auditNativeLifecycleTranscript(bytes, child, parentId);
+  const audit = auditNativeContractNoWorkTranscript(bytes, child, parentId);
   const firstLine = bytes.toString("utf8").split("\n", 1)[0];
   const identity = readThreadSpawnIdentity({ transcript_path: child.path,
     agent_id: child.id, session_id: parentId, cwd }, { readLine: () => firstLine });

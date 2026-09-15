@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
-import { cp, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rename, writeFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { RouterStore } from "../scripts/lib/database.mjs";
@@ -23,6 +23,7 @@ import { inspectRuntimePackage } from "../scripts/lib/runtime-package.mjs";
 import { qualifyRuntimeCompatibility } from "../scripts/lib/runtime-compatibility.mjs";
 import { publishRuntime, runtimeGeneration, runtimeTask } from "../scripts/lib/runtime-isolation.mjs";
 import { inspectColdRuntimeTransition } from "../scripts/lib/runtime-cold-transition.mjs";
+import { prepareColdHostEpochInstallation, inspectColdHostEpochRetirement, commitColdHostEpochRetirement } from "../scripts/lib/runtime-cold-install.mjs";
 import { beginMcpDispatch, endRuntimeDispatch } from "../scripts/lib/runtime-dispatch.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -33,12 +34,15 @@ const reviewed = (closure, intent = "collect") => ({ ...disposition(intent), res
 
 function messageHostFixture(f, invocation, cliVersion = "0.153.4", replace = true, hostChanges = {}) {
   const key = `message_host:${payloadHash(["/root", invocation.tool_use_id])}`;
+  const original = f.store.db.prepare("SELECT record FROM delegation_stage_journal WHERE route_id=? AND kind=?")
+    .get(f.route.routeId, key);
+  const preDecision = original ? JSON.parse(openPrivateState(f.store.db, original.record)).preDecision : null;
   if (replace) f.store.db.prepare("DELETE FROM delegation_stage_journal WHERE route_id=? AND kind IN (?,?)")
     .run(f.route.routeId, key, `${key}:conflict`);
   if (cliVersion === null) return;
   const child = f.store.db.prepare("SELECT * FROM delegation_children WHERE route_id=?").get(f.route.routeId);
   rememberMessageHost(f.store.db, child, invocation, "/root", { platform: "darwin", arch: "arm64", cliVersion,
-    executableDigest: payloadHash(`fixture executable ${cliVersion}`), executablePathDigest: payloadHash("fixture executable path"), ...hostChanges });
+    executableDigest: payloadHash(`fixture executable ${cliVersion}`), executablePathDigest: payloadHash("fixture executable path"), ...hostChanges }, { preDecision });
 }
 
 test("native final message identity binds a different passthrough ID to its actual completed host turn", async () => {
@@ -720,14 +724,33 @@ test("missing native provider rejects only the undelivered followup and permits 
   }, { cli_version: "0.153.4", model_provider: "codex_local_access" });
 });
 
-for (const variation of ["wrong-provider", "missing-provider-metadata", "unknown-host", "unknown-child-host", "extra-text", "wrong-tool", "unexpected-child-input", "missing-call-host", "stale-call-host", "conflicting-call-host", "changed-call-input"]) test(`provider rejection keeps ${variation} pending`, async () => {
+test("message rejection uses the actual Pre and operation contract across host updates and missing disk diagnostics", async () => {
+  for (const platform of ["darwin", "win32", null]) await withChild(async (f) => {
+    const { invocation } = f.send("contract-provider-rejection", "followup_task", false);
+    if (platform) messageHostFixture(f, invocation, "unknown-new-host", true, { platform });
+    // The null case uses the real subprocess Hook record: no executable hash
+    // or CLI lookup is available or needed to bind this native call.
+    f.parentRecords.at(-1).payload.output = "collab tool failed: Model provider `codex_local_access` not found";
+    f.saveParent();
+    const result = await f.manage("reconcile_messages");
+    assert.deepEqual(result.pendingCalls, []);
+    assert.equal(result.rejectedCalls[0].schema, 3);
+    assert.equal(result.rejectedCalls[0].contract, "native-message-delivery/1");
+    const original = f.store.db.prepare("SELECT * FROM delegation_stage_journal WHERE kind LIKE 'message_rejection:%'").all();
+    assert.deepEqual((await f.manage("reconcile_messages")).pendingCalls, []);
+    assert.deepEqual(f.store.db.prepare("SELECT * FROM delegation_stage_journal WHERE kind LIKE 'message_rejection:%'").all(), original);
+    assert.equal(f.store.db.prepare("SELECT count(*) n FROM outcomes").get().n, 0);
+  }, { cli_version: "older-child-build", model_provider: "codex_local_access" });
+});
+
+for (const variation of ["wrong-provider", "missing-provider-metadata", "extra-text", "wrong-tool", "unexpected-child-input", "missing-call-host", "stale-call-host", "conflicting-call-host", "changed-call-input"]) test(`provider rejection keeps ${variation} pending`, async () => {
   await withChild(async (f) => {
     const { invocation } = f.send("provider-uncertain", variation === "wrong-tool" ? "send_message" : "followup_task", false);
     // Both immutable session headers stay at 0.153.4 after host upgrade.
     f.parentRecords[0].payload.cli_version = "0.153.4";
     messageHostFixture(f, variation === "stale-call-host" ? { ...invocation, turn_id: "old-native-turn" }
       : variation === "changed-call-input" ? { ...invocation, tool_input: { ...invocation.tool_input, message: "other input" } } : invocation,
-    variation === "missing-call-host" ? null : variation === "unknown-host" ? "0.999.0" : "0.153.4");
+    variation === "missing-call-host" ? null : "0.153.4");
     if (variation === "conflicting-call-host") messageHostFixture(f, invocation, "0.999.0", false);
     f.parentRecords.at(-1).payload.output = `collab tool failed: Model provider \`${variation === "wrong-provider" ? "other" : "codex_local_access"}\` not found${variation === "extra-text" ? " but delivered" : ""}`;
     f.saveParent();
@@ -736,14 +759,14 @@ for (const variation of ["wrong-provider", "missing-provider-metadata", "unknown
     assert.equal(f.store.status(f.context).stageClosure.state, "pending");
     if (variation !== "unexpected-child-input") assert.deepEqual(result.pendingCalls, ["provider-uncertain"]);
     assert.throws(() => recordOutcome(f.outcome(), { store: f.store, cwd: f.project.root }), /pending/);
-  }, { cli_version: variation === "unknown-child-host" ? "unknown" : "0.153.4",
+  }, { cli_version: "0.153.4",
     ...(variation === "missing-provider-metadata" ? {} : { model_provider: "codex_local_access" }) });
 });
 
-for (const variation of ["generic-error", "wrong-tool", "unknown-host"]) test(`${variation} cannot settle an undelivered message`, async () => {
+for (const variation of ["generic-error", "wrong-tool", "unproven-pre-denial"]) test(`${variation} cannot settle an undelivered message`, async () => {
   await withChild(async (f) => {
     const { invocation } = f.send("uncertain-send", "followup_task", false);
-    messageHostFixture(f, invocation, variation === "unknown-host" ? "0.999.0" : "0.153.4");
+    messageHostFixture(f, invocation, "0.999.0");
     f.parentRecords[0].payload.cli_version = "0.153.4";
     f.parentRecords.at(-1).payload.output = variation === "generic-error" ? "connection lost"
       : `Tool call blocked by PreToolUse hook: refused. Tool: collaboration${variation === "wrong-tool" ? "send_message" : "followup_task"}`;
@@ -789,7 +812,7 @@ for (const change of ["missing", "conflict", "same-version-executable"]) test(`a
     f.parentRecords.at(-1).payload.output = "collab tool failed: Model provider `codex_local_access` not found";
     f.saveParent();
     const first = await f.manage("reconcile_messages");
-    assert.equal(first.rejectedCalls[0].schema, 2);
+    assert.equal(first.rejectedCalls[0].schema, 3);
     assert.match(first.rejectedCalls[0].hostEvidenceDigest, /^[a-f0-9]{64}$/u);
     const before = f.store.db.prepare("SELECT * FROM outcomes").all();
     if (change === "same-version-executable") messageHostFixture(f, invocation, "0.153.4", true,
@@ -1548,9 +1571,10 @@ test("cold legacy binding retains a child and bounded maintenance after terminal
     const legacyRoot = join(f.project.root, "legacy-runtime"), candidateRoot = join(f.project.root, "stable-shell");
     await cp(process.env.ADAPTIVE_ROUTER_LEGACY_FIXTURE, legacyRoot, { recursive: true }); await cp(pluginRoot, candidateRoot, { recursive: true });
     const legacy = inspectRuntimePackage(legacyRoot, { legacy: true }), candidate = inspectRuntimePackage(candidateRoot);
-    const compatibilityProof = qualifyRuntimeCompatibility(legacy, candidate, { coldLegacy: true });
-    f.store.transaction(() => publishRuntime(f.store.db, candidate, f.project.home, { bootstrap: true, shellRoot: candidate.root, legacyRuntime: legacy,
-      compatibilityProof, coldProof: inspectColdRuntimeTransition(f.store.db, { inventory: () => [], preserveLegacy: true }) }));
+    assert.throws(() => qualifyRuntimeCompatibility(legacy, candidate, { coldLegacy: true }), /freezes installed Hook behavior/);
+    const installation = prepareColdHostEpochInstallation(f.store, { source: legacy, candidate, shellRoot: candidate.root });
+    await rm(legacyRoot, { recursive: true }); // isolated native-install removal fixture
+    commitColdHostEpochRetirement(f.store, inspectColdHostEpochRetirement(f.store, installation.id, { inventory: () => [] }));
     const dispatch = beginMcpDispatch("manage_stage", { contextId: f.root.session_id, routeId: f.route.routeId }, { cwd: f.project.root, env: { CODEX_THREAD_ID: f.root.session_id } });
     assert.equal(dispatch.selected.digest, legacy.digest);
     const service = await import(pathToFileURL(join(dispatch.selected.root, "scripts/lib/service.mjs")));

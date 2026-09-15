@@ -287,7 +287,7 @@ test("the MCP service enforcement boundary delegates only after a trusted readin
   }
 });
 
-test("production readiness offers only qualification and binds the full ordered Hook set", async () => {
+test("production readiness binds executable Router Hooks independently of inventory ordering and other plugins", async () => {
   const project = await temporaryProject("router-qualification-readiness-");
   try {
     await withRouterEnvironment(project, async () => {
@@ -306,9 +306,11 @@ test("production readiness offers only qualification and binds the full ordered 
         assert.match(first.qualificationBinding.digest, /^[a-f0-9]{64}$/u);
         inventory.data[0].hooks.push({ ...inventory.data[0].hooks[0], pluginId: null, source: "user", matcher: "Bash" });
         const otherHook = await inspect();
-        assert.notEqual(first.qualificationBinding.digest, otherHook.qualificationBinding.digest);
+        assert.equal(first.qualificationBinding.digest, otherHook.qualificationBinding.digest);
         inventory.data[0].hooks.reverse();
-        assert.notEqual(otherHook.qualificationBinding.digest, (await inspect()).qualificationBinding.digest);
+        assert.equal(otherHook.qualificationBinding.digest, (await inspect()).qualificationBinding.digest);
+        inventory.data[0].hooks.find((hook) => hook.pluginId !== null).statusMessage = "Updated status text";
+        assert.equal(otherHook.qualificationBinding.digest, (await inspect()).qualificationBinding.digest);
         inventory.data[0].hooks.find((hook) => hook.pluginId !== null).trustStatus = "modified";
         const untrusted = await inspect();
         assert.equal(untrusted.reasonCode, "HOOK_TRUST_REQUIRED");

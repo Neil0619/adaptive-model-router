@@ -2,7 +2,8 @@ import { lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AppServerClient, withAppServer } from "./app-server.mjs";
-import { lifecycleBinding, nativeQualificationHost, nativeTaskWorkingDirectory, provenQualificationShellRoots, qualificationReadiness } from "./lifecycle-qualification.mjs";
+import { lifecycleBinding, nativeQualificationHost, nativeTaskWorkingDirectory, provenQualificationShellRoots, qualificationReadiness,
+  readTaskQualification, prepareHistoricalQualificationAdoption, commitHistoricalQualificationAdoption } from "./lifecycle-qualification.mjs";
 import { payloadHash } from "./io.mjs";
 import { readHookIdentityDiagnostic } from "./hook-diagnostics.mjs";
 import { supportsResidencyHookMatcherUpgrade } from "./installation-surface.mjs";
@@ -96,7 +97,6 @@ function sameDefinition(actual, expected, sourcePath) {
     && actual?.command === expected.command
     && (actual?.matcher ?? null) === expected.matcher
     && actual?.timeoutSec === expected.timeoutSec
-    && (actual?.statusMessage ?? null) === expected.statusMessage
     && actual?.async === expected.async
     && canonicalPath(actual?.sourcePath) === sourcePath
     && /^sha256:[0-9a-f]{64}$/u.test(actual?.currentHash || "")
@@ -217,9 +217,11 @@ export async function inspectLifecycleHookReadiness({
   context = null,
   contextId = null,
   nativeHost = nativeQualificationHost,
-  lifecycle = { lifecycleBinding, qualificationReadiness, provenQualificationShellRoots },
+  lifecycle = { lifecycleBinding, qualificationReadiness, provenQualificationShellRoots, readTaskQualification,
+    prepareHistoricalQualificationAdoption, commitHistoricalQualificationAdoption },
   equivalentEntries = equivalentHookEntries,
   retainedShellRoots = [],
+  historicalAdoption = true,
 } = {}) {
   let inventory;
   let hooksList;
@@ -282,7 +284,22 @@ export async function inspectLifecycleHookReadiness({
         const group = hooksList.data.find((entry) => canonicalPath(entry.cwd) === canonicalPath(cwd));
         const historicalRoots = historicalHookShells(store, context, pluginRoot, inventoryRoot, platform, lifecycle, equivalentEntries, retainedShellRoots);
         const binding = lifecycle.lifecycleBinding(group.hooks, pluginRoot, inventoryRoot, host, cwd, historicalRoots);
-        return lifecycle.qualificationReadiness(store.db, context, binding);
+        const readiness = lifecycle.qualificationReadiness(store.db, context, binding);
+        const previous = lifecycle.readTaskQualification?.(store.db, context);
+        if (historicalAdoption && !readiness.ready && previous?.state === "passed" && previous.schema === 1
+          && typeof lifecycle.prepareHistoricalQualificationAdoption === "function") {
+          try {
+            const token = await lifecycle.prepareHistoricalQualificationAdoption({ contextId, routeId: previous.routeId,
+              turnId: taskTurnId, generation: context.runtimeDigest }, { store, cwd, binding,
+              sourceGeneration: context.runtimeDigest,
+              inspectBinding: () => inspectLifecycleHookReadiness({ cwd, pluginRoot, platform, timeoutMs, appServer,
+                store, context, contextId, nativeHost, lifecycle, equivalentEntries, retainedShellRoots, historicalAdoption: false }),
+            });
+            store.transaction(() => lifecycle.commitHistoricalQualificationAdoption(store.db, token));
+            return lifecycle.qualificationReadiness(store.db, context, binding);
+          } catch { /* Missing original sources retain the old proof and bounded supplement path. */ }
+        }
+        return readiness;
       } catch { /* Unknown hosts remain root-only, without a qualification ticket. */ }
     }
     return { ready: false, reasonCode: "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN" };

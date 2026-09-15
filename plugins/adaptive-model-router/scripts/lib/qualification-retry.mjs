@@ -2,6 +2,9 @@ import { qualificationTargetMatches } from "./qualification-policy.mjs";
 import { realpathSync } from "node:fs";
 import { canonicalJson, payloadHash } from "./io.mjs";
 import { NATIVE_LIFECYCLE_CLI_VERSIONS } from "./native-lifecycle-audit.mjs";
+import { HOST_LIFECYCLE_CONTRACT, HOOK_DISPATCH_CONTRACT } from "./host-compatibility.mjs";
+import { recoveryRecordIntact } from "./native-recovery-receipt.mjs";
+import { isMetadataContractAudit } from "./native-metadata-recovery-audit.mjs";
 
 const DURATION_MS = 60 * 60 * 1000;
 const digest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
@@ -16,7 +19,13 @@ function read(db, key) {
 }
 
 function fingerprint(binding) {
-  if (!NATIVE_LIFECYCLE_CLI_VERSIONS.includes(binding?.cliVersion) || !["runtimeDigest", "configurationDigest", "taskCwdDigest"].every((field) => digest(binding[field]))) return null;
+  if (!binding || !["runtimeDigest", "configurationDigest", "taskCwdDigest"].every((field) => digest(binding[field]))) return null;
+  if (binding.schema === 2) {
+    if (payloadHash(binding.contracts) !== payloadHash([HOOK_DISPATCH_CONTRACT, HOST_LIFECYCLE_CONTRACT])) return null;
+    return Object.fromEntries(["schema", "contracts", "runtimeDigest", "configurationDigest", "taskCwdDigest"]
+      .map((field) => [field, binding[field]]));
+  }
+  if (!NATIVE_LIFECYCLE_CLI_VERSIONS.includes(binding.cliVersion)) return null;
   // The configured host/Hook set is shared by the CLI and the task's pinned
   // shell. Each new qualification still binds and verifies its own shell roots.
   return Object.fromEntries(["cliVersion", "runtimeDigest", "configurationDigest", "taskCwdDigest"].map((field) => [field, binding[field]]));
@@ -24,7 +33,7 @@ function fingerprint(binding) {
 
 function recoveredBasis(db, context, qualification) {
   if (qualification?.state === "pending") return recoveredUnconsumedBasis(db, context, qualification);
-  if (qualification?.schema !== 1 || qualification.state !== "failed" || qualification.proof !== null) return null;
+  if (![1, 2].includes(qualification?.schema) || qualification.state !== "failed" || qualification.proof !== null) return null;
   const routeId = qualification.routeId;
   const receipt = read(db, `native_recovery:${routeId}`);
   const attempt = db.prepare("SELECT * FROM delegation_attempts WHERE route_id=? AND project_id=? AND context_key=?")
@@ -33,7 +42,7 @@ function recoveredBasis(db, context, qualification) {
     .get(routeId, context.projectId, context.contextKey);
   const route = db.prepare("SELECT * FROM routes WHERE route_id=? AND project_id=? AND context_key=?")
     .get(routeId, context.projectId, context.contextKey);
-  if (receipt?.schemaVersion !== "native-thread-delegation-recovery/3" || receipt.recoveryKind !== "failed_qualification"
+  if (!recoverySchemaValid(receipt, "failed") || receipt.recoveryKind !== "failed_qualification"
     || receipt.status !== "reconciled_failure" || receipt.qualificationState !== "failed"
     || receipt.ordinaryDelegationEnabled !== false || receipt.originalDispatchConsumed !== true
     || receipt.subjectDigest !== payloadHash([context.projectId, context.contextKey, routeId])
@@ -56,12 +65,13 @@ function recoveredUnconsumedBasis(db, context, qualification) {
     .get(routeId, context.projectId, context.contextKey);
   const route = db.prepare("SELECT * FROM routes WHERE route_id=? AND project_id=? AND context_key=?")
     .get(routeId, context.projectId, context.contextKey);
-  if (qualification.schema !== 1 || qualification.proof !== undefined
-    || receipt?.schemaVersion !== "native-thread-delegation-recovery/2" || receipt.recoveryKind !== "unconsumed_qualification"
+  if (![1, 2].includes(qualification.schema) || qualification.proof !== undefined
+    || !recoverySchemaValid(receipt, "unconsumed") || receipt.recoveryKind !== "unconsumed_qualification"
     || receipt.status !== "reconciled_failure" || receipt.qualificationState !== "pending"
     || receipt.ordinaryDelegationEnabled !== false || receipt.originalDispatchConsumed !== false
     || receipt.subjectDigest !== payloadHash([context.projectId, context.contextKey, routeId])
-    || receipt.qualificationDigest !== payloadHash(qualification) || receipt.cliVersion !== qualification.binding.cliVersion
+    || receipt.qualificationDigest !== payloadHash(qualification)
+    || (receipt.schemaVersion === "native-thread-delegation-recovery/2" && receipt.cliVersion !== qualification.binding.cliVersion)
     || !digest(receipt.evidenceDigest) || !digest(receipt.rawAuditDigest)
     || !attempt?.finalized_at || attempt.ambiguous !== 1 || attempt.ticket_hash !== null || attempt.context_package !== null
     || attempt.ticket_consumed !== 0 || attempt.post_observed !== 0 || attempt.stop_observed !== 0
@@ -79,8 +89,16 @@ function isFresh(value, now = Date.now()) {
     && expires - issued === DURATION_MS;
 }
 
+function recoverySchemaValid(receipt, kind) {
+  const legacy = kind === "failed" ? "native-thread-delegation-recovery/3" : "native-thread-delegation-recovery/2";
+  const current = kind === "failed" ? "native-thread-delegation-recovery/5" : "native-thread-delegation-recovery/4";
+  return receipt?.schemaVersion === legacy || (receipt?.schemaVersion === current
+    && (receipt.rawAuditAdapter === HOST_LIFECYCLE_CONTRACT || (kind === "unconsumed" && isMetadataContractAudit(receipt)))
+    && recoveryRecordIntact(receipt));
+}
+
 function completedFailedBasis(db, context, qualification) {
-  if (qualification?.schema !== 1 || qualification.state !== "failed" || qualification.proof !== null
+  if (![1, 2].includes(qualification?.schema) || qualification.state !== "failed" || qualification.proof !== null
     || !["HOST_HOOK_SET_MISMATCH", "NATIVE_QUALIFICATION_EVIDENCE_UNPROVEN"].includes(qualification.failure)) return null;
   const routeId = qualification.routeId;
   const route = db.prepare("SELECT * FROM routes WHERE route_id=? AND project_id=? AND context_key=?")

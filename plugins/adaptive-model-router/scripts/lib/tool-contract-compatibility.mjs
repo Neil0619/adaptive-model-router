@@ -1,5 +1,6 @@
 import { canonicalJson } from "./io.mjs";
 import { OPERATION_ACTIONS, OPERATION_REVIEW_SCHEMA } from "./operation-contract.mjs";
+import { CHECKPOINT_ACTIONS, CHECKPOINT_FIELDS } from "./message-checkpoint.mjs";
 
 // The old host inventory stays frozen. Permit only this reviewed additive
 // service extension behind it; old inputs retain their exact interpretation.
@@ -13,11 +14,27 @@ export function compatibleToolDefinitions(previous, next) {
   const previousManage = before.find((tool) => tool.name === "manage_stage")?.inputSchema;
   const projected = structuredClone(previousManage ? after : after.filter((tool) => tool.name !== "manage_stage"));
   const nextManage = projected.find((tool) => tool.name === "manage_stage")?.inputSchema;
+  // The new cold shell must also load retained A for an unadopted task. Only
+  // this exact reviewed additive extension is symmetric; A still validates
+  // and rejects actions it cannot implement.
+  if (previousManage?.properties?.checkpointId && nextManage && !nextManage.properties?.checkpointId)
+    return compatibleToolDefinitions(next, previous);
+  if (previousManage && !previousManage.properties?.checkpointId && nextManage?.properties?.checkpointId) {
+    for (const [field, definition] of Object.entries(CHECKPOINT_FIELDS)) {
+      if (canonicalJson(nextManage.properties[field]) !== canonicalJson(definition) || nextManage.required?.includes(field)) return false;
+      delete nextManage.properties[field];
+    }
+    const actions = nextManage.properties.action.enum;
+    if (canonicalJson(actions.slice(-CHECKPOINT_ACTIONS.length)) !== canonicalJson(CHECKPOINT_ACTIONS)) return false;
+    nextManage.properties.action.enum = actions.slice(0, -CHECKPOINT_ACTIONS.length);
+  }
   if (previousManage && !previousManage.properties?.operationReview && nextManage?.properties?.operationReview) {
     if (canonicalJson(nextManage.properties.operationReview) !== canonicalJson(OPERATION_REVIEW_SCHEMA)
       || nextManage.required?.includes("operationReview")) return false;
     const priorActions = previousManage.properties?.action?.enum;
-    if (canonicalJson(nextManage.properties.action.enum) !== canonicalJson([...(priorActions || []), ...OPERATION_ACTIONS])) return false;
+    const actions = nextManage.properties.action.enum;
+    if (OPERATION_ACTIONS.some((action) => actions.filter((value) => value === action).length !== 1)
+      || canonicalJson(actions.filter((value) => !OPERATION_ACTIONS.includes(value))) !== canonicalJson(priorActions || [])) return false;
     nextManage.properties.action.enum = priorActions;
     delete nextManage.properties.operationReview;
   }

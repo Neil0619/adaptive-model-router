@@ -99,19 +99,29 @@ round-trip proof returns `HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN`. All four continue
 root-only and issue no delegation ticket. The check never writes `config.toml`
 or accepts hook trust for the user.
 
-On the explicitly supported native macOS builds (`0.153.4`, `0.153.3`, `0.153.0`, and
-`0.153.0-alpha.5`) and native Windows `0.153.4`, a task without prior proof can first receive
+New calls are verified against their actual behavior contract. App/CLI version,
+platform labels, disk executable hashes and paths are diagnostic, not a version
+allowlist. A task without prior proof can first receive
 `delegate / HOST_LIFECYCLE_QUALIFICATION`: exactly one policy-bound GPT-6/low child returning a
 fixed marker without tools or original task content. The server independently
 checks all four lifecycle events and the complete raw child transcript before
-accepting its outcome. Proof is task-scoped and bound to the executable, ordered
-Hook inventory, actual Hook shells, and runtime source. A changed binding keeps
-ordinary delegation disabled. If the retained proof and its original outcome
-are valid successes and no child is unresolved, the next eligible stage can
-archive that proof and issue a fresh fixed self-test for the new binding.
+accepting its outcome. New proof is task-scoped and binds functional Hook
+definitions and trust, actual entries, runtime source and required contracts.
+Version/hash changes, presentation text or unrelated plugin changes do not
+create another qualification child. Real functional changes still require
+verification. Historical qualification and receipt bytes remain unchanged;
+sufficient original evidence supports a separate adoption record without
+rewriting an old result as a new-schema success.
 Failed, pending, invalid, or ambiguous attempts are never automatically retried.
 Qualification neither consumes a once override nor enters learning; after a
 new source-verified success, route the original stage again normally.
+
+The first installation of this change also needs explicit old-task runtime
+handover; ordinary `publish` does not establish adoption. See the
+[host-upgrade compatibility plan](docs/HOST-UPGRADE-COMPATIBILITY-PLAN.zh-CN.md)
+and [development acceptance record](docs/evidence/host-upgrade-compatibility-20260914.zh-CN.md).
+An old task without actual native entry evidence stays on its previous runtime.
+Development tests do not mean the machine's global installation was changed.
 
 Priority is: request override, once override, session override, project override, optional global override, then the quality-first model policy (default GPT-6/high). Unknown or hidden models are never chosen automatically. Explicit unavailable targets are never silently substituted.
 

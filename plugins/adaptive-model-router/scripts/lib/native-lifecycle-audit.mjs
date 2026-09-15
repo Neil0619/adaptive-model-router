@@ -1,6 +1,7 @@
 import { lstatSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { HOST_LIFECYCLE_CONTRACT, verifyHostOperation } from "./host-compatibility.mjs";
 import {
   auditNativeLifecycleTranscript,
   auditNativeLifecycle1533Transcript,
@@ -10,15 +11,17 @@ import {
   readNativeRecoveryTranscript,
 } from "./native-recovery-audit.mjs";
 
-const AUDITORS = Object.freeze({
+const LEGACY_AUDITORS = Object.freeze({
   "0.153.0-alpha.5": auditNativeRecoveryTranscript,
   "0.153.0": auditNativeLifecycleTranscript,
   "0.153.3": auditNativeLifecycle1533Transcript,
   "0.153.4": auditNativeLifecycle1534Transcript,
   "0.154.0-alpha.6.2": auditNativeLifecycle1540Alpha62Transcript,
 });
-export const NATIVE_LIFECYCLE_CLI_VERSIONS = Object.freeze(Object.keys(AUDITORS));
+export const NATIVE_LIFECYCLE_CLI_VERSIONS = Object.freeze(Object.keys(LEGACY_AUDITORS));
 
+// Legacy receipt compatibility only. Production admission no longer consults
+// this version table; it verifies the current operation contract instead.
 export function supportsNativeLifecycleHost(platform, cliVersion) {
   if (platform === "win32") return cliVersion === "0.153.4";
   return platform === "darwin" && ["0.153.0-alpha.5", "0.153.0", "0.153.3", "0.153.4", "0.154.0-alpha.6.2"].includes(cliVersion);
@@ -44,12 +47,13 @@ function readProbeTranscript(path) {
   return bytes;
 }
 
-// Diagnostic-only evidence validation, using the same pinned native no-work
+// Diagnostic-only evidence validation, using the same native no-work
 // adapter as recovery. A native thread projection omits code-mode calls, so it
 // is never sufficient. The CLI accepts neither source replacement nor a passed
 // assertion. This helper writes nothing and does not grant production admission.
 export function auditNativeLifecycleNoop({ child, parentId, taskName, target, marker }, {
   readTranscript = readProbeTranscript,
+  legacyVersion = null,
 } = {}) {
   try {
     requireFact(typeof parentId === "string" && parentId && /^router_[a-f0-9]{32}$/u.test(taskName));
@@ -68,9 +72,13 @@ export function auditNativeLifecycleNoop({ child, parentId, taskName, target, ma
     const finals = turn.items.filter((item) => item.type === "agentMessage" && item.phase === "final_answer");
     requireFact(finals.length === 1 && finals[0] === turn.items.at(-1) && finals[0].text === marker);
     const bytes = readTranscript(child.path);
-    const auditTranscript = Object.hasOwn(AUDITORS, child.cliVersion) ? AUDITORS[child.cliVersion] : null;
-    requireFact(typeof auditTranscript === "function");
-    const audit = auditTranscript(bytes, child, parentId);
+    let audit;
+    if (legacyVersion !== null) {
+      const auditTranscript = Object.hasOwn(LEGACY_AUDITORS, legacyVersion) ? LEGACY_AUDITORS[legacyVersion] : null;
+      requireFact(typeof auditTranscript === "function");
+      audit = auditTranscript(bytes, child, parentId);
+    } else audit = verifyHostOperation({ contract: HOST_LIFECYCLE_CONTRACT, childId: child.id, parentId },
+      { bytes, child, parentId });
     const repeated = readTranscript(child.path);
     requireFact(Buffer.isBuffer(repeated) && bytes.equals(repeated));
     return { passed: true, ...audit };

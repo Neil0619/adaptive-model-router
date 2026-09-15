@@ -14,6 +14,7 @@ import {
 } from "./runtime-isolation.mjs";
 import { inspectRuntimePackage } from "./runtime-package.mjs";
 import { observeRootOperationCoverage, inspectRootOperationCoverage } from "./runtime-root-operations.mjs";
+import { observeEpochNativeEntry } from "./runtime-epoch.mjs";
 
 function verifyStableShell(db, shellRoot) {
   if (!shellRoot) return; // Internal offline adapters do not impersonate a host entry.
@@ -84,6 +85,9 @@ export function beginHookDispatch(input, { env = process.env, shellRoot = null }
       task = runtimeTask(store.db, context);
       restoreStage(store, stageId);
       const admitted = acquireRuntimeInvocation(store.db, context, { kind: `hook:${input.hook_event_name}`, stageId });
+      // Only this reviewed dispatcher can add exact input/shell/lease evidence.
+      // Frozen A dispatchers keep their original bytes and cannot self-attest.
+      observeEpochNativeEntry(store, context, input, { invocation: admitted.invocation, shellRoot, stageId });
       // Native Pre is the authority on hosts that do not give MCP a trusted
       // per-task environment. contextId is an address, never caller authority.
       const name = /(?:adaptive[-_]model[-_]router)(?:__|_|\/)([a-z_]+)$/u.exec(input.tool_name || "")?.[1];

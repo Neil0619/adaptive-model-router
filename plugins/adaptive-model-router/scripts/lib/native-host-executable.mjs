@@ -13,9 +13,9 @@ function readMacProcess(pid) {
   return { pid, parentPid: Number(match[1]), executable: match[2].trim() };
 }
 
-// Qualification attests the host that actually owns this process. PATH can
-// still point to a separately installed, older CLI after a Desktop upgrade.
-// General command discovery remains unchanged for installers and CLI callers.
+// Diagnostic command discovery only. An ancestor's pathname may already name
+// a replacement binary after an App upgrade, so reading it cannot attest the
+// image of the running task. It never controls qualification or admission.
 export async function resolveNativeCodexCommand({
   platform = process.platform, parentPid = process.ppid,
   readProcess = readMacProcess, resolveCommand = resolveCodexCommand,
@@ -56,5 +56,6 @@ export async function attestNativeCodexHost({ requireAncestor = false } = {}) {
   if (result.error || result.status !== 0 || !version) throw new Error("native host version is unproven");
   const sha = (value) => createHash("sha256").update(value).digest("hex");
   return { platform: process.platform, arch: process.arch, cliVersion: version,
-    executableDigest: sha(readFileSync(path)), executablePathDigest: sha(JSON.stringify(path)) };
+    executableDigest: sha(readFileSync(path)), executablePathDigest: sha(JSON.stringify(path)),
+    source: "resolved_disk_executable", identityScope: "on_disk_not_running_image" };
 }

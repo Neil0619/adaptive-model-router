@@ -81,6 +81,27 @@ Never use the bridge for a tool that is not explicitly marked
 tool nor this bridge can run, fail open locally and report both concrete
 transport failures without claiming that `route_stage` returned a decision.
 
+## App upgrades and runtime handover
+
+App/CLI version labels, executable digests and installation paths are diagnostic
+observations. Do not treat a changed or unavailable label as a delegation
+failure, request a new task, reinstall Hooks, or run an extra qualification
+child. Admission verifies the actual trusted task Hook and operation contract.
+Changed trust, identity, commands, unknown actions or incomplete results remain
+real evidence failures and retain the corresponding responsibility.
+
+After an explicitly verified runtime handover, the trusted Hook may request
+one `get_route_status` call to confirm that this task's actual MCP entry reaches
+its selected runtime. Make that read before the next `route_stage`; it creates
+no qualification child. `hostCompatibility.epoch` shows whether confirmation is
+still pending. This first installation transition is separate from an ordinary
+App upgrade and must not repeat just because the App version changed.
+
+Keep original routes, child identities, accepted inputs and outcomes during a
+handover. A retained old entry lacking real takeover evidence stays on its
+previous runtime; report that exact limitation. Never edit a pinned old Hook,
+insert a passed proof, or discard work to force adoption.
+
 ## Route a stage
 
 An explicit current-turn user instruction that forbids subagents or delegation
@@ -253,8 +274,8 @@ authorized task; do not ask for another approval for this bounded recovery.
 The command independently reads and checks the native parent transcript twice,
 correlates the exact call and host rejection, rejects replays or child activity,
 and revalidates the unchanged reservation before applying the receipt.
-It currently supports the audited Desktop `0.153.4` profile-mismatch format and
-ordinary routes only. Qualification failures and every unsupported or
+It supports the audited native profile-mismatch operation contract and
+ordinary routes only; the App version is diagnostic. Qualification failures and every unsupported or
 unproven result retain their existing recovery boundaries.
 Never reuse the rejected ticket or call `record_outcome` for it. After a
 verified release, a fresh route may cover still-needed work; if the root already
@@ -263,7 +284,7 @@ establish closure, continue root-only and explicitly report the occupied gate
 and retained reservation. Root-only continuation does not release resources
 or prove that the originally planned independent review ran.
 
-For the exact ordinary Desktop `0.153.4` direct-spawn error
+For the exact ordinary native direct-spawn error
 `collab spawn failed: agent thread limit reached`, use native capacity recovery.
 This happens after ticket consumption and has a distinct audit adapter. If a
 `failed` / `tooling` `record_outcome` call already returned

@@ -119,6 +119,21 @@ test("native pre-dispatch rejection closes the reservation without inventing a d
   });
 });
 
+test("a complete profile-rejection contract does not depend on the parent creation build or App label", async () => {
+  for (const cliVersion of ["0.154.0", "future-build", null]) await incident(async (f) => {
+    f.parent.cliVersion = cliVersion;
+    f.records[0].payload.cli_version = "older-session-build";
+    f.records[0].payload.source = "updated-native-client-label";
+    const inspection = await recoverDelegation(f.input, f.options);
+    assert.equal(inspection.status, "recoverable");
+    const result = await recoverDelegation({ ...f.input, apply: true, expectedEvidenceDigest: inspection.evidenceDigest }, f.options);
+    assert.equal(result.status, "reconciled_failure");
+    assert.equal(result.receipt.rawAuditAdapter, "native-spawn-profile-rejection/1");
+    assert.deepEqual(readNativeRecoveryReceipt(f.store.db, f.context, f.route.routeId), result.receipt);
+    assert.equal(f.store.db.prepare("SELECT count(*) n FROM outcomes").get().n, 0);
+  });
+});
+
 test("a profile refusal prevents ticket reuse and Stop directs recovery instead of another spawn", async () => {
   await incident(async (f) => {
     const denied = consumeDelegationTicket(f.store.db, f.context, {
@@ -154,8 +169,8 @@ test("pre-dispatch recovery rejects incomplete, conflicting, or generic failure 
     (f) => { f.records[3].payload.arguments = JSON.stringify({ ...f.args, fork_turns: "all" }); },
     (f) => { f.records.push(structuredClone(f.records[3])); },
     (f) => { f.records.push(structuredClone(f.records[4])); },
-    (f) => { f.records[0].payload.cli_version = "0.153.5"; },
-    (f) => { f.parent.cliVersion = "0.153.5"; },
+    (f) => { f.records[0].payload.id = "different-source-owner"; },
+    (f) => { f.parent.id = "different-parent"; },
     (f) => { f.parent.turns[0].itemsView = "truncated"; },
     (f) => { f.records[2].payload.turn_id = "other-turn"; },
     (f) => { f.records.push({ type: "unknown_native_record", payload: {} }); },

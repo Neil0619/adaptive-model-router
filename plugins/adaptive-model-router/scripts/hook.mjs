@@ -25,12 +25,33 @@ import { childToolRestriction, isRouterChildTarget, observeManagedMessage, obser
 
 import { observeCapacityList, observeCapacitySpawn, observeCapacityTurn, invalidateCapacityList } from "./lib/host-capacity-recovery.mjs";
 import { rememberMessageHost, rememberRootTranscript } from "./lib/stage-reconciliation.mjs";
-import { attestNativeCodexHost } from "./lib/native-host-executable.mjs";
 import { isChildCommand, observeChildCommand } from "./lib/child-command-journal.mjs";
+import { observeEpochExecution, assertEpochAdmission } from "./lib/runtime-epoch.mjs";
 
 let RouterStore;
 let diagnosticIdentity;
 let lifecycleDiagnostic = () => {};
+let epochConfirmationRequired = false;
+
+// Only an actually selected Hook process can create this entry observation.
+// Dispatcher invocation/source checks remain inside observeEpochExecution;
+// direct script execution or a caller's input flag cannot provide a lease.
+function observeHostEpochHook(input) {
+  if (!process.env.ADAPTIVE_ROUTER_INVOCATION_ID || !existsSync(databasePath())) return;
+  const event = input.hook_event_name;
+  const identity = resolveHookIdentity(input, { event });
+  if (!identity.contextId || !identity.turnId) return;
+  if (isBoundedSubagent(input)) {
+    if (!["PreToolUse", "PostToolUse", "SubagentStop", "Stop"].includes(event)) return;
+    const spawn = readThreadSpawnIdentity(input, { pathField: event === "SubagentStop" ? "agent_transcript_path" : "transcript_path" });
+    if (!spawn || !isRouterChildTarget(spawn.taskName)) return;
+  }
+  const store = new RouterStore();
+  try {
+    const observed = store.transaction(() => observeEpochExecution(store, { input }));
+    epochConfirmationRequired = observed.required === true && !observed.rootReady;
+  } finally { store.close(); }
+}
 
 function readInput() {
   return new Promise((resolve, reject) => {
@@ -218,6 +239,7 @@ function injectManagedSubagentContext(input, hookEventName, options = {}) {
 function automaticRoutingContext(rootTask, contextId) {
   return [
     "Adaptive Model Router global automatic activation is enabled for this local Codex task.",
+    ...(epochConfirmationRequired ? ["This task has completed a verified runtime handover. Before its next delegation, call get_route_status once in this task to confirm its actual MCP entry. This is a read-only entry check, not a new qualification child or a reason to repeat existing work."] : []),
     "For every meaningful substantive stage boundary, use the adaptive-model-router skill and call route_stage without requiring the user to mention the skill.",
     "Do not route greetings, simple questions, or messages with no work product merely to create a subagent.",
     "Read-only router inspection is not a substantive stage. For get_route_status, get_route_history, list_policy_proposals, get_learning_status, get_model_policy, preview_model_policy, diagnose_router, or shadow_route_stage requests, call only the requested inspection tool and never call route_stage merely to precede it.",
@@ -540,6 +562,7 @@ async function preToolUseHook(input) {
     const result = store.transaction(() => {
       rememberRootTranscript(store.db, context, input.transcript_path);
       observeCapacityTurn(store.db, context, input.turn_id);
+      assertEpochAdmission(store, context, { kind: "spawn_agent" });
       const consumed = consumeDelegationTicket(store.db, context, {
         taskName: parsed.taskName,
         turnId: input.turn_id,
@@ -674,8 +697,10 @@ function managedChildToolHook(input) {
     const restriction = store.transaction(() => {
       const target = spawn?.childId || input.agent_id;
       const restriction = childToolRestriction(store.db, context, target, input);
-      if (restriction.restricted || !isChildCommand(input)) return restriction;
+      if (restriction.restricted) return restriction;
       const child = targetedChild(store.db, context, target);
+      if (child) assertEpochAdmission(store, context, { kind: "child_business", stageId: child.route_id });
+      if (!isChildCommand(input)) return restriction;
       const command = observeChildCommand(store.db, child.route_id, input);
       return command.allowed ? restriction : { restricted: true, reason: command.reason };
     });
@@ -723,15 +748,14 @@ async function managedMessageHook(input, post) {
     const context = store.context({ cwd: input.cwd || process.cwd(),
       contextId: spawn?.parentContextId || identity.contextId, authoritative: true, create: false });
     const child = targetedChild(store.db, context, input.tool_input?.target);
-    let host = null;
-    if (!post && child) {
-      try { host = await attestNativeCodexHost({ requireAncestor: true }); }
-      catch { /* Unknown call-time host must not classify a version-pinned rejection. */ }
-    }
     const result = store.transaction(() => {
       if (author === "/root") rememberRootTranscript(store.db, context, input.transcript_path);
-      if (!post) rememberMessageHost(store.db, child, input, author, host);
-      return observeManagedMessage(store.db, context, input, { post, author });
+      if (!post && child) assertEpochAdmission(store, context, { kind: input.tool_name, stageId: child.route_id });
+      const observed = observeManagedMessage(store.db, context, input, { post, author });
+      if (!post && observed.matched) rememberMessageHost(store.db, child, input, author,
+        { platform: process.platform, arch: process.arch, source: "native-message-pre-hook" },
+        { preDecision: { allowed: observed.allowed === true, reason: observed.allowed ? null : observed.reason } });
+      return observed;
     });
     if (!result.matched) return false;
     if (!post && !result.allowed) denyRouterAgent(result.reason);
@@ -755,6 +779,7 @@ try {
   assertRuntime();
   stage = "database_import";
   ({ RouterStore } = await import("./lib/database.mjs"));
+  observeHostEpochHook(input);
   if (process.argv[2] === "prompt") {
     stage = "prompt";
     await promptHook(input);

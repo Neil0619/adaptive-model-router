@@ -1,0 +1,258 @@
+{
+  "schema": "host-upgrade-global-install-acceptance/1",
+  "observedAt": "2026-09-15T08:58:29.957Z",
+  "state": "installed_current_task_and_automatic_coordinator_verified",
+  "contextId": "01a079b0-eba4-7792-bc1c-288c3f0af2f9",
+  "nativeInstall": {
+    "completed": true,
+    "version": "0.4.0+codex.20260915030515.runtime2",
+    "digest": "8732d9524390ff549a3e9fc616dacc41ffc7341ae8d6049ace8de0d27cc05989",
+    "sevenApprovedHooksTrusted": true,
+    "evidence": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260915-host-upgrade-global-install/continuation-2/installation-state.json",
+    "completedAt": "2026-09-15T06:09:38.333Z"
+  },
+  "engine": {
+    "digest": "4b950f2687b1a8da98ce87a66a5c813a51f7ccd76c8292f7ad38e9d7862176a9",
+    "sourceFingerprint": "d8b0e9a1a56a096d3dab94d7dd0b1dad6cca3ae1bf6632e74162a282f73a254d",
+    "publicationCount": 4,
+    "published": true
+  },
+  "currentTask": {
+    "generation": "4b950f2687b1a8da98ce87a66a5c813a51f7ccd76c8292f7ad38e9d7862176a9",
+    "candidate": null,
+    "epoch": {
+      "ready": true,
+      "rootReady": true,
+      "childReady": true,
+      "receiptId": "981364d2a0e6628c4cb643e888c9a8e23490851fa1fffe51abd5122e2d851697",
+      "completedAt": "2026-09-15T07:48:12.391Z"
+    },
+    "stageGenerations": [
+      {
+        "generation": "4b950f2687b1a8da98ce87a66a5c813a51f7ccd76c8292f7ad38e9d7862176a9",
+        "stages": 92
+      }
+    ],
+    "stageGenerationsObservedAt": "2026-09-15T08:35:07.705Z",
+    "rootModel": "gpt-6-astra",
+    "reasoningEffort": "host_managed",
+    "migrationPending": false,
+    "stageClosure": null,
+    "pendingStageWork": [],
+    "delegationGate": "available",
+    "pendingOutcomes": 2,
+    "pendingOutcomesNote": "Retained statistics; no unsupported clearing was performed."
+  },
+  "defaults": [
+    {
+      "singleton": 1,
+      "current_digest": "8732d9524390ff549a3e9fc616dacc41ffc7341ae8d6049ace8de0d27cc05989",
+      "rollback_digest": "22a9d720b0aabc5be18d12478f3b0e50c97c411ca1dfd32ca64934dbdb19ae31"
+    }
+  ],
+  "checks": {
+    "full": {
+      "total": 578,
+      "passed": 575,
+      "skipped": 3,
+      "failed": 0,
+      "log": "/tmp/router-post-open-budget-full-20260915.log"
+    },
+    "capturedNativeReplay": {
+      "passed": 25,
+      "total": 25,
+      "log": "/tmp/router-post-open-budget-capture-20260915.log"
+    },
+    "validate": true,
+    "pluginValidator": true,
+    "offlinePolicyCases": 232,
+    "offlineMismatches": 0,
+    "diffCheck": true,
+    "freshNativeWindowsLoggedIn": false,
+    "actualRepairedTaskDelegationAccepted": true,
+    "coordinatorRegression": {
+      "passed": 31,
+      "total": 31,
+      "failed": 0,
+      "log": "/tmp/router-global-epoch-coordinator-final-20260915.log",
+      "independentlyRerun": true
+    },
+    "independentCurrentTaskReview": {
+      "passed": true,
+      "outcomeSeq": 1489
+    },
+    "independentCoordinatorPlanReview": {
+      "passed": true,
+      "outcomeSeq": 1490
+    },
+    "coordinatorImplementation": {
+      "passed": true,
+      "outcomeSeq": 1493
+    },
+    "independentCoordinatorDeploymentReview": {
+      "passed": true,
+      "outcomeSeq": 1494,
+      "remainingSubstantiveFindings": 0
+    },
+    "ownedNativeClientRecovery": true,
+    "duplicateCoordinatorInstanceRejected": true,
+    "freshActualAppBinaryUpgrade": false,
+    "remoteCiRun": false
+  },
+  "heartbeat": {
+    "id": "router",
+    "status": "PAUSED",
+    "intervalMinutes": 2
+  },
+  "preservation": {
+    "nativeHookAndConfigUnchangedByEnginePublication": true,
+    "globalDefaultUnchanged": true,
+    "otherTaskBindingsNotChangedByPublication": true,
+    "originalOutcomesPreserved": true,
+    "originalRecordAudit": {
+      "routes": {
+        "original": 155,
+        "unchanged": 155,
+        "retainedInImmutableOrigin": 0,
+        "changed": 0
+      },
+      "outcomes": {
+        "original": 86,
+        "unchanged": 86,
+        "retainedInImmutableOrigin": 0,
+        "changed": 0
+      },
+      "delegation_attempts": {
+        "original": 64,
+        "unchanged": 60,
+        "retainedInImmutableOrigin": 4,
+        "changed": 0
+      },
+      "delegation_children": {
+        "original": 62,
+        "unchanged": 62,
+        "retainedInImmutableOrigin": 0,
+        "changed": 0
+      }
+    },
+    "unchangedSinceDeployment": {
+      "runtime_stages": {
+        "originalRowsUnchanged": true,
+        "original": 1516,
+        "appended": 2
+      },
+      "runtime_defaults": {
+        "originalRowsUnchanged": true,
+        "original": 1,
+        "appended": 0
+      },
+      "runtime_epoch_receipts": {
+        "originalRowsUnchanged": true,
+        "original": 1,
+        "appended": 0
+      },
+      "runtime_epoch_origins": {
+        "originalRowsUnchanged": true,
+        "original": 89,
+        "appended": 0
+      }
+    },
+    "otherOriginalTaskAssignmentsUnchanged": 418,
+    "globalConfigUnchanged": true,
+    "frozenPluginSourceAndRuntimeDigestsUnchanged": true,
+    "prunedAttemptNote": "Four original finalized attempts were normally pruned by the 64-row history cap; exact original records remain verified in immutable encrypted epoch origins.",
+    "concurrentActivity": "Native turn fields and newly appended stages may advance; no whole-live-database byte equality is claimed."
+  },
+  "remaining": [],
+  "git": {
+    "branch": "codex/host-upgrade-compatibility",
+    "committed": false,
+    "pushed": false
+  },
+  "singleTaskCoordinator": {
+    "state": "completed_and_unloaded",
+    "pid": 60149,
+    "startedAt": "2026-09-15T07:45:10.740Z",
+    "label": "com.niuzhenya.adaptive-model-router.adopt-current-task-budget-20260915",
+    "workerDigest": "2321ada496dc6adf54c842912c419e489ab8fb2c6c10e15097ab46da9ba80d0c",
+    "stateFile": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260915-host-upgrade-global-install/continuation-2/adoption-2/current-task-adoption-state.json",
+    "exitCode": 0,
+    "completedAt": "2026-09-15T07:48:12.391Z"
+  },
+  "automaticCoordinator": {
+    "state": "deployed_running_and_verified",
+    "plan": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260915-host-upgrade-global-install/continuation-2/global-coordinator-acceptance/deployment-plan.json",
+    "inspection": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260915-host-upgrade-global-install/continuation-2/global-coordinator-acceptance/inspect-once-2.json",
+    "inspectionSummary": {
+      "state": "inspection_complete",
+      "discovered": 69,
+      "attempts": 0,
+      "prepares": 0,
+      "commits": 0,
+      "installationComplete": false,
+      "phase": "historical_predeployment_inspection"
+    },
+    "otherOldTasksMigrated": 0,
+    "deployedAt": "2026-09-15T08:46:11.937Z",
+    "serviceLabel": "com.niuzhenya.adaptive-model-router.epoch-coordinator",
+    "serviceFile": "/Users/niuzhenya/Library/LaunchAgents/com.niuzhenya.adaptive-model-router.epoch-coordinator.plist",
+    "serviceDigest": "9e3efe2be2c7a5393fb7e71085fef51d157e04fe9223af1f65d4fe2174607dc3",
+    "releaseDigest": "65a901657cba8ba6ef0ea66653e2f63ba261ed54d41dce9530733a6324cd09f8",
+    "releasePath": "/Users/niuzhenya/.codex/router-epoch-coordinator/releases/65a901657cba8ba6ef0ea66653e2f63ba261ed54d41dce9530733a6324cd09f8",
+    "configFile": "/Users/niuzhenya/.codex/router-epoch-coordinator/config.json",
+    "configDigest": "4408e8fa7c049ea70a7e91b560f52d9f453f38bc6374dfb8f0789ea60a89df45",
+    "stateFile": "/Users/niuzhenya/.codex/router-epoch-coordinator/state.json",
+    "helperDigests": {
+      "runtime-epoch-coordinator.mjs": "e45e35e71741fed6e0cf89620234da9d4790c0749e7cee16afd89b1be20aac46",
+      "runtime-epoch-coordinator-c2.mjs": "1c694c10eb61975d257dbcbe755e40418c95acb6fcdc99a3f05648709e16c2b2",
+      "runtime-epoch-coordinator-lock.py": "e9afc617605f64ef4e99148137e2e3bed16a3b6dbc1a35422111f514b64223d3"
+    },
+    "serviceAtAcceptance": {
+      "observedAt": "2026-09-15T08:58:29.957Z",
+      "state": "running",
+      "pid": 33714,
+      "runs": 2,
+      "previousExitCode": 75,
+      "stderrBytes": 0
+    },
+    "stateCountsAtAcceptance": {
+      "active": 1,
+      "waiting_native_entry": 62
+    },
+    "handoverActivityAtAcceptance": {
+      "attempts": 0,
+      "prepares": 0,
+      "commits": 0
+    },
+    "recovery": {
+      "scope": "Only the verified coordinator-owned native metadata client was terminated.",
+      "verified": true,
+      "restartedAutomatically": true,
+      "resumedProgress": true,
+      "duplicateInstanceExitCode": 73,
+      "appRestartRequired": false
+    },
+    "finalAcceptance": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260915-host-upgrade-global-install/continuation-2/global-coordinator-acceptance/service-final-acceptance.json",
+    "otherOldTaskMigrationVerified": false,
+    "admission": "Requires a completed actual B root entry, native quiescence, complete responsibility evidence, fresh source verification and ledger CAS; no mid-turn migration.",
+    "keptRunning": true
+  },
+  "recordUpdatedAt": "2026-09-15T09:04:40.622Z",
+  "database": {
+    "health": "ok",
+    "version": 10
+  },
+  "globalReservations": {
+    "limit": 10,
+    "pending": 2,
+    "released": 3,
+    "verificationDeferred": 0
+  },
+  "limitations": [
+    "No new native Windows logged-in acceptance was run.",
+    "No actual App binary upgrade was performed in the final service test; it verified owned-client failure recovery.",
+    "No other old task met entry requirements during acceptance, so automatic migration of other old tasks was not exercised.",
+    "Remote CI was not run."
+  ],
+  "userActionRequired": false
+}

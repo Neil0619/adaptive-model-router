@@ -32,6 +32,42 @@ test("child result verification still rejects a concurrent append by default", (
   }), /changed during evidence read/);
 }));
 
+const compactedMetadata = () => ({ timestamp: "2026-09-01T00:00:00.000Z", ordinal: 1, type: "compacted", payload: {
+  message: "x".repeat(16 * 1024 * 1024), replacement_history: [{ type: "compaction", encrypted_content: "opaque" }],
+  guardian_history: [], window_number: 1, first_window_id: "11111111-1111-1111-1111-111111111111",
+  previous_window_id: "22222222-2222-2222-2222-222222222222", window_id: "33333333-3333-3333-3333-333333333333",
+  compaction_response_id: "response-compaction", latest_token_usage_record: { thread_id: "thread", turn_id: "turn", session_id: "session",
+    root_turn_id: "root", response_id: "response", usage: {}, turn_token_usage: {}, thread_token_usage: {} },
+} });
+
+test("message source reads bounded verified compaction metadata whole and hashes it without admitting oversized business rows", () => fixture(({ path }) => {
+  const entry = compactedMetadata(), bytes = JSON.stringify(entry) + "\n";
+  writeFileSync(path, bytes);
+  assert.throws(() => readStableRollout(path, () => {}), /line exceeds evidence bounds/);
+  let seen;
+  const result = readStableRollout(path, (value) => { seen = value; }, { allowCompactedMetadata: true, deadline: Date.now() + 5000 });
+  assert.deepEqual(seen, entry);
+  assert.equal(result.transcriptDigest, createHash("sha256").update(bytes).digest("hex"));
+  for (const mutate of [
+    (value) => { value.type = "response_item"; },
+    (value) => { delete value.payload.guardian_history; },
+    (value) => { value.payload.window_id = "not-a-window-identity"; },
+    (value) => { value.payload.replacement_history = "not-history"; },
+    (value) => { value.payload.message = "x".repeat(32 * 1024 * 1024); },
+  ]) {
+    const changed = structuredClone(entry); mutate(changed); writeFileSync(path, JSON.stringify(changed) + "\n");
+    assert.throws(() => readStableRollout(path, () => assert.fail("invalid metadata reached evidence consumer"),
+      { allowCompactedMetadata: true, deadline: Date.now() + 5000 }), /line exceeds evidence bounds|compaction metadata/);
+  }
+}));
+
+test("compaction metadata never relaxes the source identity or caller read deadline", () => fixture(({ path }) => {
+  writeFileSync(path, JSON.stringify(compactedMetadata()) + "\n");
+  assert.throws(() => readStableRollout(path, () => {}, { allowCompactedMetadata: true, deadline: Date.now() - 1 }), /budget exhausted/);
+  assert.throws(() => readStableRollout(path, () => appendFileSync(path, '{"value":3}\n'),
+    { allowCompactedMetadata: true, deadline: Date.now() + 5000 }), /changed during evidence read/);
+}));
+
 for (const [name, mutation] of [
   ["modified prefix", (path, bytes) => writeFileSync(path, bytes.replace('"value":1', '"value":9') + '{"value":3}\n')],
   ["truncation", (path) => writeFileSync(path, '{"value":1}\n')],

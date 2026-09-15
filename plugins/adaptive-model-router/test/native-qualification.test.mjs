@@ -163,6 +163,46 @@ async function completedQualification(value, admitted = null) {
   return { ...value, route, parent, child, records, outcome, serviceOptions };
 }
 
+test("contract qualification survives host upgrades without another no-op or a rewritten historical outcome", async () => {
+  await fixture(async (value) => {
+    const host = { platform: "darwin", cliVersion: "0.154.0-alpha.6.2", executableDigest: "a".repeat(64) };
+    Object.assign(value.binding, lifecycleBinding([], SOURCE_ROOT, SOURCE_ROOT, host, value.project.root));
+    const f = await completedQualification(value);
+    f.child.cliVersion = "new-actual-host";
+    f.records[0].payload.cli_version = "old-creation-label";
+    assert.equal((await callRouterTool("record_outcome", f.outcome, f.serviceOptions)).status, "passed");
+    const original = readTaskQualification(f.store.db, f.context);
+    assert.equal(original.schema, 2);
+    assert.equal(original.proof.rawAuditAdapter, "native-child-no-work/1");
+    const outcome = f.store.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(f.route.routeId);
+    const next = lifecycleBinding([], SOURCE_ROOT, SOURCE_ROOT, {
+      ...host, cliVersion: "0.999.0", executableDigest: "b".repeat(64), executablePathDigest: "c".repeat(64),
+    }, f.project.root);
+    assert.equal(qualificationReadiness(f.store.db, f.context, next).ready, true);
+    const normal = await routeStage(f.input, { ...f.options,
+      lifecycleHookProbe: async () => qualificationReadiness(f.store.db, f.context, next) });
+    assert.equal(normal.action, "delegate");
+    assert.equal(normal.reasonCodes.includes("HOST_LIFECYCLE_QUALIFICATION"), false);
+    assert.deepEqual(readTaskQualification(f.store.db, f.context), original);
+    assert.deepEqual(f.store.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(f.route.routeId), outcome);
+    assert.equal(f.store.db.prepare("SELECT count(*) n FROM routes WHERE reason_codes_json=?")
+      .get('["HOST_LIFECYCLE_QUALIFICATION"]').n, 1);
+  });
+});
+
+test("a familiar version cannot grant a contract qualification when the complete raw source contains hidden work", async () => {
+  await fixture(async (value) => {
+    Object.assign(value.binding, lifecycleBinding([], SOURCE_ROOT, SOURCE_ROOT, { cliVersion: "0.153.4" }, value.project.root));
+    const f = await completedQualification(value);
+    f.records.splice(-1, 0, { type: "response_item", payload: {
+      type: "function_call", name: "exec_command", call_id: "hidden", arguments: "{}",
+    } });
+    await assert.rejects(callRouterTool("record_outcome", f.outcome, f.serviceOptions), /qualification verification failed/);
+    assert.equal(readTaskQualification(f.store.db, f.context).state, "failed");
+    assert.equal(f.store.db.prepare("SELECT count(*) n FROM outcomes").get().n, 0);
+  });
+});
+
 test("managed qualification verifies current closure before minting and consuming its proof", async () => {
   await fixture(async (value) => {
     value.binding.cliVersion = "0.153.4";
@@ -839,7 +879,7 @@ test("native recovery closes an unconsumed qualification across parent and child
     const applied = await recoverDelegation({ ...input, apply: true, expectedEvidenceDigest: preview.evidenceDigest }, nativeOptions);
     assert.equal(applied.status, "reconciled_failure");
     assert.equal(applied.receipt.cliVersion, "0.153.4");
-    assert.equal(applied.receipt.rawAuditAdapter, metadataOnly ? "codex-0.153.4-tool-metadata-only/1" : "codex-0.153.4-no-work/1");
+    assert.equal(applied.receipt.rawAuditAdapter, metadataOnly ? "native-tool-metadata-only/1" : "native-child-no-work/1");
     assert.deepEqual(readTaskQualification(f.store.db, f.context), original);
     assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM outcomes").get().n, 0);
     const attempt = f.store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=?").get(old.route.routeId);
@@ -858,7 +898,7 @@ test("native recovery closes an unconsumed qualification across parent and child
   });
 });
 
-test("cross-version qualification recovery rejects hidden work, a changed binding and unknown child builds", async () => {
+test("contract qualification recovery rejects hidden work and target changes while accepting new build labels", async () => {
   const { recoverDelegation } = await import("../scripts/lib/delegation-recovery.mjs");
   for (const mode of ["hidden-work", "binding", "unknown-build"]) await fixture(async (f) => {
     f.binding.cliVersion = "0.153.4"; f.omitHookDispatch = true;
@@ -866,14 +906,114 @@ test("cross-version qualification recovery rejects hidden work, a changed bindin
     native.parent.cliVersion = "0.153.3";
     if (mode === "hidden-work") native.records.splice(-1, 0, { type: "response_item", payload: { type: "custom_tool_call", name: "exec", namespace: "functions" } });
     if (mode === "unknown-build") native.child.cliVersion = native.records[0].payload.cli_version = "0.154.0";
-    if (mode === "binding") native.child.cliVersion = native.records[0].payload.cli_version = "0.153.3";
+    if (mode === "binding") native.child.model = "gpt-5.6-sol";
     const result = await recoverDelegation({ contextId: f.input.contextId, routeId: native.route.routeId }, {
       store: f.store, cwd: f.project.root,
       readThread: async (id) => structuredClone(id === f.input.contextId ? native.parent : native.child),
       readTranscript: native.serviceOptions.qualificationOptions.auditOptions.readTranscript,
       measureTranscript: () => ({ bytes: 4096, identityDigest: "e".repeat(64) }),
     });
-    assert.equal(result.status, "unresolved");
+    assert.equal(result.status, mode === "unknown-build" ? "recoverable" : "unresolved");
     assert.equal(f.store.status(f.context).delegationGate.state, "occupied");
+  });
+});
+
+async function adoptionFixture(run) {
+  const { prepareHistoricalQualificationAdoption, commitHistoricalQualificationAdoption } = await import("../scripts/lib/lifecycle-qualification.mjs");
+  const { recordHookIdentityDiagnostic } = await import("../scripts/lib/hook-diagnostics.mjs");
+  await passedQualification(async (f) => {
+    f.child.path = resolve(f.project.root, "original-child.jsonl");
+    writeFileSync(f.child.path, f.records.map(JSON.stringify).join("\n") + "\n");
+    const start = f.parent.turns[0].items[0];
+    const toolInput = { task_name: f.route.carrier.taskName, message: f.route.carrier.message,
+      model: f.route.target.model, reasoning_effort: f.route.target.effort, fork_turns: "none" };
+    f.parent.path = resolve(f.project.root, "original-parent.jsonl");
+    writeFileSync(f.parent.path, [
+      { type: "session_meta", payload: { id: f.input.contextId, cwd: f.project.root } },
+      { type: "turn_context", payload: { turn_id: f.parent.turns[0].id } },
+      { type: "response_item", payload: { type: "function_call", name: "spawn_agent", namespace: "collaboration",
+        call_id: start.id, arguments: JSON.stringify(toolInput) } },
+      { type: "response_item", payload: { type: "function_call_output", call_id: start.id, output: JSON.stringify({ agent_id: f.child.id }) } },
+    ].map(JSON.stringify).join("\n") + "\n");
+    const turnId = "current-actual-hook-turn";
+    const identity = resolveHookIdentity({ hook_event_name: "PreToolUse", session_id: f.input.contextId, turn_id: turnId });
+    const observe = () => recordHookIdentityDiagnostic(identity.audit, "identity_accepted", process.env,
+      { contextId: f.input.contextId, turnId });
+    observe();
+    const binding = lifecycleBinding([], SOURCE_ROOT, SOURCE_ROOT, { cliVersion: "future-host", platform: "darwin" }, f.project.root);
+    const prepare = () => prepareHistoricalQualificationAdoption({ contextId: f.input.contextId, routeId: f.route.routeId, turnId }, {
+      store: f.store, cwd: f.project.root, binding, inspectBinding: async () => ({ binding }),
+      readNative: async () => ({ parent: f.parent, child: f.child }),
+      auditOptions: { readTranscript: (path) => readFileSync(path) },
+    });
+    await run({ ...f, binding, observe, prepare, commit: (token) => f.store.transaction(() => commitHistoricalQualificationAdoption(f.store.db, token)) });
+  });
+}
+
+test("schema1 adoption re-reads original native sources and current Hook without rewriting qualification or spawning a probe", async () => {
+  await adoptionFixture(async (f) => {
+    const raw = f.store.db.prepare("SELECT value FROM meta WHERE key=?").get(f.qualificationKey).value;
+    const outcomes = JSON.stringify(f.store.db.prepare("SELECT * FROM outcomes").all());
+    const token = await f.prepare();
+    assert.equal(qualificationReadiness(f.store.db, f.context, f.binding).ready, false);
+    const adopted = f.commit(token);
+    assert.equal(adopted.proof.rawAuditAdapter, "native-child-no-work/1");
+    assert.equal(qualificationReadiness(f.store.db, f.context, f.binding).ready, true);
+    assert.equal(f.commit(token).id, adopted.id);
+    assert.equal(f.store.db.prepare("SELECT value FROM meta WHERE key=?").get(f.qualificationKey).value, raw);
+    assert.equal(JSON.stringify(f.store.db.prepare("SELECT * FROM outcomes").all()), outcomes);
+    assert.equal(f.store.db.prepare("SELECT count(*) n FROM routes").get().n, 1);
+    const reader = new RouterStore({ path: f.store.path });
+    try { assert.equal(qualificationReadiness(reader.db, f.context, f.binding).ready, true); }
+    finally { reader.close(); }
+    assert.throws(() => f.store.db.prepare("UPDATE host_contract_adoptions SET record='{}'").run(), /immutable/);
+  });
+});
+
+test("historical qualification adoption supports pruned attempts using retained hashed native identities", async () => {
+  await adoptionFixture(async (f) => {
+    f.store.db.prepare("DELETE FROM delegation_attempts WHERE route_id=?").run(f.route.routeId);
+    f.commit(await f.prepare());
+    assert.equal(qualificationReadiness(f.store.db, f.context, f.binding).ready, true);
+    assert.equal(f.store.db.prepare("SELECT count(*) n FROM delegation_attempts").get().n, 0);
+  });
+});
+
+test("historical spawn path receipts require the exact independently observed native child and reject conflicting identities", async () => {
+  for (const mode of ["canonical-path", "wrong-path", "conflicting-id", "empty"]) await adoptionFixture(async (f) => {
+    const records = readFileSync(f.parent.path, "utf8").trim().split("\n").map(JSON.parse);
+    const task_name = f.parent.turns[0].items[0].agentPath;
+    records.at(-1).payload.output = JSON.stringify(mode === "empty" ? {} : {
+      task_name: mode === "wrong-path" ? "/root/foreign-child" : task_name,
+      ...(mode === "conflicting-id" ? { agent_id: "foreign-child" } : {}),
+    });
+    writeFileSync(f.parent.path, records.map(JSON.stringify).join("\n") + "\n");
+    if (mode === "canonical-path") { f.commit(await f.prepare()); assert.equal(qualificationReadiness(f.store.db, f.context, f.binding).ready, true); }
+    else await assert.rejects(f.prepare(), /evidence is incomplete/);
+  });
+});
+
+test("adoption refuses digest-only success, hidden work, missing current Hook and changed source after preparation", async () => {
+  for (const mode of ["fake-proof", "hidden-work", "wrong-raw-parent-turn", "missing-hook", "source-race", "outcome-race"]) await adoptionFixture(async (f) => {
+    if (mode === "fake-proof") f.changeQualification((q) => { q.proof.rawAuditDigest = "e".repeat(64); });
+    if (mode === "hidden-work") writeFileSync(f.child.path, readFileSync(f.child.path, "utf8") + JSON.stringify({
+      type: "response_item", payload: { type: "function_call", name: "exec_command", arguments: '{"cmd":"touch side-effect"}' } }) + "\n");
+    if (mode === "wrong-raw-parent-turn") {
+      const records = readFileSync(f.parent.path, "utf8").trim().split("\n").map(JSON.parse);
+      records[1].payload.turn_id = "unrelated-native-turn";
+      writeFileSync(f.parent.path, records.map(JSON.stringify).join("\n") + "\n");
+    }
+    if (mode === "missing-hook") {
+      const { recordHookIdentityDiagnostic } = await import("../scripts/lib/hook-diagnostics.mjs");
+      const identity = resolveHookIdentity({ hook_event_name: "PreToolUse", session_id: f.input.contextId, turn_id: "another-turn" });
+      recordHookIdentityDiagnostic(identity.audit, "identity_accepted", process.env, { contextId: f.input.contextId, turnId: "another-turn" });
+    }
+    if (["source-race", "outcome-race"].includes(mode)) {
+      const token = await f.prepare();
+      if (mode === "source-race") writeFileSync(f.parent.path, readFileSync(f.parent.path, "utf8") + '{"type":"event_msg","payload":{"type":"token_count"}}\n');
+      else f.store.db.prepare("UPDATE outcomes SET retries=1 WHERE route_id=?").run(f.route.routeId);
+      assert.throws(() => f.commit(token), /evidence is incomplete/);
+    } else await assert.rejects(f.prepare(), /evidence is incomplete/);
+    assert.equal(f.store.db.prepare("SELECT count(*) n FROM host_contract_adoptions").get().n, 0);
   });
 });

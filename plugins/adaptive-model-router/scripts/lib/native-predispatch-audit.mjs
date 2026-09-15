@@ -4,9 +4,12 @@ import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { parseCarrierTaskName } from "./delegation-gate.mjs";
 import { payloadHash } from "./io.mjs";
+import { HOST_PREDISPATCH_CONTRACT } from "./host-compatibility.mjs";
+import { recoveryRecordIntact } from "./native-recovery-receipt.mjs";
 
-export const PREDISPATCH_RECOVERY_SCHEMA = "native-thread-predispatch-rejection-recovery/1";
-const ADAPTER = "codex-0.153.4-parent-profile-rejection-v1";
+export const PREDISPATCH_RECOVERY_SCHEMA = "native-thread-predispatch-rejection-recovery/2";
+const LEGACY_SCHEMA = "native-thread-predispatch-rejection-recovery/1";
+const LEGACY_ADAPTER = "codex-0.153.4-parent-profile-rejection-v1";
 const MAX_BYTES = 64 * 1024 * 1024;
 const REJECTION = "Tool call blocked by PreToolUse hook: Router-marked Agent model or reasoning effort does not match the admitted route.. Tool: collaborationspawn_agent";
 const RECORD_TYPES = new Set(["session_meta", "event_msg", "response_item", "world_state", "turn_context",
@@ -19,9 +22,9 @@ const digest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(va
 const requireFact = (value) => { if (!value) throw new Error("native pre-dispatch rejection evidence is unproven"); };
 
 export function isPredispatchRecoveryReceipt(receipt, context, routeId) {
-  return receipt.schemaVersion === PREDISPATCH_RECOVERY_SCHEMA
+  return ((receipt.schemaVersion === PREDISPATCH_RECOVERY_SCHEMA && receipt.rawAuditAdapter === HOST_PREDISPATCH_CONTRACT && recoveryRecordIntact(receipt))
+      || (receipt.schemaVersion === LEGACY_SCHEMA && receipt.rawAuditAdapter === LEGACY_ADAPTER && receipt.cliVersion === "0.153.4"))
     && receipt.recoveryKind === "rejected_before_dispatch"
-    && receipt.rawAuditAdapter === ADAPTER && receipt.cliVersion === "0.153.4"
     && receipt.subjectDigest === payloadHash([context.projectId, context.contextKey, routeId])
     && receipt.status === "reconciled_failure" && receipt.failureType === "tooling"
     && receipt.source === "native_thread_read" && receipt.originalHandshakeProven === false
@@ -63,7 +66,7 @@ export function readNativeParentTranscript(path) {
 }
 
 export function auditNativePredispatchRejection(bytes, parent, attempt, contextId, cwd) {
-  requireFact(parent?.id === contextId && parent.cliVersion === "0.153.4" && !parent.parentThreadId);
+  requireFact(parent?.id === contextId && !parent.parentThreadId);
   requireFact(present(parent.cwd) && resolve(parent.cwd) === resolve(cwd));
   requireFact(attempt.ticket_consumed === 0 && attempt.post_observed === 0 && attempt.stop_observed === 0
     && attempt.outcome_recorded === 0 && attempt.no_child === 0 && !attempt.finalized_at
@@ -76,8 +79,7 @@ export function auditNativePredispatchRejection(bytes, parent, attempt, contextI
     && r.payload && typeof r.payload === "object"));
   const metas = records.filter((r) => r.type === "session_meta").map((r) => r.payload);
   requireFact(metas.length === 1 && metas[0].id === contextId && !metas[0].parent_thread_id
-    && metas[0].cli_version === "0.153.4" && metas[0].originator === "Codex Desktop"
-    && metas[0].source === "vscode" && resolve(metas[0].cwd) === resolve(cwd));
+    && resolve(metas[0].cwd) === resolve(cwd));
   const calls = [], outputs = [], activities = [];
   const started = new Set();
   let currentTurn = null;
@@ -136,11 +138,11 @@ export function auditNativePredispatchRejection(bytes, parent, attempt, contextI
   // still blocks recovery while ordinary parent progress does not cause a loop.
   return {
     schemaVersion: PREDISPATCH_RECOVERY_SCHEMA, recoveryKind: "rejected_before_dispatch",
-    cliVersion: "0.153.4", rawAuditAdapter: ADAPTER,
+    cliVersion: parent.cliVersion ?? null, rawAuditAdapter: HOST_PREDISPATCH_CONTRACT,
     rejectionCode: "ROUTER_SPAWN_PROFILE_MISMATCH", originalDispatchConsumed: false,
     parentTurnDigest: hash(turnId), launchItemDigest: hash(call.call_id),
     rejectionItemDigest: payloadHash(result), dispatchInputDigest: payloadHash(args),
-    rawAuditDigest: payloadHash([ADAPTER, metas[0], turnId, call, result]),
+    rawAuditDigest: payloadHash([HOST_PREDISPATCH_CONTRACT, metas[0], turnId, call, result]),
   };
 }
 

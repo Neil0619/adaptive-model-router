@@ -8,6 +8,45 @@ const itemTurn = (payload) => payload.internal_chat_message_metadata_passthrough
 const textContent = (content) => Array.isArray(content)
   ? content.map((part) => typeof part.text === "string" ? part.text : "").join("") : null;
 
+// Input identity and delivery order are independent of operation completion.
+// Both consumers share these checks; message consumption does not assert that
+// an old tool, final result or task has finished.
+function childInputReader(locator, { retainContent = false } = {}) {
+  const messages = [], inputs = [], ids = new Set(); let pendingMode = null;
+  return { messages, inputs,
+    observe(entry, line) {
+      const value = entry.payload;
+      if (line === 1) {
+        const spawn = value?.source?.subagent?.thread_spawn;
+        if (entry.type !== "session_meta" || value.id !== locator.childId
+          || value.parent_thread_id !== locator.parentContextId || value.session_id !== locator.parentContextId
+          || value.agent_path !== locator.agentPath || spawn?.parent_thread_id !== locator.parentContextId
+          || spawn.agent_path !== locator.agentPath || spawn.depth !== 1) throw new Error("child transcript identity changed");
+      }
+      if (entry.type === "inter_agent_communication_metadata") {
+        if (typeof value?.trigger_turn !== "boolean" || pendingMode !== null) throw new Error("unpaired native communication metadata");
+        pendingMode = value.trigger_turn;
+      } else if (entry.type === "response_item" && value?.type === "agent_message") {
+        if (pendingMode === null || typeof value.id !== "string" || ids.has(value.id)
+          || value.recipient !== locator.agentPath || typeof value.author !== "string" || !itemTurn(value))
+          throw new Error("untrusted native child input order");
+        ids.add(value.id);
+        messages.push({ id: value.id, author: value.author, turnId: itemTurn(value),
+          triggerTurn: pendingMode, digest: payloadHash(value.content), line });
+        if (retainContent) inputs.push(value);
+        pendingMode = null;
+      }
+    },
+    finish() { if (pendingMode !== null) throw new Error("unpaired native communication metadata"); },
+  };
+}
+
+export function readChildInputEvidence(locator, { deadline = Infinity } = {}) {
+  const reader = childInputReader(locator, { retainContent: true });
+  const source = readStableRollout(locator.transcriptPath, (entry, line) => reader.observe(entry, line), { deadline });
+  reader.finish(); return { messages: reader.messages, inputs: reader.inputs, ...source };
+}
+
 // Codex 0.153.4 keeps the memory trailer in response_item, but separates it
 // from AgentMessage and the Stop text. Only that exact native representation
 // may supply a second digest. Never trim or strip arbitrary assistant text.
@@ -37,16 +76,14 @@ function memoryStopProof(final, native, completions) {
  */
 export function readChildTurnEvidence(locator, { commands = [], deadline = Infinity, maintenanceInputOffset = Infinity } = {}) {
 
-  const messages = [];
+  const inputReader = childInputReader(locator), messages = inputReader.messages;
   const completions = new Map();
   const completionEvidence = new Map();
   const nativeFinals = new Map();
   const foreignFinalIds = new Set();
-  const ids = new Set();
   let latestStarted = null;
   let lastFinal = null;
   let finalSource = null;
-  let pendingMode = null;
   const activity = new NativeActivity({ maintenanceInputOffset });
   const operations = new NativeOperationEvidence({ childId: locator.childId, commands });
   const coverage = locator.commandCoverage;
@@ -57,6 +94,7 @@ export function readChildTurnEvidence(locator, { commands = [], deadline = Infin
   const operationRecords = [];
   const source = readStableRollout(locator.transcriptPath, (entry, lineNumber) => {
     const value = entry.payload;
+    inputReader.observe(entry, lineNumber);
     activity.observe(entry);
     if (entry.type === "event_msg" && value?.type === "item_completed" && value.item?.type === "AgentMessage"
       && typeof value.item.id === "string" && value.thread_id !== locator.childId) foreignFinalIds.add(value.item.id);
@@ -71,26 +109,7 @@ export function readChildTurnEvidence(locator, { commands = [], deadline = Infin
     if ((entry.type === "response_item" && ["function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output"].includes(value?.type))
       || (entry.type === "event_msg" && ["item_started", "item_completed"].includes(value?.type)
         && ["CommandExecution", "FileChange"].includes(value.item?.type))) operationRecords.push(payloadHash({ type: entry.type, payload: value }));
-    if (lineNumber === 1) {
-      const spawn = value?.source?.subagent?.thread_spawn;
-      if (entry.type !== "session_meta" || value.id !== locator.childId
-        || value.parent_thread_id !== locator.parentContextId || value.session_id !== locator.parentContextId
-        || value.agent_path !== locator.agentPath || spawn?.parent_thread_id !== locator.parentContextId
-        || spawn.agent_path !== locator.agentPath || spawn.depth !== 1) throw new Error("child transcript identity changed");
-    }
-    if (entry.type === "inter_agent_communication_metadata") {
-      if (typeof value?.trigger_turn !== "boolean" || pendingMode !== null) throw new Error("unpaired native communication metadata");
-      pendingMode = value.trigger_turn;
-    } else if (entry.type === "response_item" && value?.type === "agent_message") {
-      if (pendingMode === null || typeof value.id !== "string" || ids.has(value.id)
-        || value.recipient !== locator.agentPath || typeof value.author !== "string" || !itemTurn(value)) {
-        throw new Error("untrusted native child input order");
-      }
-      ids.add(value.id);
-      messages.push({ id: value.id, author: value.author, turnId: itemTurn(value),
-        triggerTurn: pendingMode, digest: payloadHash(value.content), line: lineNumber });
-      pendingMode = null;
-    } else if (entry.type === "response_item" && value?.type === "message"
+    if (entry.type === "response_item" && value?.type === "message"
       && value.role === "assistant" && value.phase === "final_answer") {
       const text = textContent(value.content);
       if (!itemTurn(value) || text === null) throw new Error("final result lacks native turn identity");
@@ -113,7 +132,7 @@ export function readChildTurnEvidence(locator, { commands = [], deadline = Infin
     }
   }, { deadline });
   if (coverage && !covered) throw new Error("command coverage prefix is incomplete");
-  if (pendingMode !== null) throw new Error("unpaired native communication metadata");
+  inputReader.finish();
   if (lastFinal && typeof finalSource.id === "string" && finalSource.id.length > 0) {
     if (foreignFinalIds.has(finalSource.id)) throw new Error("native final message has conflicting child identity");
     // The response passthrough ID can be an inference ID rather than the host
