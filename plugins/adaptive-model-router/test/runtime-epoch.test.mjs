@@ -7,6 +7,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, wri
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { archiveHistoricalRuntime } from "./support/historical-runtime.mjs";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { inspectRuntimePackage } from "../scripts/lib/runtime-package.mjs";
 import { bindRuntimeStage, publishRuntime, runtimeTask, runtimeReferences, settleRuntimeMigration, beginRuntimeMigration, pendingRuntimeResponsibilities } from "../scripts/lib/runtime-isolation.mjs";
@@ -40,7 +41,7 @@ let work, a, b, publication, old, sourceAtStart;
 before(async (t) => {
   sourceAtStart = runtimeSourceDigest(root);
   work = realpathSync(mkdtempSync(join(tmpdir(), "router-epoch-test-")));
-  const archive = spawnSync("git", ["archive", BASELINE, "plugins/adaptive-model-router"], { cwd: resolve(root, "../.."), maxBuffer: 32 * 1024 * 1024 });
+  const archive = archiveHistoricalRuntime(resolve(root, "../.."), BASELINE);
   assert.equal(archive.status, 0, "Historical A must be available as exact git object 16c439dd (CI fetch-depth: 0); never substitute live cache");
   assert.equal(spawnSync("tar", ["-xf", "-", "-C", work], { input: archive.stdout }).status, 0);
   a = inspectRuntimePackage(join(work, "plugins/adaptive-model-router"));

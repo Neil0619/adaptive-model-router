@@ -6,6 +6,7 @@ import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { archiveHistoricalRuntime } from "./support/historical-runtime.mjs";
 import { createInterface } from "node:readline";
 import { runtimeSourceDigest } from "../scripts/lib/lifecycle-qualification.mjs";
 
@@ -26,8 +27,7 @@ let workspace, a, b, bStore, old, helpers, sourceAtStart;
 before(async (t) => {
   sourceAtStart = runtimeSourceDigest(source);
   workspace = realpathSync(mkdtempSync(join(tmpdir(), "router-host-epoch-feasibility-")));
-  const archive = spawnSync("git", ["archive", BASELINE, "plugins/adaptive-model-router"],
-    { cwd: repository, maxBuffer: 32 * 1024 * 1024 });
+  const archive = archiveHistoricalRuntime(repository, BASELINE);
   assert.equal(archive.status, 0, `Required historical git object ${BASELINE} is missing; use the explicit fetch contract in this test. ${String(archive.stderr)}`);
   const unpacked = spawnSync("tar", ["-xf", "-", "-C", workspace], { input: archive.stdout });
   assert.equal(unpacked.status, 0, String(unpacked.stderr));

@@ -5,6 +5,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync,
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { archiveHistoricalRuntime } from "./support/historical-runtime.mjs";
 import { createInterface } from "node:readline";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { inspectRuntimePackage, prepareRuntimeCandidate } from "../scripts/lib/runtime-package.mjs";
@@ -667,8 +668,7 @@ test("exact v1 shares current B writers but a post-cold retained v1 MCP still by
       const legacyRoot = join(project.root, "legacy-exact-copy"); cpSync(process.env.ADAPTIVE_ROUTER_LEGACY_FIXTURE, legacyRoot, { recursive: true });
       const legacy = inspectRuntimePackage(legacyRoot, { legacy: true });
       assert.equal(legacy.digest, "9d23b8ae47f6d9bd6b388a33b75c7f94741546116efa29d3e33d9ebc72a1c9b2");
-      const archive = spawnSync("git", ["archive", "16c439dd0bf3657ba06707ff15c1465613d49554", "plugins/adaptive-model-router"],
-        { cwd: resolve(source, "../.."), maxBuffer: 32 * 1024 * 1024 });
+      const archive = archiveHistoricalRuntime(resolve(source, "../.."), "16c439dd0bf3657ba06707ff15c1465613d49554");
       assert.equal(archive.status, 0, "Exact frozen v2 bridge requires git object 16c439dd; CI fetch-depth: 0");
       assert.equal(spawnSync("tar", ["-xf", "-", "-C", project.root], { input: archive.stdout }).status, 0);
       const bridge = inspectRuntimePackage(join(project.root, "plugins/adaptive-model-router"));

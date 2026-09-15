@@ -5,6 +5,7 @@ import { cpSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, wri
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { archiveHistoricalRuntime } from "./support/historical-runtime.mjs";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { inspectRuntimePackage, copyRuntimePackage, managedRuntimeDestination } from "../scripts/lib/runtime-package.mjs";
 import { ensureRuntimeTask, runtimeTask, publishedDefault } from "../scripts/lib/runtime-isolation.mjs";
@@ -21,8 +22,7 @@ let work, templates, candidate, sourceAtStart;
 before(() => {
   sourceAtStart = runtimeSourceDigest(root);
   work = realpathSync(mkdtempSync(join(tmpdir(), "router-cold-sources-test-")));
-  const archive = spawnSync("git", ["archive", "16c439dd0bf3657ba06707ff15c1465613d49554", "plugins/adaptive-model-router"],
-    { cwd: resolve(root, "../.."), maxBuffer: 32 * 1024 * 1024 });
+  const archive = archiveHistoricalRuntime(resolve(root, "../.."), "16c439dd0bf3657ba06707ff15c1465613d49554");
   assert.equal(archive.status, 0, "Exact historical commit is required; never read the global live cache");
   assert.equal(spawnSync("tar", ["-xf", "-", "-C", work], { input: archive.stdout }).status, 0);
   templates = {};

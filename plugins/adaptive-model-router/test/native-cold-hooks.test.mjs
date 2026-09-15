@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendFileSync, chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import fs, { appendFileSync, chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8,10 +9,39 @@ import { EventEmitter } from "node:events";
 import { verifyCapturedMessageCheckpoint } from "./support/native-checkpoint-capture.mjs";
 import { HOOK_EVENTS, PENDING_TRUST, assessColdHookEvidence, correlateColdChild, loadColdHookFixture, nativeClient, reviewedProbeScript, runNativeColdHooks, stopOwnedClient, verifyCapturedColdModelRun, verifyColdHookInventory } from "./support/native-cold-hooks.mjs";
 
+const originalLstat = fs.lstatSync, originalChmod = fs.chmodSync;
+const offlineModes = new WeakMap();
+
+function modelOfflineRootMode(t, root) {
+  let modes = offlineModes.get(t);
+  if (!modes) {
+    modes = new Map(); offlineModes.set(t, modes);
+    // Windows stat/chmod cannot attest POSIX 0700. Model only the roots this
+    // offline test creates; all content, links and other paths use the real fs.
+    // Live/captured fixture tests never call this helper or inherit its mocks.
+    const statMock = t.mock.method(fs, "lstatSync", (path, ...options) => {
+      const stat = originalLstat(path, ...options);
+      if (modes.has(path)) stat.mode = (stat.mode & ~0o777) | modes.get(path);
+      return stat;
+    });
+    const chmodMock = t.mock.method(fs, "chmodSync", (path, mode) => {
+      originalChmod(path, mode);
+      if (modes.has(path)) modes.set(path, mode & 0o777);
+    });
+    syncBuiltinESMExports();
+    t.after(() => {
+      statMock.mock.restore(); chmodMock.mock.restore(); syncBuiltinESMExports();
+      modes.clear(); offlineModes.delete(t);
+    });
+  }
+  modes.set(root, 0o700);
+}
+
 // These files and notifications are offline test data, never native Hook evidence.
 function fixture(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "router-cold-hooks-unit-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
+  modelOfflineRootMode(t, root);
   const request = { schema: "native-cold-entry-trust-request/1", root, codexHome: join(root, "codex"), project: join(root, "project"),
     cliPath: process.execPath, node: process.execPath, state: "awaiting_explicit_hook_trust", hooksExecuted: 0, nativeTasksCreated: 0,
     modelCalls: 0, globalConfigTouched: false, manifests: {}, requests: {} };
@@ -132,6 +162,25 @@ test("offline fixture rejects changed definitions, shared files and writable roo
   chmodSync(f.root, 0o700);
   writeFileSync(join(f.root, "market-A/plugin/hooks/hooks.json"), "{}");
   assert.throws(() => loadColdHookFixture(f.root), /reviewed probe template/);
+});
+
+test("native fixture validation still rejects accessible roots with the original filesystem methods", (t) => {
+  assert.equal(fs.lstatSync, originalLstat); assert.equal(lstatSync, originalLstat);
+  assert.equal(fs.chmodSync, originalChmod); assert.equal(chmodSync, originalChmod);
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "router-cold-real-mode-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  chmodSync(root, 0o755);
+  assert.notEqual(lstatSync(root).mode & 0o077, 0);
+  assert.throws(() => loadColdHookFixture(root), /Fixture root must be private/);
+});
+
+test("offline permission model never covers another root", (t) => {
+  const f = fixture(t), outside = realpathSync(mkdtempSync(join(tmpdir(), "router-cold-outside-mode-")));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  chmodSync(outside, 0o755);
+  assert.equal(lstatSync(f.root).mode & 0o777, 0o700);
+  assert.equal(lstatSync(outside).mode, originalLstat(outside).mode);
+  assert.throws(() => loadColdHookFixture(outside), /Fixture root must be private/);
 });
 
 test("offline fixture rejects symlink escapes but permits exact native CLI arg0 aliases", (t) => {
