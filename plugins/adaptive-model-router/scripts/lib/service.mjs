@@ -18,7 +18,12 @@ import { assertSchema } from "./schema.mjs";
 import { isTrivialTask, scoreTask } from "./scorer.mjs";
 import { manageStage } from "./stage-closure.mjs";
 import { OPERATION_ACTIONS, OPERATION_REVIEW_SCHEMA } from "./operation-contract.mjs";
+import { CHECKPOINT_ACTIONS, CHECKPOINT_FIELDS, prepareMessageCheckpoint, prepareMessageContinuation, prepareMessageArrivalReview,
+  commitMessageCheckpoint, readMessageCheckpoints, prepareMessageProjections } from "./message-checkpoint.mjs";
 import { toolDefinitionsForShell } from "./service-shell-contract.mjs";
+import { observeEpochExecution, epochAdmissionState, assertEpochAdmission } from "./runtime-epoch.mjs";
+import { HOST_LIFECYCLE_CONTRACT, HOOK_DISPATCH_CONTRACT, HOST_PREDISPATCH_CONTRACT,
+  HOST_CAPACITY_CONTRACT, HOST_MESSAGE_CONTRACT } from "./host-compatibility.mjs";
 
 import { MODEL_POLICY_SCHEMA, decideWorkLevel } from "./model-policy.mjs";
 import { readModelPolicy, modelPolicyStatus, previewModelPolicy, activateModelPolicy, rollbackModelPolicy } from "./model-policy-store.mjs";
@@ -83,7 +88,8 @@ const CURRENT_TOOL_DEFINITIONS = [
     inputSchema: { type: "object", additionalProperties: false,
       required: ["contextId", "routeId", "action", "expectedRevision"], properties: {
         contextId: CONTEXT, routeId: PROPOSAL,
-        action: { type: "string", enum: ["reconcile_messages", "begin_maintenance", "verify_maintenance", "read_disposition", "resolve_requirements", ...OPERATION_ACTIONS] },
+        action: { type: "string", enum: ["reconcile_messages", "begin_maintenance", "verify_maintenance", "read_disposition", "resolve_requirements", ...OPERATION_ACTIONS, ...CHECKPOINT_ACTIONS] },
+        ...CHECKPOINT_FIELDS,
         operationReview: OPERATION_REVIEW_SCHEMA,
         expectedRevision: { type: "integer", minimum: 0 },
         childId: CONTEXT, childTranscriptPath: { type: "string", minLength: 1, maxLength: 4096 },
@@ -403,9 +409,15 @@ export async function callRouterTool(name, args, { store, cwd = process.cwd(), r
   if (!definition) throw new Error(`unknown tool: ${name}`);
   assertSchema(definition.inputSchema, args, `${name} input`);
   if (name === "manage_stage") {
-    const readOnly = ["read_disposition", "read_operations"].includes(args.action);
+    const readOnly = ["read_disposition", "read_operations", "read_checkpoints"].includes(args.action);
     const context = readOnly ? store.context({ cwd, contextId: args.contextId, create: false }) : contextFor(store, args, cwd);
     if (!readOnly && store.inspectionGuardActive(context)) throw new Error("Stage management is not available during a read-only inspection.");
+    if (args.action === "read_checkpoints") return readMessageCheckpoints(store.db, context, args.routeId);
+    if (args.action === "checkpoint_requirements") return commitMessageCheckpoint(store, prepareMessageCheckpoint(store, context, args));
+    if (["resolve_checkpoint", "resolve_checkpoint_arrival"].includes(args.action)) {
+      assertEpochAdmission(store, context, { kind: "manage_stage", stageId: args.routeId });
+      return commitMessageCheckpoint(store, (args.action === "resolve_checkpoint_arrival" ? prepareMessageArrivalReview : prepareMessageContinuation)(store, context, args));
+    }
     if (readOnly) return manageStage(store.db, context, args, cwd);
     let taskCwd = cwd;
     if (args.childId && args.childTranscriptPath && !store.db.prepare(
@@ -417,6 +429,7 @@ export async function callRouterTool(name, args, { store, cwd = process.cwd(), r
       const parent = await (stageOptions.readParent || readStageParent)(args.contextId);
       taskCwd = nativeTaskWorkingDirectory(parent, { contextId: args.contextId, store, context });
     }
+    if (args.action === "verify_maintenance") prepareMessageProjections(store.db, context, { routeId: args.routeId });
     return store.transaction(() => manageStage(store.db, context, args, taskCwd));
   }
   if (name === "get_model_policy") return { ...modelPolicyStatus(store.db, store.context({ cwd, contextId: args.contextId, create: false })), definition: readModelPolicy(store.db).definition };
@@ -446,12 +459,19 @@ export async function callRouterTool(name, args, { store, cwd = process.cwd(), r
     const recovery = await recoverFailedHostCapacityDelegation(args, { ...recoveryOptions, store, cwd });
     return recovery ? { ...result, delegationRecovery: recovery } : result;
   }
-  if (name === "get_route_status") return store.status(contextFor(store, args, cwd));
+  if (name === "get_route_status") {
+    const context = contextFor(store, args, cwd);
+    const result = store.status(context);
+    observeEpochExecution(store, { name, args });
+    return { ...result, hostCompatibility: hostCompatibilityStatus(store, context) };
+  }
   if (name === "get_route_history") {
-    return store.routeHistory(contextFor(store, args, cwd), {
+    const result = store.routeHistory(contextFor(store, args, cwd), {
       limit: args.limit ?? 20,
       action: args.action || "all",
     });
+    observeEpochExecution(store, { name, args });
+    return result;
   }
   if (name === "set_route_override") return setOverride(store, args, cwd);
   if (name === "list_policy_proposals") return listPolicyProposals(args, { store, cwd });
@@ -469,9 +489,19 @@ export async function callRouterTool(name, args, { store, cwd = process.cwd(), r
   if (name === "resolve_host_model_intent") {
     return store.resolveHostModelIntent(contextFor(store, args, cwd), args);
   }
-  if (name === "diagnose_router") return store.diagnose(contextFor(store, args, cwd));
+  if (name === "diagnose_router") {
+    const context = contextFor(store, args, cwd);
+    return { ...store.diagnose(context), hostCompatibility: hostCompatibilityStatus(store, context) };
+  }
   if (name === "clear_project_data") return store.clearProject(contextFor(store, args, cwd));
   throw new Error(`unknown tool: ${name}`);
+}
+
+function hostCompatibilityStatus(store, context) {
+  const epoch = epochAdmissionState(store.db, context);
+  return { versionPolicy: "diagnostic_only", contracts: [HOOK_DISPATCH_CONTRACT, HOST_LIFECYCLE_CONTRACT,
+    HOST_PREDISPATCH_CONTRACT, HOST_CAPACITY_CONTRACT, HOST_MESSAGE_CONTRACT],
+    epoch: epoch.required ? epoch : null };
 }
 
 export function createServiceStore(options = {}) {

@@ -1,6 +1,7 @@
 import { readStableRollout } from "./native-rollout-reader.mjs";
 import { parseJson, payloadHash } from "./io.mjs";
 import { openPrivateState, sealPrivateState } from "./private-state.mjs";
+import { HOST_MESSAGE_CONTRACT, hostObservation } from "./host-compatibility.mjs";
 
 const rootSourceKey = (context) => `root_transcript:${context.projectId}:${context.contextKey}`;
 const stamp = () => new Date().toISOString();
@@ -22,12 +23,12 @@ const measuredHost = (host) => host?.platform === "darwin" && typeof host.cliVer
 
 // Called only by the real message Pre Hook. Creation-time session metadata and
 // the host running a later reconciliation cannot attest this call's sender.
-export function rememberMessageHost(db, child, input, author, host) {
+export function rememberMessageHost(db, child, input, author, host, { preDecision = null } = {}) {
   if (!child || !author || !input.turn_id || !input.tool_use_id) return;
   const kind = hostRecordKey(author, input.tool_use_id);
-  const record = { callId: input.tool_use_id, turnId: input.turn_id, author,
+  const record = { schema: 3, contract: HOST_MESSAGE_CONTRACT, callId: input.tool_use_id, turnId: input.turn_id, author,
     kind: input.tool_name.replace(/^collaboration/u, ""), inputDigest: payloadHash(input.tool_input),
-    host: measuredHost(host) ? host : null };
+    host: hostObservation(host), preDecision };
   const before = db.prepare("SELECT record FROM delegation_stage_journal WHERE route_id=? AND kind=?").get(child.route_id, kind);
   const write = (name, value) => db.prepare("INSERT OR IGNORE INTO delegation_stage_journal(route_id,revision,kind,record,created_at) VALUES(?,?,?,?,?)")
     .run(child.route_id, child.revision, name, sealPrivateState(db, JSON.stringify(value)), stamp());
@@ -43,8 +44,13 @@ function messageHost(db, child, call) {
     .all(child.route_id, key, `${key}:conflict`);
   if (rows.length !== 1 || rows[0].kind !== key) return null;
   const record = JSON.parse(openPrivateState(db, rows[0].record));
-  if (!measuredHost(record.host) || ["callId", "turnId", "author", "kind", "inputDigest"].some((field) => record[field] !== call[field])) return null;
-  return { ...record.host, evidenceDigest: payloadHash(record) };
+  const semantic = record.schema === 3 && record.contract === HOST_MESSAGE_CONTRACT;
+  // Legacy observations are retained input-bound Hook records even if reading
+  // the disk executable failed. Their diagnostic version is not a new license.
+  const legacy = record.schema === undefined && Object.hasOwn(record, "host");
+  if ((!semantic && !legacy) || ["callId", "turnId", "author", "kind", "inputDigest"].some((field) => record[field] !== call[field])) return null;
+  return { ...record.host, schema: record.schema, contract: semantic ? record.contract : null,
+    legacy, preDecision: record.preDecision, legacyMeasured: measuredHost(record.host), evidenceDigest: payloadHash(record) };
 }
 
 export function rejectionHostCurrent(db, child, row) {
@@ -57,10 +63,12 @@ export function rejectionHostCurrent(db, child, row) {
       || payloadHash(receipt.owner) !== row.author || receipt.inputDigest !== row.input_digest
       || !["native_provider_resolution_rejection", "native_pre_dispatch_rejection"].includes(receipt.source)) return false;
     if (receipt.schema === undefined && receipt.hostEvidenceDigest === undefined) return true;
-    if (receipt.schema !== 2) return false;
+    if (![2, 3].includes(receipt.schema)) return false;
     const host = messageHost(db, child, { callId: row.call_id, turnId: row.caller_turn_id,
       author: receipt.owner, kind: row.kind, inputDigest: row.input_digest });
-    return host?.cliVersion === "0.153.4" && host.evidenceDigest === receipt.hostEvidenceDigest;
+    return host?.evidenceDigest === receipt.hostEvidenceDigest
+      && (receipt.schema === 2 ? host.legacyMeasured && host.cliVersion === "0.153.4"
+        : receipt.contract === HOST_MESSAGE_CONTRACT);
   } catch { return false; }
 }
 
@@ -100,7 +108,7 @@ export function reconcileStageMessages(db, context, child, parentPath = null, se
       readStableRollout(locator.transcriptPath, (entry, line) => {
         if (line !== 1) return;
         const meta = entry.payload, spawn = meta?.source?.subagent?.thread_spawn;
-        if (entry.type !== "session_meta" || meta?.id !== locator.childId || meta.cli_version !== "0.153.4"
+        if (entry.type !== "session_meta" || meta?.id !== locator.childId
           || meta.parent_thread_id !== locator.parentContextId || meta.session_id !== locator.parentContextId
           || meta.agent_path !== locator.agentPath || spawn?.parent_thread_id !== locator.parentContextId
           || spawn.agent_path !== locator.agentPath || spawn.depth !== 1) return;
@@ -152,17 +160,20 @@ export function reconcileStageMessages(db, context, child, parentPath = null, se
       const retained = retainedRejection(db, child, call, item, line);
       // This exact host envelope is produced before dispatch, not by the
       // collaboration handler. Other errors remain ambiguous and pending.
-      const hookRejected = (host?.cliVersion === "0.153.4" || retained?.source === "native_pre_dispatch_rejection") && typeof item.output === "string"
+      const retainedPre = retained?.source === "native_pre_dispatch_rejection";
+      const ownPreDenied = host?.preDecision?.allowed === false && typeof host.preDecision.reason === "string"
+        && item.output === `Tool call blocked by PreToolUse hook: ${host.preDecision.reason}. Tool: collaboration${call.kind}`;
+      const hookRejected = (retainedPre || (host && (host.legacy || ownPreDenied))) && typeof item.output === "string"
         && item.output.startsWith("Tool call blocked by PreToolUse hook: ")
         && item.output.endsWith(`. Tool: collaboration${call.kind}`);
-      // This pinned native loader error occurs before followup delivery. Keep
+      // This native loader contract occurs before followup delivery. Keep
       // its requirement with the sender; it proves neither child completion nor
       // a usable provider. Native input/operation/final checks still gate closure.
       const metadata = nativeProviderFailure(call, item.output);
-      const providerRejected = metadata && (host?.cliVersion === "0.153.4"
+      const providerRejected = metadata && ((host && (host.legacy || host.preDecision?.allowed === true))
         || (retained?.source === "native_provider_resolution_rejection" && retained.childMetadataDigest === metadata.digest));
       call.rejected = hookRejected || Boolean(providerRejected);
-      if (call.rejected) call.rejection = retained || { schema: 2, callId: call.callId, turnId: call.turnId, owner: call.author,
+      if (call.rejected) call.rejection = retained || { schema: 3, contract: HOST_MESSAGE_CONTRACT, callId: call.callId, turnId: call.turnId, owner: call.author,
         source: providerRejected ? "native_provider_resolution_rejection" : "native_pre_dispatch_rejection",
         ...(providerRejected ? { childMetadataDigest: metadata.digest } : {}), hostEvidenceDigest: host.evidenceDigest, inputDigest: call.inputDigest,
         resultDigest: payloadHash(item), callLine: call.line, resultLine: line };

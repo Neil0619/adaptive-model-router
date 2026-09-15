@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, realpathSync, renameSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createInterface } from "node:readline";
@@ -10,7 +11,8 @@ import { inspectRuntimePackage, prepareRuntimeCandidate } from "../scripts/lib/r
 import { qualifyRuntimeCompatibility } from "../scripts/lib/runtime-compatibility.mjs";
 import { beginHookDispatch, beginMcpDispatch, endRuntimeDispatch } from "../scripts/lib/runtime-dispatch.mjs";
 import { inspectRuntimeBoundary, isRuntimeBoundaryProof } from "../scripts/lib/runtime-boundary.mjs";
-import { inspectColdRuntimeTransition } from "../scripts/lib/runtime-cold-transition.mjs";
+import { inspectColdRuntimeTransition, assertColdProcessInventory } from "../scripts/lib/runtime-cold-transition.mjs";
+import { prepareColdHostEpochInstallation, inspectColdHostEpochRetirement, commitColdHostEpochRetirement } from "../scripts/lib/runtime-cold-install.mjs";
 import { acquireRuntimeInvocation, archiveRuntime, beginRuntimeMigration, ensureRuntimeTask, finishRuntimeInvocation,
   pendingRuntimeResponsibilities, publishRuntime, publishedDefault, runtimeGeneration, runtimeReferences, runtimeTask,
   settleRuntimeMigration } from "../scripts/lib/runtime-isolation.mjs";
@@ -19,6 +21,8 @@ import { routeStage } from "../scripts/lib/router.mjs";
 import { consumeDelegationTicket, claimDelegationSubagent, observeAgentResult, observeSubagentStop } from "../scripts/lib/delegation-gate.mjs";
 import { registerManagedChild, observeManagedMessage } from "../scripts/lib/stage-closure.mjs";
 import { payloadHash } from "../scripts/lib/io.mjs";
+import { ensureHostEpochSchema } from "../scripts/lib/host-epoch-storage.mjs";
+import { sealPrivateState } from "../scripts/lib/private-state.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment, completeNoChildRoute } from "./fixtures.mjs";
 
 const source = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -584,11 +588,15 @@ test("installed v1 and v2 retain one policy, salt and global ledger while unknow
       const salt = oldStore.salt;
       oldStore.close();
       const candidate = packageAt(join(project.root, "stable-v2-shell"), "0.4.0+v2.cold");
-      const compatibilityProof = qualifyRuntimeCompatibility(legacy, candidate, { coldLegacy: true });
       const store = new RouterStore();
       try {
-        store.transaction(() => publishRuntime(store.db, candidate, project.home, { bootstrap: true, shellRoot: candidate.root, legacyRuntime: legacy,
-          compatibilityProof, coldProof: inspectColdRuntimeTransition(store.db, { inventory: () => [], preserveLegacy: true }) }));
+        assert.throws(() => qualifyRuntimeCompatibility(legacy, candidate, { coldLegacy: true }), /freezes installed Hook behavior/);
+        const installation = prepareColdHostEpochInstallation(store, { source: legacy, candidate, shellRoot: candidate.root });
+        assert.throws(() => inspectColdHostEpochRetirement(store, installation.id, { inventory: () => [] }), /old_entry_still/);
+        // Offline native-install deletion fixture. Source retirement still
+        // requires an absent original path; an empty process list alone fails.
+        rmSync(legacyRoot, { recursive: true });
+        commitColdHostEpochRetirement(store, inspectColdHostEpochRetirement(store, installation.id, { inventory: () => [] }));
         assert.equal(store.salt, salt);
         assert.equal(JSON.stringify((await mod(candidate.root, "model-policy-store")).readModelPolicy(store.db)), beforePolicy);
         assert.equal(store.getSettings(oldContext).autoActivate, true);
@@ -597,7 +605,8 @@ test("installed v1 and v2 retain one policy, salt and global ledger while unknow
         const historicalCall = beginMcpDispatch("record_outcome", { contextId: "legacy-pruned-no-child", routeId: pruned.routeId }, {
           cwd: project.root, env: { CODEX_THREAD_ID: "legacy-pruned-no-child" } });
         assert.equal(historicalCall.selected.digest, legacy.digest);
-        const oldLearning = await mod(legacyRoot, "learning"), historyStore = new oldDatabase.RouterStore();
+        const retainedLegacy = runtimeGeneration(store.db, legacy.digest);
+        const oldLearning = await mod(retainedLegacy.root, "learning"), historyStore = new oldDatabase.RouterStore();
         try {
           const result = oldLearning.recordOutcome({ contextId: "legacy-pruned-no-child", routeId: pruned.routeId, status: "failed", failureType: "tooling", gate: pruned.verificationGate,
             retries: 0, retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 }, escalations: pruned.escalation.count, userCorrection: false }, { store: historyStore, cwd: project.root });
@@ -619,8 +628,8 @@ test("installed v1 and v2 retain one policy, salt and global ledger while unknow
         const reader = new oldDatabase.RouterStore();
         try {
           assert.equal(reader.db.prepare("SELECT count(*) AS n FROM delegation_attempts WHERE finalized_at IS NULL").get().n, 2);
-          // A v1 process remains a genuine writer after the cold boundary. Its
-          // inherited task's next ticket is pinned by the compatibility trigger.
+          // The new shell still selects exact retained A for unknown old tasks.
+          // Its next ticket stays on A until per-task entry proof and handover.
           completeNoChildRoute(route, { store: reader, cwd: project.root, contextId, status: "failed", failureType: "tooling" });
           const again = await oldRouter.routeStage(routeInput({ contextId }), { store: reader, cwd: project.root, catalog: CATALOG, diskProbe: () => 20n * 1024n ** 3n });
           assert.equal(again.action, "delegate");
@@ -640,7 +649,127 @@ test("installed v1 and v2 retain one policy, salt and global ledger while unknow
           } finally { await legacyRpc.close(); await freshRpc.close(); }
         } finally { reader.close(); }
         assert.equal(store.db.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
+        assert.equal(inspectRuntimePackage(retainedLegacy.root, { legacy: true }).digest, legacy.digest);
       } finally { store.close(); }
     });
   } finally { await project.cleanup(); }
+});
+
+// This separate falsification test does not replace the preceding cold-upgrade
+// acceptance test. Its registry selection is deliberately not a production
+// handover; it checks what an unretired original v1 entry could still do.
+test("exact v1 shares current B writers but a post-cold retained v1 MCP still bypasses new-shell entry confirmation", {
+  skip: !process.env.ADAPTIVE_ROUTER_LEGACY_FIXTURE && "Requires the exact reviewed installed v1 fixture; no live cache is read",
+}, async () => {
+  const project = await temporaryProject("router-v1-entry-counterexample-");
+  try {
+    await withRouterEnvironment(project, async () => {
+      const legacyRoot = join(project.root, "legacy-exact-copy"); cpSync(process.env.ADAPTIVE_ROUTER_LEGACY_FIXTURE, legacyRoot, { recursive: true });
+      const legacy = inspectRuntimePackage(legacyRoot, { legacy: true });
+      assert.equal(legacy.digest, "9d23b8ae47f6d9bd6b388a33b75c7f94741546116efa29d3e33d9ebc72a1c9b2");
+      const archive = spawnSync("git", ["archive", "16c439dd0bf3657ba06707ff15c1465613d49554", "plugins/adaptive-model-router"],
+        { cwd: resolve(source, "../.."), maxBuffer: 32 * 1024 * 1024 });
+      assert.equal(archive.status, 0, "Exact frozen v2 bridge requires git object 16c439dd; CI fetch-depth: 0");
+      assert.equal(spawnSync("tar", ["-xf", "-", "-C", project.root], { input: archive.stdout }).status, 0);
+      const bridge = inspectRuntimePackage(join(project.root, "plugins/adaptive-model-router"));
+      const candidate = packageAt(join(project.root, "new-shell-b"), "0.4.0+v1.entry.check");
+      const verification = realpathSync(mkdtempSync(join(tmpdir(), "router-writer-qualification-")));
+      try {
+        const shared = spawnSync(process.execPath, [join(source, "scripts/verify-runtime-compatibility.mjs"), legacy.root, candidate.root, verification],
+          { encoding: "utf8", timeout: 45_000, env: { ...process.env, ADAPTIVE_ROUTER_HOME: join(verification, "state"), PLUGIN_DATA: join(verification, "state"),
+            CODEX_HOME: join(verification, "codex"), ADAPTIVE_ROUTER_LOCAL_ONLY: "1", ADAPTIVE_ROUTER_INVOCATION_ID: "" } });
+        assert.equal(shared.status, 0, shared.stderr);
+        assert.match(shared.stdout, /20 real alternating\/concurrent\/shared-cap stages/);
+      } finally { rmSync(verification, { recursive: true, force: true }); }
+      // Actual cold bridge compatibility succeeds only through the frozen v2
+      // package with the exact installed Hook, never by weakening that gate.
+      const proof = qualifyRuntimeCompatibility(legacy, bridge, { coldLegacy: true });
+      const OldStore = (await mod(legacyRoot, "database")).RouterStore;
+      const initial = new OldStore();
+      const contextId = "v1-retained-native-owner", context = initial.context({ cwd: project.root, contextId });
+      initial.configure(context, { autoActivate: true }, "global");
+      initial.setOverride(context, { scope: "session", mode: "disabled" });
+      const first = await (await mod(legacyRoot, "router")).routeStage(routeInput({ contextId, goal: "Hello" }),
+        { store: initial, cwd: project.root, catalog: CATALOG });
+      assert.equal(first.action, "continue"); initial.close();
+      const store = new RouterStore();
+      try {
+        // The empty inventory is an isolated cold-boundary fixture, not a
+        // claim about the logged-in Codex host running this test suite.
+        store.transaction(() => publishRuntime(store.db, bridge, project.home, { bootstrap: true, shellRoot: bridge.root,
+          legacyRuntime: legacy, compatibilityProof: proof,
+          coldProof: inspectColdRuntimeTransition(store.db, { inventory: () => [], preserveLegacy: true }) }));
+        ensureHostEpochSchema(store.db);
+        store.db.prepare("INSERT INTO runtime_generations VALUES(?,?,'published')").run(candidate.digest, JSON.stringify(candidate));
+        store.db.prepare("INSERT INTO runtime_host_entries VALUES(?,?,'referenced')").run(candidate.root, candidate.digest);
+        const transcript = rootTranscript(project, contextId, [event("task_started", { turn_id: "observed-turn" }), event("task_complete", { turn_id: "observed-turn" })]);
+        const hook = spawnSync(process.execPath, [join(candidate.root, "scripts/node-launcher.mjs"), join(candidate.root, "scripts/hook.mjs"), "session-start"], {
+          cwd: project.root, env: { ...process.env, PLUGIN_ROOT: candidate.root, ADAPTIVE_ROUTER_NODE: process.execPath }, encoding: "utf8", timeout: 15_000,
+          input: JSON.stringify({ hook_event_name: "SessionStart", source: "compact", session_id: contextId, cwd: project.root,
+            turn_id: "observed-turn", transcript_path: transcript, model: "gpt-6-astra" }),
+        });
+        assert.equal(hook.status, 0, hook.stderr);
+        assert.equal(runtimeTask(store.db, context).generation, legacy.digest);
+        assert.equal(store.db.prepare("SELECT generation FROM runtime_epoch_native_entries").get().generation, legacy.digest);
+        const newClient = rpc(candidate.root, project, contextId);
+        try { assert.equal((await newClient.call("get_route_status")).result.isError, false); }
+        finally { await newClient.close(); }
+        assert.ok(store.db.prepare("SELECT 1 FROM runtime_invocations WHERE kind='mcp:get_route_status' AND generation=? AND state='completed'").get(legacy.digest));
+        const origin = sealPrivateState(store.db, '{"original":"retained v1 responsibility"}');
+        store.db.prepare("INSERT INTO runtime_epoch_origins VALUES(?,?,?,?,?)").run(context.projectId, context.contextKey, "task", legacy.digest, origin);
+        store.db.prepare("INSERT INTO runtime_epoch_receipts VALUES(?,?,?,?,?,?,?,?)")
+          .run("unretired-entry-counterexample", context.projectId, context.contextKey, legacy.digest, candidate.digest, null, payloadHash("fixture"), '{"schema":"counterexample-not-an-admission"}');
+        // Test-only hypothetical switch isolates the missing premise. It cannot
+        // be minted by prepareHostEpochHandover, which still rejects v1.
+        store.db.prepare("UPDATE runtime_tasks SET generation=? WHERE project_id=? AND context_key=?").run(candidate.digest, context.projectId, context.contextKey);
+        store.db.prepare("INSERT INTO runtime_epoch_tasks VALUES(?,?,?,?,'checking')")
+          .run(context.projectId, context.contextKey, "unretired-entry-counterexample", candidate.digest);
+        const currentClient = rpc(candidate.root, project, contextId);
+        try { assert.equal((await currentClient.call("route_stage", routeInput({ contextId, goal: "Hello" }))).result.isError, true); }
+        finally { await currentClient.close(); }
+        const invocations = JSON.stringify(store.db.prepare("SELECT * FROM runtime_invocations ORDER BY rowid").all());
+        const routeCount = store.db.prepare("SELECT count(*) n FROM routes").get().n;
+        // It is started AFTER the cold fixture and new entry observation. A
+        // native snapshot that can still name this retained entry can do this;
+        // hooks/list or an earlier zero-process inventory cannot forbid it.
+        const unretiredClient = rpc(legacyRoot, project, contextId);
+        try { assert.equal((await unretiredClient.call("route_stage", routeInput({ contextId, goal: "Hello" }))).result.isError, false); }
+        finally { await unretiredClient.close(); }
+        assert.equal(store.db.prepare("SELECT count(*) n FROM routes").get().n, routeCount + 1);
+        assert.equal(JSON.stringify(store.db.prepare("SELECT * FROM runtime_invocations ORDER BY rowid").all()), invocations);
+        for (const Constructor of [OldStore, RouterStore, OldStore]) {
+          const reader = new Constructor();
+          try { assert.equal(reader.db.prepare("SELECT record FROM runtime_epoch_origins").get().record, origin);
+            assert.equal(reader.db.prepare("SELECT record FROM runtime_epoch_receipts").get().record, '{"schema":"counterexample-not-an-admission"}'); }
+          finally { reader.close(); }
+        }
+        assert.equal(inspectRuntimePackage(legacyRoot, { legacy: true }).digest, legacy.digest);
+      } finally { store.close(); }
+    });
+  } finally { await project.cleanup(); }
+});
+
+test("cold inventory rejects a persistent ChatGPT Desktop shell even with no codex child and checks executable identity", () => {
+  const pid = process.pid + 100_000;
+  for (const executable of ["/Applications/ChatGPT.app/Contents/MacOS/ChatGPT", "/Applications/Codex.app/Contents/MacOS/Codex",
+    "/Applications/Renamed Desktop.app/Contents/MacOS/ChatGPT", '"C:\\Program Files\\OpenAI\\ChatGPT.exe"',
+    "/Applications/ChatGPT.app/Contents/Frameworks/ChatGPT Helper (Renderer).app/Contents/MacOS/ChatGPT Helper (Renderer)"]) {
+    assert.throws(() => assertColdProcessInventory([{ pid, executable }]), /hosts to be stopped/);
+  }
+  assert.throws(() => assertColdProcessInventory([{ pid, executable: "renamed-argv", executablePath: "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT" }]), /hosts to be stopped/);
+  assert.throws(() => assertColdProcessInventory([{ pid, executable: "redacted", name: "ChatGPT.exe" }]), /hosts to be stopped/);
+  assert.deepEqual(assertColdProcessInventory([{ pid, executable: "/Applications/Terminal.app/Contents/MacOS/Terminal" }]),
+    [{ pid, executable: "/Applications/Terminal.app/Contents/MacOS/Terminal" }]);
+  assert.equal(assertColdProcessInventory([{ pid: 0, executable: "System Idle Process", name: "System Idle Process" }]).length, 1);
+});
+
+test("cold inventory also retains orphan direct legacy Hook and stdio writers after their host exits", () => {
+  const pid = process.pid + 10000;
+  for (const executable of [
+    "/usr/local/bin/node /retained/v1/scripts/hook.mjs stop",
+    "/usr/local/bin/node '/retained with spaces/v1/scripts/stdio-tool.mjs' get_route_status",
+    'node.exe "C:\\retained\\v1\\scripts\\hook.mjs" prompt',
+    'node.exe "C:\\retained\\v1\\scripts\\stdio-tool.mjs"',
+  ]) assert.throws(() => assertColdProcessInventory([{ pid, executable }]), /hosts to be stopped/);
+  assert.equal(assertColdProcessInventory([{ pid, executable: "/usr/local/bin/node /unrelated/webhook.mjs" }]).length, 1);
 });

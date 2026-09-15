@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { auditNativeLifecycle1534Transcript } from "../scripts/lib/native-recovery-audit.mjs";
-import { auditNativeUnconsumed1534Transcript, isMetadataRecoveryAudit } from "../scripts/lib/native-metadata-recovery-audit.mjs";
+import { auditNativeUnconsumed1534Transcript, isMetadataRecoveryAudit,
+  auditNativeUnconsumedContractTranscript, isMetadataContractAudit } from "../scripts/lib/native-metadata-recovery-audit.mjs";
 
 function fixture() {
   const child = { id: "child", cliVersion: "0.153.4", model: "gpt-6-astra", reasoningEffort: "low",
@@ -57,4 +58,14 @@ test("metadata recovery rejects extra work, unknown code, incomplete results, an
     const f = fixture(); mutate(f);
     assert.throws(() => auditNativeUnconsumed1534Transcript(f.bytes(), f.child, "parent"));
   }
+});
+
+test("metadata operation contract ignores host labels but rejects extra executable work", () => {
+  const f = fixture();
+  f.child.cliVersion = "future-native-release";
+  delete f.records[0].payload.cli_version;
+  const receipt = auditNativeUnconsumedContractTranscript(f.bytes(), f.child, "parent");
+  assert.equal(isMetadataContractAudit(receipt), true);
+  f.call.input += "text(await tools.get_usage_limits({}));";
+  assert.throws(() => auditNativeUnconsumedContractTranscript(f.bytes(), f.child, "parent"));
 });

@@ -32,8 +32,23 @@ function fixture(cliVersion = "0.153.0") {
     { type: "event_msg", payload: { type: "task_complete", turn_id: "probe-turn" } },
   ];
   const readTranscript = () => Buffer.from(`${records.map((row) => JSON.stringify(row)).join("\n")}\n`);
-  return { input: { child, parentId, taskName, target, marker }, records, options: { readTranscript } };
+  return { input: { child, parentId, taskName, target, marker }, records, options: { readTranscript, legacyVersion: cliVersion } };
 }
+
+test("new no-work verification selects the actual contract across new and missing host version labels", () => {
+  for (const version of ["0.154.0", "future-unknown", null]) {
+    const { input, options, records } = fixture(version);
+    delete options.legacyVersion;
+    // Session creation metadata can precede a running host update. Neither
+    // label identifies the operation; the raw child/turn/action evidence does.
+    records[0].payload.cli_version = "older-session-build";
+    assert.equal(auditNativeLifecycleNoop(input, options).rawAuditAdapter, "native-child-no-work/1");
+    records[0].payload.extra_description = { releaseChannel: "stable" };
+    assert.equal(auditNativeLifecycleNoop(input, options).passed, true);
+    records.splice(-1, 0, { type: "response_item", payload: { type: "future_native_action" } });
+    assert.equal(auditNativeLifecycleNoop(input, options).passed, false);
+  }
+});
 
 test("native no-op probe accepts an exact completed marker and its full source stream", () => {
   const { input, options } = fixture();

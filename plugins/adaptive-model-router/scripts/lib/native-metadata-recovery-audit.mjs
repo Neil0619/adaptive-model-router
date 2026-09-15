@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { auditNativeLifecycle1534Transcript } from "./native-recovery-audit.mjs";
+import { auditNativeLifecycle1534Transcript, auditNativeContractNoWorkTranscript } from "./native-recovery-audit.mjs";
 
 export const METADATA_RECOVERY_ADAPTER = "codex-0.153.4-tool-metadata-only/1";
+export const METADATA_RECOVERY_CONTRACT = "native-tool-metadata-only/1";
 // Reviewed from the native incident stream. This is a literal, pure lookup of
 // the code-mode host's supplied tool descriptions, not a JavaScript evaluator
 // or a general allowlist of read-only tools. Any other program fails closed.
@@ -15,9 +16,22 @@ export function isMetadataRecoveryAudit(value) {
     && value.metadataOnlyCalls === 1 && value.metadataQueryDigest === queryDigest;
 }
 
+export function isMetadataContractAudit(value) {
+  return value.rawAuditAdapter === METADATA_RECOVERY_CONTRACT
+    && value.metadataOnlyCalls === 1 && value.metadataQueryDigest === queryDigest;
+}
+
 // Only the explicit unconsumed-attempt recovery path uses this adapter. Normal
 // lifecycle qualification still requires a complete stream with no tool calls.
 export function auditNativeUnconsumed1534Transcript(bytes, child, parentId) {
+  return auditMetadataTranscript(bytes, child, parentId, auditNativeLifecycle1534Transcript, METADATA_RECOVERY_ADAPTER);
+}
+
+export function auditNativeUnconsumedContractTranscript(bytes, child, parentId) {
+  return auditMetadataTranscript(bytes, child, parentId, auditNativeContractNoWorkTranscript, METADATA_RECOVERY_CONTRACT);
+}
+
+function auditMetadataTranscript(bytes, child, parentId, auditNoWork, adapter) {
   requireFact(Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.length <= 2 * 1024 * 1024);
   const source = bytes.toString("utf8");
   requireFact(source.endsWith("\n") && !source.includes("\uFFFD"));
@@ -25,7 +39,7 @@ export function auditNativeUnconsumed1534Transcript(bytes, child, parentId) {
   requireFact(records.length <= 1_000);
   const custom = records.filter((record) => record.type === "response_item"
     && ["custom_tool_call", "custom_tool_call_output"].includes(record.payload?.type));
-  if (custom.length === 0) return auditNativeLifecycle1534Transcript(bytes, child, parentId);
+  if (custom.length === 0) return auditNoWork(bytes, child, parentId);
   requireFact(custom.length === 2);
   const [call, output] = custom.map((record) => record.payload);
   requireFact(call.type === "custom_tool_call" && call.name === "exec" && call.status === "completed"
@@ -42,7 +56,7 @@ export function auditNativeUnconsumed1534Transcript(bytes, child, parentId) {
       && typeof tool.name === "string" && tool.name.startsWith("mcp__adaptive_model_router__")
       && typeof tool.description === "string"));
   const remaining = Buffer.from(records.filter((record) => !custom.includes(record)).map(JSON.stringify).join("\n") + "\n");
-  auditNativeLifecycle1534Transcript(remaining, child, parentId);
-  return { rawAuditAdapter: METADATA_RECOVERY_ADAPTER, rawAuditDigest: hash(bytes), sourceBytes: bytes.length,
+  auditNoWork(remaining, child, parentId);
+  return { rawAuditAdapter: adapter, rawAuditDigest: hash(bytes), sourceBytes: bytes.length,
     metadataOnlyCalls: 1, metadataQueryDigest: queryDigest };
 }

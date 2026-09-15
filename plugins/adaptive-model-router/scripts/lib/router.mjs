@@ -14,6 +14,7 @@ import { readModelPolicy } from "./model-policy-store.mjs";
 import { decideWorkLevel, resolveModelTarget, nextWorkLevel, levelForTarget } from "./model-policy.mjs";
 import { normalizeModelSlug } from "./model-slug.mjs";
 import { assertSchema } from "./schema.mjs";
+import { assertEpochAdmission } from "./runtime-epoch.mjs";
 import {
   deterministicReasonCodes,
   isTrivialTask,
@@ -187,6 +188,7 @@ async function routeWithStore(input, options, store) {
     throw error;
   }
   const context = store.context({ cwd: options.cwd || process.cwd(), contextId: input.contextId });
+  assertEpochAdmission(store, context, { kind: "route_stage" });
   const settings = store.getSettings(context);
   const hostState = store.hostModelState(context);
   let previous = null;
@@ -508,6 +510,8 @@ export async function routeStage(input, options = {}) {
     const store = options.store || (ownedStore = new RouterStore(options.database ? { path: options.database } : {}));
     return await routeWithStore(input, options, store);
   } catch (error) {
+    if (String(error?.message).startsWith("Host compatibility epoch blocked:")) throw error;
+    if (error?.code === "RUNTIME_CANDIDATE_QUALIFICATION_PENDING") return failOpen(error.code);
     if (error?.code === "INVALID_INPUT" || /required|not allowed|does not belong|must reference|override must/i.test(String(error?.message))) throw error;
     return failOpen("STORAGE_UNAVAILABLE");
   } finally {

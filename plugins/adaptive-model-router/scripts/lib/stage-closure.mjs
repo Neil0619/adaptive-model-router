@@ -8,6 +8,7 @@ import { createChildCommandSchema, readChildCommands } from "./child-command-jou
 import { applyOperationReviews, readOperations, reconcileOperations } from "./operation-reconciliation.mjs";
 import { readStableRollout } from "./native-rollout-reader.mjs";
 import { readReservationRelease, reacquireReservation } from "./reservation-ledger.mjs";
+import { messageContinuationProjection, messageCheckpointKey, prepareMessageProjections } from "./message-checkpoint.mjs";
 
 const now = () => new Date().toISOString();
 const present = (value) => typeof value === "string" && value.length > 0;
@@ -185,30 +186,50 @@ export function observeManagedStop(db, routeId, { turnId, lastAssistantMessage }
   return true;
 }
 
-export function stageClosureStatus(db, context, routeId = null, { deadline = Infinity } = {}) {
-  const child = routeId
-    ? db.prepare("SELECT * FROM delegation_children WHERE project_id=? AND context_key=? AND route_id=?")
-      .get(context.projectId, context.contextKey, routeId)
-    : db.prepare(`SELECT * FROM delegation_children WHERE project_id=? AND context_key=? AND
-      (state!='settled' OR route_id IN (SELECT route_id FROM delegation_maintenance WHERE state='active')) ORDER BY created_at LIMIT 1`)
-      .get(context.projectId, context.contextKey);
+export function stageClosureStatus(db, context, routeId = null, { deadline = Infinity, auditSettled = false } = {}) {
+  deadline = Math.min(deadline, Date.now() + 5000);
+  if (!routeId) {
+    if (!db.isTransaction) prepareMessageProjections(db, context, { deadline });
+    const checkpointed = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_message_checkpoints'").get();
+    const candidates = db.prepare(`SELECT route_id FROM delegation_children WHERE project_id=? AND context_key=? AND
+      (state!='settled' OR route_id IN (SELECT route_id FROM delegation_maintenance WHERE state='active')
+      ${checkpointed ? "OR route_id IN (SELECT route_id FROM runtime_message_checkpoints)" : ""}) ORDER BY created_at`)
+      .all(context.projectId, context.contextKey);
+    for (const candidate of candidates) {
+      const status = stageClosureStatus(db, context, candidate.route_id, { deadline });
+      if (status) return status;
+    }
+    return null;
+  }
+  const child = db.prepare("SELECT * FROM delegation_children WHERE project_id=? AND context_key=? AND route_id=?")
+    .get(context.projectId, context.contextKey, routeId);
   if (!child) return null;
   const maintenance = db.prepare("SELECT * FROM delegation_maintenance WHERE route_id=?").get(child.route_id);
-  if (child.state === "settled" && maintenance?.state !== "active") return null;
   let locator;
   try { locator = JSON.parse(openPrivateState(db, child.locator)); } catch { /* Remain pending with no guessed target. */ }
   const target = locator?.agentPath;
   const pending = (reason, extra = {}) => ({ state: "pending", routeId: child.route_id, revision: child.revision, reason, ...extra,
     ...(maintenance ? { intent: maintenance.intent, maintenance: true } : {}),
     ...(target ? { target } : {}),
-    nextAction: maintenance?.state === "active" && ["accepted_message_not_consumed", "maintenance_followup_required"].includes(reason) ? "followup_bounded_collection"
-      : reason === "accepted_message_not_consumed" ? "followup_same_stage"
+    nextAction: extra.nextAction || (maintenance?.state === "active" && ["accepted_message_not_consumed", "maintenance_followup_required"].includes(reason) ? "followup_bounded_collection"
+      : reason === "accepted_message_not_consumed" ? "checkpoint_requirements_from_original_sender_source"
       : reason === "child_operations_pending" ? (extra.pendingOperations?.some((op) => op.kind === "unknown")
         ? "read_operations_and_verify_evidence" : extra.pendingOperations?.some((op) => op.kind !== "command")
         ? "poll_existing_operations" : "collect_existing_operation_result")
       : reason === "latest_child_turn_not_complete" ? "wait_for_current_child"
-      : "reconcile_existing_operation" });
-  if (child.state !== "open" && maintenance?.state !== "active") return pending("child_requires_reconciliation");
+      : ["accepted_message_not_consumed", "message_history_requires_reconciliation"].includes(reason)
+      ? "checkpoint_requirements_from_original_sender_source" : "reconcile_existing_operation") });
+  const checkpointStatus = (continuation) => continuation.conflict
+    ? pending("message_checkpoint_conflict", { checkpointReason: continuation.conflict, checkpointId: continuation.checkpointId,
+      nativeInputId: continuation.nativeInputId, nextAction: continuation.nextAction })
+    : continuation.pending.length ? pending("message_requirement_checkpoint_pending", {
+      responsibilities: continuation.pending, nextAction: continuation.pending[0].nextAction }) : null;
+  // Settlement does not erase a retained message. If its original input
+  // arrives after the outcome, status still exposes a source-verifiable review
+  // without reopening or rewriting that outcome.
+  if (child.state === "settled" && maintenance?.state !== "active" && !auditSettled)
+    return checkpointStatus(messageContinuationProjection(db, context, child, Math.min(deadline, Date.now() + 5000)));
+  if (child.state !== "open" && !(auditSettled && child.state === "settled") && maintenance?.state !== "active") return pending("child_requires_reconciliation");
   const attempt = db.prepare("SELECT * FROM delegation_attempts WHERE route_id=?").get(child.route_id);
   if (child.state !== "settled") {
     if (!attempt || attempt.ambiguous !== 0) return pending("child_lifecycle_requires_reconciliation");
@@ -225,13 +246,17 @@ export function stageClosureStatus(db, context, routeId = null, { deadline = Inf
   if (facts.pendingOperations.length) return pending("child_operations_pending", { pendingOperations: facts.pendingOperations });
   if (!facts.finished) return pending("latest_child_turn_not_complete");
   if (maintenance?.state === "active" && !operations.some((op) => op.revision > maintenance.start_revision && op.kind === "followup_task")) return pending("maintenance_followup_required");
+  const continuation = messageContinuationProjection(db, context, child, Math.min(deadline, Date.now() + 5000));
+  const checkpoint = checkpointStatus(continuation); if (checkpoint) return checkpoint;
   const expected = new Map([[payloadHash("/root"), [true]]]); // The native spawn activation is the first input.
   for (const op of operations) {
+    if (continuation.resolved.has(messageCheckpointKey(op))) continue;
     if (op.kind === "interrupt_agent") continue; // Request acceptance is not a new child input or a completion receipt.
     if (!expected.has(op.author)) expected.set(op.author, []);
     expected.get(op.author).push(op.kind === "followup_task");
   }
   for (const message of facts.messages) {
+    if (continuation.reviewedArrivals.has(message.id)) continue;
     const modes = expected.get(payloadHash(message.author));
     if (!modes?.length || modes.shift() !== message.triggerTurn) return pending("message_history_requires_reconciliation");
   }

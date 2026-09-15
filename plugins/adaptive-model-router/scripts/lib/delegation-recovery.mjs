@@ -11,14 +11,19 @@ import { auditNativeRecoveryTranscript, auditNativeLifecycle1533Transcript,
 import { QUALIFICATION_RECOVERY_SCHEMA, failedQualificationRecoverySubject, auditFailedQualificationTranscript } from "./qualification-recovery.mjs";
 import { readTaskQualification } from "./lifecycle-qualification.mjs";
 import { qualificationTargetMatches } from "./qualification-policy.mjs";
-import { auditNativeUnconsumed1534Transcript, isMetadataRecoveryAudit } from "./native-metadata-recovery-audit.mjs";
+import { auditNativeUnconsumed1534Transcript, isMetadataRecoveryAudit,
+  auditNativeUnconsumedContractTranscript, isMetadataContractAudit } from "./native-metadata-recovery-audit.mjs";
 import { inspectNativePredispatchRejection, isPredispatchRecoveryReceipt } from "./native-predispatch-audit.mjs";
 import { inspectNativeHostCapacityRejection } from "./native-host-capacity-audit.mjs";
 import { CAPACITY_RECOVERY_SCHEMA, CAPACITY_REASON, capacityStateKey, hostCapacityRecoverySubject,
   isHostCapacityRecoveryReceipt, capacityWasRecovered, invalidateCapacityList, rememberCapacityRefusal } from "./host-capacity-recovery.mjs";
+import { recoveryRecord, recoveryRecordIntact } from "./native-recovery-receipt.mjs";
+import { HOST_LIFECYCLE_CONTRACT } from "./host-compatibility.mjs";
 
 const PREFIX = "native_recovery:";
-const SCHEMA = "native-thread-delegation-recovery/2";
+const SCHEMA = "native-thread-delegation-recovery/4";
+const LEGACY_UNCONSUMED_SCHEMA = "native-thread-delegation-recovery/2";
+const LEGACY_QUALIFICATION_SCHEMA = "native-thread-delegation-recovery/3";
 const hash = (value) => createHash("sha256").update(String(value)).digest("hex");
 const present = (value) => typeof value === "string" && value.length > 0;
 const isDigest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
@@ -39,23 +44,28 @@ export function readNativeRecoveryReceipt(db, context, routeId) {
     const receipt = JSON.parse(row.value);
     if (isPredispatchRecoveryReceipt(receipt, context, routeId)
       || isHostCapacityRecoveryReceipt(receipt, context, routeId)) return receipt;
-    const supported = receipt.schemaVersion === SCHEMA
-      ? Object.hasOwn(UNCONSUMED_AUDITORS, receipt.cliVersion)
+    const unconsumed = [SCHEMA, LEGACY_UNCONSUMED_SCHEMA].includes(receipt.schemaVersion);
+    const semantic = [SCHEMA, QUALIFICATION_RECOVERY_SCHEMA].includes(receipt.schemaVersion);
+    const auditValid = semantic ? recoveryRecordIntact(receipt)
+      && (receipt.rawAuditAdapter === HOST_LIFECYCLE_CONTRACT || (unconsumed && isMetadataContractAudit(receipt)))
+      : unconsumed ? Object.hasOwn(UNCONSUMED_AUDITORS, receipt.cliVersion)
         && (receipt.rawAuditAdapter === UNCONSUMED_AUDITORS[receipt.cliVersion].adapter || isMetadataRecoveryAudit(receipt))
-        && (receipt.recoveryKind === undefined || (receipt.recoveryKind === "unconsumed_qualification"
+        : receipt.schemaVersion === LEGACY_QUALIFICATION_SCHEMA
+          && receipt.rawAuditAdapter === LIFECYCLE_AUDIT_ADAPTER && receipt.cliVersion === "0.153.0";
+    const supported = auditValid && (unconsumed
+      ? (receipt.recoveryKind === undefined || (receipt.recoveryKind === "unconsumed_qualification"
           && receipt.qualificationState === "pending" && receipt.ordinaryDelegationEnabled === false
           && receipt.originalDispatchConsumed === false && isDigest(receipt.qualificationDigest)))
-      : receipt.schemaVersion === QUALIFICATION_RECOVERY_SCHEMA
-        && receipt.rawAuditAdapter === LIFECYCLE_AUDIT_ADAPTER && receipt.cliVersion === "0.153.0"
+      : [QUALIFICATION_RECOVERY_SCHEMA, LEGACY_QUALIFICATION_SCHEMA].includes(receipt.schemaVersion)
         && receipt.recoveryKind === "failed_qualification" && receipt.qualificationState === "failed"
         && receipt.ordinaryDelegationEnabled === false && receipt.originalDispatchConsumed === true
-        && ["qualificationDigest", "retainedOutcomeDigest", "dispatchInputDigest"].every((key) => isDigest(receipt[key]));
+        && ["qualificationDigest", "retainedOutcomeDigest", "dispatchInputDigest"].every((key) => isDigest(receipt[key])));
     return supported
       && receipt.subjectDigest === payloadHash([context.projectId, context.contextKey, routeId])
       && receipt.status === "reconciled_failure" && receipt.failureType === "tooling"
       && receipt.source === "native_thread_read" && receipt.originalHandshakeProven === false
       && isDigest(receipt.rawAuditDigest)
-      && present(receipt.cliVersion) && present(receipt.recordedAt) && Number.isFinite(Date.parse(receipt.recordedAt))
+      && (semantic || present(receipt.cliVersion)) && present(receipt.recordedAt) && Number.isFinite(Date.parse(receipt.recordedAt))
       && Number.isSafeInteger(receipt.transcriptBytes) && receipt.transcriptBytes >= 0
       && ["evidenceDigest", "parentTurnDigest", "launchItemDigest", "childDigest", "childTurnDigest",
         "completionItemDigest", "finalResultDigest", "childItemsDigest"].every((key) => isDigest(receipt[key]))
@@ -71,7 +81,7 @@ function requireFact(condition) {
 
 function launchBinding(parent, attempt, input, cwd, subject) {
   requireFact(parent?.id === input.contextId && resolve(parent.cwd) === resolve(cwd));
-  requireFact(!parent.parentThreadId && present(parent.cliVersion));
+  requireFact(!parent.parentThreadId);
   requireFact(Array.isArray(parent.turns) && parent.turns.length <= 10_000);
   const activities = [];
   for (const turn of parent.turns) {
@@ -99,21 +109,18 @@ function launchBinding(parent, attempt, input, cwd, subject) {
   if (subject.schemaVersion === QUALIFICATION_RECOVERY_SCHEMA) {
     requireFact(start.rootTurnId === attempt.root_turn_id && start.id === attempt.tool_use_id);
   }
-  // Existing parent metadata can predate the build that actually ran the child.
-  // Only the qualification branch has a stored exact child-build binding.
-  return { start, completion, cliVersion: subject.cliVersion || null };
+  return { start, completion };
 }
 
 function closedChild(child, binding, attempt, input, cwd, subject) {
   const { start, completion } = binding;
-  // A long-lived parent may predate the executable that created this child.
-  // Pin the actual child build, then verify that same build in its raw source.
-  const cliVersion = binding.cliVersion || child?.cliVersion;
-  requireFact(subject.schemaVersion !== SCHEMA || Object.hasOwn(UNCONSUMED_AUDITORS, cliVersion));
+  // Creation labels are diagnostic. Identity, actions and terminal evidence
+  // below must still agree with the complete source on both native reads.
+  const cliVersion = typeof child?.cliVersion === "string" ? child.cliVersion : null;
   const spawn = child?.source?.subAgent?.thread_spawn;
   requireFact(child?.id === start.agentThreadId && child.parentThreadId === input.contextId);
   requireFact(child.forkedFromId === null && resolve(child.cwd) === resolve(cwd));
-  requireFact(child.cliVersion === cliVersion && child.model === attempt.model);
+  requireFact(child.model === attempt.model);
   requireFact(child.reasoningEffort === attempt.effort && present(child.path));
   requireFact(spawn?.parent_thread_id === input.contextId && spawn.depth === 1);
   requireFact(spawn.agent_path === start.agentPath);
@@ -208,7 +215,7 @@ function finishRecovery(store, context, input, stateDigest, receipt, cwd) {
     const subject = recoverySubject(store, context, current, cwd);
     if (!subject || subject.stateDigest !== stateDigest) return unresolved("RECOVERY_STATE_CHANGED");
     const recordedAt = new Date().toISOString();
-    const saved = { ...receipt, recordedAt };
+    const saved = recoveryRecord({ ...receipt, recordedAt });
     store.db.prepare("INSERT INTO meta(key, value) VALUES(?, ?)")
       .run(`${PREFIX}${input.routeId}`, canonicalJson(saved));
     if (receipt.schemaVersion === CAPACITY_RECOVERY_SCHEMA) {
@@ -262,7 +269,7 @@ export async function recoverDelegation(input, {
   if (!subject) return unresolved("RECOVERY_ATTEMPT_INELIGIBLE");
   const attemptDigest = subject.stateDigest;
   const auditTranscript = (bytes, child, parentId) => subject.schemaVersion === SCHEMA
-    ? UNCONSUMED_AUDITORS[child.cliVersion].audit(bytes, child, parentId)
+    ? auditNativeUnconsumedContractTranscript(bytes, child, parentId)
     : auditFailedQualificationTranscript(bytes, child, parentId, cwd);
   const client = readThread ? null : new AppServerClient({ timeoutMs: 20_000 });
   const deadline = Date.now() + 20_000;
@@ -346,7 +353,7 @@ export function readHostCapacityRejection(db, context) {
   const marker = db.prepare("SELECT value FROM meta WHERE key=?").get(capacityStateKey(context));
   if (!marker) return null;
   const receipt = readNativeRecoveryReceipt(db, context, marker.value);
-  if (!receipt || receipt.schemaVersion !== CAPACITY_RECOVERY_SCHEMA) {
+  if (!receipt || !isHostCapacityRecoveryReceipt(receipt, context, marker.value)) {
     return { reasonCode: "HOST_CAPACITY_EVIDENCE_UNPROVEN", source: "retained_capacity_marker" };
   }
   return { reasonCode: CAPACITY_REASON, source: receipt.source, recordedAt: receipt.recordedAt,

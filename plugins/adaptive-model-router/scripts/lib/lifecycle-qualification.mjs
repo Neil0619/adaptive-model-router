@@ -4,12 +4,16 @@ import { readFileSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AppServerClient } from "./app-server.mjs";
-import { attestNativeCodexHost } from "./native-host-executable.mjs";
 import { canonicalJson, payloadHash } from "./io.mjs";
-import { auditNativeLifecycleNoop, NATIVE_LIFECYCLE_CLI_VERSIONS, supportsNativeLifecycleHost } from "./native-lifecycle-audit.mjs";
+import { auditNativeLifecycleNoop, NATIVE_LIFECYCLE_CLI_VERSIONS } from "./native-lifecycle-audit.mjs";
+import { HOST_LIFECYCLE_CONTRACT, HOOK_DISPATCH_CONTRACT, hookDependencyProjection, hostObservation } from "./host-compatibility.mjs";
 import { activeRequalification, consumeRequalification } from "./qualification-retry.mjs";
 import { verifyStageClosure } from "./stage-closure.mjs";
 import { scoringWriterProjection } from "./scoring-boundary.mjs";
+import { ensureHostEpochSchema, hasHostEpochSchema } from "./host-epoch-storage.mjs";
+import { readStableRollout, rolloutIdentity } from "./native-rollout-reader.mjs";
+import { readHookIdentityDiagnostic } from "./hook-diagnostics.mjs";
+import { openPrivateState, sealPrivateState } from "./private-state.mjs";
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PROOFS = new WeakMap();
@@ -28,10 +32,10 @@ export function runtimeSourceDigest(root = MODULE_ROOT) {
 }
 
 export async function nativeQualificationHost() {
-  if (!["darwin", "win32"].includes(process.platform)) throw new Error("native qualification platform is unproven");
-  const host = await attestNativeCodexHost();
-  if (!supportsNativeLifecycleHost(process.platform, host.cliVersion)) throw new Error("native qualification build is unproven");
-  return host;
+  // A disk executable can have been replaced while this task still runs the
+  // previous image. Qualification relies on real task Hooks and native calls,
+  // not --version/PATH or hashing a potentially unrelated program on each call.
+  return { platform: process.platform, arch: process.arch, cliVersion: null, source: "hook-process-platform" };
 }
 
 export function lifecycleBinding(hooks, shellRoot, inventoryRoot, host, cwd, historicalRoots = []) {
@@ -39,18 +43,17 @@ export function lifecycleBinding(hooks, shellRoot, inventoryRoot, host, cwd, his
   const taskCwdDigest = payloadHash(realpathSync(cwd));
   const directShellRoots = [...new Set([shellRoot, inventoryRoot].map((root) => payloadHash(realpathSync(root))))].sort();
   const shellRoots = [...new Set([shellRoot, inventoryRoot, ...historicalRoots].map((root) => payloadHash(realpathSync(root))))].sort();
-  const hookSet = hooks.map((hook) => Object.fromEntries([
-    "eventName", "handlerType", "command", "matcher", "timeoutSec", "statusMessage", "async",
-    "source", "sourcePath", "pluginId", "currentHash", "enabled", "trustStatus",
-  ].map((field) => [field, hook[field] ?? null])));
-  return { digest: payloadHash({ host, hookSet, shellRoots, directShellRoots, runtimeDigest, taskCwdDigest }), runtimeDigest, taskCwdDigest,
-    configurationDigest: payloadHash({ host, hookSet, taskCwdDigest }),
-    shellRoots, directShellRoots, cliVersion: host.cliVersion };
+  const hookSet = hookDependencyProjection(hooks);
+  const contracts = [HOOK_DISPATCH_CONTRACT, HOST_LIFECYCLE_CONTRACT];
+  return { schema: 2, contracts, hookSet,
+    digest: payloadHash({ contracts, hookSet, shellRoots, directShellRoots, runtimeDigest, taskCwdDigest }), runtimeDigest, taskCwdDigest,
+    configurationDigest: payloadHash({ contracts, hookSet, taskCwdDigest }),
+    shellRoots, directShellRoots, cliVersion: host?.cliVersion ?? null, hostObservation: hostObservation(host) };
 }
 
 function validBinding(binding) {
   return digest(binding?.digest) && digest(binding?.runtimeDigest) && digest(binding?.taskCwdDigest)
-    && NATIVE_LIFECYCLE_CLI_VERSIONS.includes(binding.cliVersion)
+    && (binding.schema === 2 ? validContractBinding(binding) : NATIVE_LIFECYCLE_CLI_VERSIONS.includes(binding.cliVersion))
     && Array.isArray(binding.shellRoots) && binding.shellRoots.length > 0
     && binding.shellRoots.length <= 6 && binding.shellRoots.every(digest)
     && (binding.directShellRoots === undefined || (Array.isArray(binding.directShellRoots)
@@ -58,9 +61,16 @@ function validBinding(binding) {
       && binding.directShellRoots.every((root) => binding.shellRoots.includes(root))));
 }
 
+function validContractBinding(binding) {
+  const { contracts, hookSet, shellRoots, directShellRoots, runtimeDigest, taskCwdDigest } = binding;
+  return payloadHash(contracts) === payloadHash([HOOK_DISPATCH_CONTRACT, HOST_LIFECYCLE_CONTRACT])
+    && Array.isArray(hookSet) && binding.configurationDigest === payloadHash({ contracts, hookSet, taskCwdDigest })
+    && binding.digest === payloadHash({ contracts, hookSet, shellRoots, directShellRoots, runtimeDigest, taskCwdDigest });
+}
+
 export function newTaskQualification(binding, routeId, requalification = null, passedRefresh = null) {
   if (!validBinding(binding)) return null;
-  return { schema: 1, state: "pending", routeId, binding, hooks: {},
+  return { schema: binding.schema === 2 ? 2 : 1, state: "pending", routeId, binding, hooks: {},
     ...(requalification ? { requalification } : {}),
     ...(passedRefresh ? { passedRefresh } : {}),
     marker: `NATIVE_ROUTER_NOOP_${randomBytes(12).toString("hex")}`, createdAt: new Date().toISOString() };
@@ -71,7 +81,8 @@ export function readTaskQualification(db, context) {
   if (!row) return null;
   try {
     const value = JSON.parse(row.value);
-    if (value.schema === 1 && validBinding(value.binding) && typeof value.routeId === "string"
+    if ([1, 2].includes(value.schema) && (value.schema === 2) === (value.binding?.schema === 2)
+      && validBinding(value.binding) && typeof value.routeId === "string"
       && ["pending", "passed", "failed"].includes(value.state)
       && /^NATIVE_ROUTER_NOOP_[a-f0-9]{24}$/u.test(value.marker)
       && value.hooks && typeof value.hooks === "object") return value;
@@ -92,6 +103,8 @@ export function reserveTaskQualification(db, context, qualification, ticketHash)
 }
 
 export function qualificationReadiness(db, context, binding) {
+  const adopted = readHistoricalQualificationAdoption(db, context, binding);
+  if (adopted) return { ready: true, reasonCode: null, binding, adoptionId: adopted.id };
   let existing = readTaskQualification(db, context);
   if (!existing && context.runtimeDigest) {
     const task = db.prepare("SELECT * FROM runtime_tasks WHERE project_id=? AND context_key=?").get(context.projectId, context.contextKey);
@@ -112,15 +125,15 @@ export function qualificationReadiness(db, context, binding) {
   if (passedRefresh) return { ready: false, reasonCode: "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN",
     qualificationBinding: binding, passedRefresh, binding };
   if (existing.binding?.digest !== binding.digest) return { ready: false, reasonCode: "HOST_HOOK_SET_MISMATCH", binding };
-  if (existing.state === "passed" && digest(existing.proof?.rawAuditDigest)) return { ready: true, reasonCode: null, binding };
+  if (passedQualificationBasis(db, context, existing)) return { ready: true, reasonCode: null, binding };
   return { ready: false, reasonCode: "HOST_LIFECYCLE_QUALIFICATION_FAILED", binding };
 }
 
 function validPassedProof(value) {
   const proof = value?.proof;
-  return value?.schema === 1 && value.state === "passed" && validBinding(value.binding) && !value.failure && digest(value.ticketHash)
+  return [1, 2].includes(value?.schema) && value.state === "passed" && validBinding(value.binding) && !value.failure && digest(value.ticketHash)
     && Number.isFinite(Date.parse(value.completedAt)) && proof?.passed === true
-    && proof.rawAuditAdapter === `codex-${value.binding.cliVersion}-no-work/1`
+    && proof.rawAuditAdapter === (value.schema === 2 ? HOST_LIFECYCLE_CONTRACT : `codex-${value.binding.cliVersion}-no-work/1`)
     && ["rawAuditDigest", "childDigest", "childTurnDigest", "rootTurnDigest", "toolUseDigest"]
       .every((field) => digest(proof[field]))
     && Number.isSafeInteger(proof.sourceBytes) && proof.sourceBytes > 0 && proof.sourceBytes <= 2 * 1024 * 1024
@@ -256,7 +269,7 @@ async function nativeSnapshot(parentId, attempt) {
   } finally { client.close(); }
 }
 
-function verifySnapshot({ parent, child }, attempt, value, input, store, context, auditOptions, { retainedHostVersionMismatch = false } = {}) {
+function verifySnapshot({ parent, child }, attempt, value, input, store, context, auditOptions, { retainedHostVersionMismatch = false, contractAudit = false } = {}) {
   const persistedRoute = store.db.prepare("SELECT * FROM routes WHERE route_id=?").get(attempt.route_id);
   requireFact(qualificationTargetMatches(store.db, value, persistedRoute));
   const cwd = nativeTaskWorkingDirectory(parent, { contextId: input.contextId, store, context });
@@ -271,7 +284,7 @@ function verifySnapshot({ parent, child }, attempt, value, input, store, context
       && NATIVE_LIFECYCLE_CLI_VERSIONS.includes(child.cliVersion)
       && EVENTS.every((event) => value.hooks[event]?.runtimeDigest === value.binding.runtimeDigest
         && value.binding.shellRoots.includes(value.hooks[event].shellRoot)));
-  } else requireFact(child.cliVersion === value.binding.cliVersion);
+  } else if (value.schema === 1) requireFact(child.cliVersion === value.binding.cliVersion);
   const turn = parent.turns.find((entry) => entry.id === attempt.root_turn_id);
   requireFact(turn?.itemsView === "full");
   const activities = turn.items.filter((item) => item.type === "subAgentActivity" && item.agentThreadId === child.id);
@@ -287,7 +300,9 @@ function verifySnapshot({ parent, child }, attempt, value, input, store, context
   requireFact(sha(taskName.slice(7)) === value.ticketHash && stops[0].agentPath === starts[0].agentPath);
   requireFact(stops[0].id === `subagent-completed-${child.turns[0]?.id}`);
   const audit = auditNativeLifecycleNoop({ child, parentId: input.contextId, taskName,
-    target: { model: attempt.model, effort: attempt.effort }, marker: value.marker }, auditOptions);
+    target: { model: attempt.model, effort: attempt.effort }, marker: value.marker }, {
+      ...auditOptions, legacyVersion: value.schema === 1 && !contractAudit ? child.cliVersion : null,
+    });
   requireFact(audit.passed);
   return { ...audit, childDigest: sha(child.id), childTurnDigest: sha(child.turns[0].id),
     rootTurnDigest: sha(turn.id), toolUseDigest: sha(starts[0].id) };
@@ -383,4 +398,137 @@ export function verifiedRuntimeQualification(db, context) {
       && outcome?.status === "failed" && (attempt.no_child === 1 || attempt.stop_observed === 1)) return value;
   }
   return null;
+}
+
+const ADOPTIONS = new WeakMap();
+
+async function historicalNativeSnapshot(parentId, value) {
+  const client = new AppServerClient({ timeoutMs: 20_000 });
+  try {
+    await client.start();
+    const parent = (await client.request("thread/read", { threadId: parentId, includeTurns: true })).thread;
+    const turns = parent?.turns?.filter((turn) => sha(turn.id) === value.proof.rootTurnDigest) || [];
+    requireFact(turns.length === 1);
+    const starts = turns[0].items?.filter((item) => item.type === "subAgentActivity" && item.kind === "started"
+      && sha(item.id) === value.proof.toolUseDigest && sha(item.agentThreadId) === value.proof.childDigest) || [];
+    requireFact(starts.length === 1);
+    const child = (await client.request("thread/read", { threadId: starts[0].agentThreadId, includeTurns: true })).thread;
+    return { parent, child };
+  } finally { client.close(); }
+}
+
+// This record is a new interpretation of original evidence. It never replaces a
+// qualification, its old composite digest, its Hook events or its outcome.
+export function readHistoricalQualificationAdoption(db, context, binding) {
+  if (!hasHostEpochSchema(db) || !validBinding(binding) || binding.schema !== 2) return null;
+  const row = db.prepare(`SELECT * FROM host_contract_adoptions WHERE project_id=? AND context_key=?
+    AND generation=? AND binding_digest=?`).get(context.projectId, context.contextKey, context.runtimeDigest || "", binding.digest);
+  if (!row) return null;
+  try {
+    const record = JSON.parse(openPrivateState(db, row.record));
+    const raw = db.prepare("SELECT value FROM meta WHERE key=?").get(record.sourceKey)?.value;
+    const sourceContext = { ...context, runtimeDigest: record.sourceGeneration || undefined };
+    const original = readTaskQualification(db, sourceContext);
+    if (record.schema !== "historical-qualification-adoption/1" || record.id !== row.id
+      || payloadHash(raw) !== record.originalDigest || record.binding.digest !== binding.digest
+      || record.verifier !== runtimeSourceDigest()
+      || passedQualificationBasis(db, sourceContext, original) !== record.basisDigest) return null;
+    return record;
+  } catch { return null; }
+}
+
+export async function prepareHistoricalQualificationAdoption(input, {
+  store, cwd, binding, sourceGeneration = null, inspectBinding,
+  readNative = historicalNativeSnapshot, auditOptions,
+} = {}) {
+  ensureHostEpochSchema(store.db);
+  const context = store.context({ cwd, contextId: input.contextId, create: false });
+  const sourceContext = { ...context, runtimeDigest: sourceGeneration || undefined };
+  const targetContext = { ...context, runtimeDigest: input.generation || undefined };
+  requireFact(validBinding(binding) && binding.schema === 2 && typeof inspectBinding === "function");
+  const original = readTaskQualification(store.db, sourceContext);
+  requireFact(original?.routeId === input.routeId && original.state === "passed");
+  const basisDigest = passedQualificationBasis(store.db, sourceContext, original);
+  requireFact(basisDigest && original.binding.taskCwdDigest === binding.taskCwdDigest);
+  const raw = store.db.prepare("SELECT value FROM meta WHERE key=?").get(key(sourceContext)).value;
+  const current = () => readHookIdentityDiagnostic(process.env, { contextId: input.contextId, turnId: input.turnId });
+  const hook = current();
+  requireFact(input.turnId && hook.available && hook.reasonCode === "HOOK_DISPATCHED_IDENTITY_ACCEPTED");
+  requireFact((await inspectBinding()).binding?.digest === binding.digest);
+  const first = await readNative(input.contextId, original);
+  const route = store.db.prepare("SELECT * FROM routes WHERE route_id=?").get(original.routeId);
+  const turns = first.parent?.turns?.filter((turn) => sha(turn.id) === original.proof.rootTurnDigest) || [];
+  requireFact(turns.length === 1);
+  const starts = turns[0].items.filter((item) => item.type === "subAgentActivity" && item.kind === "started"
+    && sha(item.id) === original.proof.toolUseDigest && sha(item.agentThreadId) === original.proof.childDigest);
+  requireFact(starts.length === 1);
+  const retainedAttempt = store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=?").get(original.routeId);
+  // Terminal attempt pruning is legitimate. Reconstruct only the correlation
+  // view from original hashed identities and re-read native items, never write it.
+  const attempt = retainedAttempt || { route_id: original.routeId, root_turn_id: turns[0].id,
+    tool_use_id: starts[0].id, agent_id: original.proof.childDigest, model: route.model, effort: route.effort };
+  const parentIdentity = rolloutIdentity(first.parent.path), childIdentity = rolloutIdentity(first.child.path);
+  let root = false, nativeCall = null, outputs = 0, rawTurn = null;
+  const parentSource = readStableRollout(first.parent.path, (entry, line) => {
+    const p = entry.payload;
+    if (line === 1) {
+      root = entry.type === "session_meta" && p.id === input.contextId && !p.parent_thread_id && !p.source?.subagent;
+      requireFact(root);
+    }
+    if (entry.type === "turn_context" || (entry.type === "event_msg" && p?.type === "task_started")) rawTurn = p.turn_id;
+    if (entry.type !== "response_item" || p?.call_id !== attempt.tool_use_id) return;
+    requireFact(rawTurn === attempt.root_turn_id);
+    if (p.type === "function_call") {
+      requireFact(nativeCall === null && p.name === "spawn_agent" && [undefined, "collaboration"].includes(p.namespace));
+      nativeCall = JSON.parse(p.arguments);
+      requireFact(nativeCall.task_name === starts[0].agentPath.slice(6) && nativeCall.model === route.model
+        && nativeCall.reasoning_effort === route.effort && nativeCall.fork_turns === "none"
+        && typeof nativeCall.message === "string" && nativeCall.message.length > 0
+        && (!attempt.dispatch_input_digest || payloadHash(nativeCall) === attempt.dispatch_input_digest));
+    } else if (p.type === "function_call_output") {
+      requireFact(nativeCall && ++outputs === 1);
+      const output = typeof p.output === "string" ? JSON.parse(p.output) : p.output;
+      // The native task API binds this same call to the exact child ID and
+      // path above. Hosts may return that canonical path rather than agent_id.
+      // A model-printed alias, conflicting ID/path or empty result is not proof.
+      requireFact(output && typeof output === "object" && !Array.isArray(output)
+        && (output.agent_id === first.child.id || output.task_name === starts[0].agentPath)
+        && (output.agent_id == null || output.agent_id === first.child.id)
+        && (output.task_name == null || output.task_name === starts[0].agentPath));
+    } else requireFact(false);
+  });
+  requireFact(root && nativeCall && outputs === 1);
+  const legacyAudit = verifySnapshot(first, attempt, original, input, store, context, auditOptions);
+  requireFact(["rawAuditDigest", "sourceBytes", "childDigest", "childTurnDigest", "rootTurnDigest", "toolUseDigest"]
+    .every((field) => original.proof[field] === legacyAudit[field]));
+  const proof = verifySnapshot(first, attempt, original, input, store, context, auditOptions, { contractAudit: true });
+  const second = await readNative(input.contextId, original);
+  requireFact(payloadHash(proof) === payloadHash(verifySnapshot(second, attempt, original, input, store, context, auditOptions, { contractAudit: true })));
+  requireFact(parentIdentity === rolloutIdentity(first.parent.path) && childIdentity === rolloutIdentity(first.child.path)
+    && first.parent.path === second.parent.path && first.child.path === second.child.path);
+  requireFact((await inspectBinding()).binding?.digest === binding.digest && payloadHash(current()) === payloadHash(hook));
+  const record = { schema: "historical-qualification-adoption/1", sourceKey: key(sourceContext),
+    sourceGeneration, originalDigest: payloadHash(raw), basisDigest, binding, proof,
+    parentSource, hookDigest: payloadHash(hook), turnId: input.turnId, verifier: runtimeSourceDigest() };
+  record.id = payloadHash(record);
+  const token = Object.freeze({});
+  ADOPTIONS.set(token, { store, context: targetContext, sourceContext, record,
+    sources: [[first.parent.path, parentIdentity], [first.child.path, childIdentity]],
+    hook, contextId: input.contextId });
+  return token;
+}
+
+export function commitHistoricalQualificationAdoption(db, token) {
+  const saved = ADOPTIONS.get(token);
+  requireFact(saved?.store.db === db && db.isTransaction);
+  const { context, sourceContext, record, sources } = saved;
+  requireFact(sources.every(([path, identity]) => rolloutIdentity(path) === identity));
+  requireFact(payloadHash(readHookIdentityDiagnostic(process.env, { contextId: saved.contextId, turnId: record.turnId })) === payloadHash(saved.hook));
+  requireFact(payloadHash(db.prepare("SELECT value FROM meta WHERE key=?").get(record.sourceKey)?.value) === record.originalDigest
+    && passedQualificationBasis(db, sourceContext, readTaskQualification(db, sourceContext)) === record.basisDigest);
+  db.prepare(`INSERT OR IGNORE INTO host_contract_adoptions(id,project_id,context_key,generation,binding_digest,record)
+    VALUES(?,?,?,?,?,?)`).run(record.id, context.projectId, context.contextKey, context.runtimeDigest || "", record.binding.digest, sealPrivateState(db, canonicalJson(record)));
+  const existing = readHistoricalQualificationAdoption(db, context, record.binding);
+  requireFact(existing);
+  return existing;
 }

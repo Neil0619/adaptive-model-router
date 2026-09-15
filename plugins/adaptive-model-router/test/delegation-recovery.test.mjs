@@ -121,10 +121,10 @@ test("native recovery rejects tool calls omitted from the native thread projecti
   });
 });
 
-test("recovery source audit rejects unknown builds, truncated streams, broken pairs, and changing bytes", async () => {
+test("recovery source audit rejects wrong identity, truncated streams, broken pairs, and changing bytes", async () => {
   const mutations = [
     ({ parent, child, rawRecords }) => {
-      parent.cliVersion = child.cliVersion = rawRecords[0].payload.cli_version = "0.154.0";
+      parent.id = "different-parent";
     },
     ({ rawRecords }) => { rawRecords[0].payload.parent_thread_id = "different-parent"; },
     ({ rawRecords }) => { rawRecords.splice(4, 1); },
@@ -148,6 +148,25 @@ test("recovery source audit rejects unknown builds, truncated streams, broken pa
     mutate(fixture);
     assert.equal((await recoverDelegation(fixture.input, fixture.options)).status, "unresolved");
     assert.equal(fixture.store.status(fixture.context).delegationGate.state, "occupied");
+  });
+});
+
+test("unconsumed recovery uses the operation contract across host upgrades and retains receipts unchanged", async () => {
+  for (const label of ["future-app-release", null]) await withIncident(async (f) => {
+    const { recoverDelegation, readNativeRecoveryReceipt } = await recoveryModule();
+    f.parent.cliVersion = label;
+    f.child.cliVersion = label;
+    f.rawRecords[0].payload.cli_version = "historical-creation-label";
+    const inspected = await recoverDelegation(f.input, f.options);
+    assert.equal(inspected.status, "recoverable");
+    const applied = await recoverDelegation({ ...f.input, apply: true, expectedEvidenceDigest: inspected.evidenceDigest }, f.options);
+    assert.equal(applied.status, "reconciled_failure");
+    assert.equal(applied.receipt.rawAuditAdapter, "native-child-no-work/1");
+    assert.equal(applied.receipt.schemaVersion, "native-thread-delegation-recovery/4");
+    const original = f.store.db.prepare("SELECT value FROM meta WHERE key=?").get(`native_recovery:${f.route.routeId}`).value;
+    f.child.cliVersion = "another-upgrade";
+    assert.deepEqual(readNativeRecoveryReceipt(f.store.db, f.context, f.route.routeId), applied.receipt);
+    assert.equal(f.store.db.prepare("SELECT value FROM meta WHERE key=?").get(`native_recovery:${f.route.routeId}`).value, original);
   });
 });
 

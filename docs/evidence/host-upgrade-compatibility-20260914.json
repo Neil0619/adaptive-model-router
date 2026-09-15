@@ -1,0 +1,388 @@
+{
+  "schema": "host-upgrade-development-evidence/1",
+  "date": "2026-09-14",
+  "branch": "codex/host-upgrade-compatibility",
+  "baseCommit": "16c439dd0bf3657ba06707ff15c1465613d49554",
+  "sourceFingerprint": "ad5fb0ed7f6a63c155cd6233a5ed5b719b76532b1d1bc086687212d4e924b783",
+  "scope": "development-and-isolated-native-macos-acceptance",
+  "complete": false,
+  "globalInstalled": false,
+  "committed": false,
+  "fullSuite": {
+    "tests": 541,
+    "passed": 538,
+    "failed": 0,
+    "skipped": 3,
+    "exitCode": 0,
+    "log": "/tmp/router-host-upgrade-full-final4.log",
+    "durationMs": 172215.778333,
+    "legacyFixtureDigest": "9d23b8ae47f6d9bd6b388a33b75c7f94741546116efa29d3e33d9ebc72a1c9b2",
+    "nativeCli": "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "skippedReasons": {
+      "Windows-only": 3
+    },
+    "capturedNativeHookEvidenceEnabled": true,
+    "newModelExecutionInFullSuite": false,
+    "retainedLog": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-host-upgrade-router-candidate/source-checks/router-host-upgrade-full-final4.log"
+  },
+  "supplementaryNativeRegistration": {
+    "tests": 1,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "scope": "temporary-CODEX_HOME-registration-without-Hook-execution",
+    "log": "/tmp/router-host-upgrade-native-registration.log",
+    "includedInFullSuite": true
+  },
+  "supplementaryNativeColdMcp": {
+    "tests": 1,
+    "passed": 1,
+    "failed": 0,
+    "skipped": 0,
+    "scope": "same-native-task-ID-cold-resume-MCP-A-to-B-without-Hooks-or-model-inference",
+    "log": "/tmp/router-host-upgrade-native-cold-mcp-regression.log",
+    "includedInFullSuite": true
+  },
+  "isolatedHookAcceptance": {
+    "state": "native-parent-child-cold-resume-verified",
+    "root": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-native-cold-entry-acceptance",
+    "hooksExecuted": 26,
+    "nativeTasksCreated": 4,
+    "globalConfigTouched": false,
+    "sharedNativeKeys": 7,
+    "trustApplication": "sequential-exact-A-then-B-after-user-approval",
+    "userAuthorization": "允许隔离测试 Hook 信任",
+    "globalAuthUnchanged": true,
+    "localAuthFileCreated": false,
+    "approvalDigest": "sha256:0b8da24784af1f13856dbf6f0e089b3444d517470b67beebfa72217e759c897b",
+    "scope": "generic-logging-hook-entry-only-not-Router-business-qualification",
+    "nativeRoot": "01a0a047-66ca-70b0-ab23-7a80849fa949",
+    "nativeChild": "01a0a047-93fc-7a03-bd1f-f7ed1ba9a402",
+    "parentAndChildSameIds": true,
+    "childFollowupWithoutNewStart": true,
+    "parentAndChildCommandsExitCode": 0,
+    "ownedProcessesExited": true,
+    "childFinal": "CHILD_B_FOLLOWUP_DONE",
+    "reports": [
+      "model-AB-A-verified-report.json",
+      "model-AB-B-report.json"
+    ],
+    "shellOnlyTrigger": "unproven-no-hooks",
+    "normalTurnTrigger": "observed",
+    "hooksExecutedScope": "3 supplemental normal-turn plus 11 model-A plus 12 model-B, before queued-message followup",
+    "queuedMessage": {
+      "nativeQueueSurvival": "failed",
+      "evidence": "queued-message-source-audit.json",
+      "originalRequirement": "retained-and-explicitly-recovered-in-same-parent-and-child",
+      "recoveryEvidence": "queued-message-recovery-report.json",
+      "originalCallRetried": false,
+      "childReplaced": false,
+      "productionLedgerContinuation": "isolated-source-and-real-capture-parser-verified; native-Router-business-acceptance-pending"
+    }
+  },
+  "validation": {
+    "router": "passed",
+    "plugin": "passed",
+    "evalCases": 232,
+    "evalMismatches": 0,
+    "diffWhitespace": "passed",
+    "logs": {
+      "router": "/tmp/router-host-upgrade-validate-final4.log",
+      "eval": "/tmp/router-host-upgrade-eval-final4.log"
+    }
+  },
+  "independentReview": {
+    "state": "complete",
+    "routeId": "ac0ba8ee-8bae-4d7d-bad8-e1b75d22abad",
+    "model": "gpt-6-astra",
+    "effort": "xhigh",
+    "sourceFingerprint": "ad5fb0ed7f6a63c155cd6233a5ed5b719b76532b1d1bc086687212d4e924b783",
+    "scope": "final-cold-entry-checkpoint-and-transaction-boundary-source-review",
+    "gate": "full-checks",
+    "outcomeSeq": 1470,
+    "originalFindings": 1,
+    "fixedFindings": 1,
+    "remainingFindings": 0,
+    "incrementalTests": 7,
+    "incrementalPassed": 7,
+    "incrementalLog": "/tmp/router-independent-final-counterexamples-incremental2.log",
+    "portableFullLifecycleRegression": "/tmp/router-host-upgrade-sibling-regression3.log"
+  },
+  "remaining": [
+    "source-owned-native-cold-installation-retirement-in-authorized-safe-window",
+    "native-Windows-logged-in-acceptance"
+  ],
+  "epochRegression": {
+    "tests": 24,
+    "passed": 24,
+    "failed": 0,
+    "skipped": 0,
+    "log": "/tmp/router-host-upgrade-integrated-review6.log",
+    "includedInFullSuite": true,
+    "snapshot": "historical; included in current fullSuite, expanded checkpoint tests also in checkpointPreflightRegression"
+  },
+  "supplementaryNativeHookPreparationChecks": {
+    "inventory": {
+      "passed": 1,
+      "log": "/tmp/router-native-cold-read-inventory.log",
+      "phase": "A",
+      "untrustedHooks": 7,
+      "configUnchanged": true,
+      "executableProvenance": "PATH-resolved, exact App binary not proven by this early script"
+    },
+    "installationApi": {
+      "passed": 1,
+      "log": "/tmp/router-native-cold-install-api.log",
+      "phases": [
+        "A",
+        "B"
+      ],
+      "marketplacePathKind": "manifest-file",
+      "hooksExecuted": 0,
+      "nativeTasksCreated": 0,
+      "modelCalls": 0,
+      "globalConfigTouched": false,
+      "approvedFixtureConfigTouched": false
+    }
+  },
+  "nativeColdHookDriver": {
+    "state": "captured-native-parent-child-and-message-parser-evidence-verified",
+    "scope": "generic-Hook native captures plus production parser with synthetic isolated ledger; no-Router-business-qualification",
+    "tests": 25,
+    "passed": 25,
+    "failed": 0,
+    "skipped": 0,
+    "includedInFullSuite": true,
+    "log": "/tmp/router-host-upgrade-full-final4.log",
+    "nativeHookRunEnabled": false,
+    "executionMode": "read-only revalidation of already captured native execution",
+    "modelCalls": 0,
+    "reviewMaterialDigest": "sha256:0b8da24784af1f13856dbf6f0e089b3444d517470b67beebfa72217e759c897b",
+    "independentlyReplayedByFinalReviewer": true
+  },
+  "history": [
+    {
+      "sourceFingerprint": "91a0f1da545c9180126cca636572a82703d4c72ee4f324ed7a378944a4903822",
+      "fullSuite": {
+        "tests": 527,
+        "passed": 521,
+        "failed": 2,
+        "skipped": 4,
+        "exitCode": 1,
+        "log": "/tmp/router-host-upgrade-full-review7.log",
+        "legacyFixtureDigest": "9d23b8ae47f6d9bd6b388a33b75c7f94741546116efa29d3e33d9ebc72a1c9b2",
+        "failures": [
+          "runtime-isolation: installed v1 and v2 retain one policy, salt and global ledger while unknown legacy tasks remain on A",
+          "stage-closure: cold legacy binding retains a child and bounded maintenance after terminal attempt pruning"
+        ],
+        "nativeCli": "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "skippedReasons": {
+          "Windows-only": 3,
+          "pending-explicit-Hook-trust": 1
+        },
+        "snapshot": "historical-source-before-authorized-native-work"
+      },
+      "independentReview": {
+        "state": "complete",
+        "finalIncrementTests": 8,
+        "finalIncrementPassed": 8,
+        "finalIncrementFindings": 0,
+        "log": "/tmp/router-host-upgrade-final-increment-review.log",
+        "sourceFingerprint": "91a0f1da545c9180126cca636572a82703d4c72ee4f324ed7a378944a4903822",
+        "fullChecksGate": "failed",
+        "failureType": "reasoning",
+        "outcomeSeq": 1461,
+        "reason": "Two required positive v1 cold regressions remain failing; targeted review success does not complete product acceptance."
+      },
+      "note": "Historical snapshot; failures retained rather than rewritten."
+    },
+    {
+      "sourceFingerprint": "53acba9f99e922827d6cf6fb3f4785ffff68bae4a6bc0e3b18ebd76caca5d736",
+      "fullSuite": {
+        "tests": 537,
+        "passed": 534,
+        "failed": 0,
+        "skipped": 3,
+        "log": "/tmp/router-host-upgrade-full-final1.log"
+      },
+      "note": "Before outside-transaction checkpoint preflight change."
+    },
+    {
+      "sourceFingerprint": "f909386108e40f6420283d33f4a27830c8d7c98c9e2fbcf93b87ec5b88b7a0ec",
+      "fullSuite": {
+        "tests": 540,
+        "passed": 536,
+        "failed": 1,
+        "skipped": 3,
+        "log": "/tmp/router-host-upgrade-full-final2.log"
+      },
+      "failure": "Root-owned synthetic replay fixture lacked created_at after new bounded projection query; fixture corrected and fresh full suite rerun."
+    },
+    {
+      "sourceFingerprint": "f909386108e40f6420283d33f4a27830c8d7c98c9e2fbcf93b87ec5b88b7a0ec",
+      "fullSuite": {
+        "tests": 541,
+        "passed": 538,
+        "failed": 0,
+        "skipped": 3,
+        "exitCode": 0,
+        "log": "/tmp/router-host-upgrade-full-final4.log",
+        "durationMs": 172215.778333,
+        "legacyFixtureDigest": "9d23b8ae47f6d9bd6b388a33b75c7f94741546116efa29d3e33d9ebc72a1c9b2",
+        "nativeCli": "/Applications/ChatGPT.app/Contents/Resources/codex",
+        "skippedReasons": {
+          "Windows-only": 3
+        },
+        "capturedNativeHookEvidenceEnabled": true,
+        "newModelExecutionInFullSuite": false,
+        "retainedLog": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-host-upgrade-router-candidate/source-checks/router-host-upgrade-full-final4.log"
+      },
+      "note": "Before independent sibling sender-source finding and root fix; superseded by final4."
+    }
+  ],
+  "developmentImplemented": true,
+  "sourceChecksPassed": true,
+  "fullProductAcceptance": false,
+  "implementationOutcome": {
+    "routeId": "c8bb0f4e-4ae4-4954-81f7-a58bc6a41c5a",
+    "state": "passed",
+    "gate": "full-checks",
+    "outcomeSeq": 1468,
+    "scope": "bounded-source-implementation-and-isolated-checks; not-native-business-qualification",
+    "sourceFingerprint": "f909386108e40f6420283d33f4a27830c8d7c98c9e2fbcf93b87ec5b88b7a0ec"
+  },
+  "checkpointPreflightRegression": {
+    "tests": 132,
+    "passed": 132,
+    "failed": 0,
+    "skipped": 0,
+    "log": "/tmp/router-checkpoint-preflight-full.log",
+    "newBoundaryTests": 3,
+    "newBoundaryLog": "/tmp/router-checkpoint-preflight-entries3.log",
+    "sharedDeadlineMs": 5000,
+    "sourceReadsDuringWriteTransaction": false,
+    "sourceRaceMustRemainPending": true,
+    "originalOutcomePreserved": true,
+    "scope": "New checkpoint source projections; pre-existing no-checkpoint closure readers unchanged."
+  },
+  "candidatePreparation": {
+    "state": "trusted-enrolled-native-business-verified",
+    "root": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-host-upgrade-router-candidate",
+    "sourceFingerprint": "ad5fb0ed7f6a63c155cd6233a5ed5b719b76532b1d1bc086687212d4e924b783",
+    "reviewMaterialDigest": "sha256:c82f6c86424b574572930e16399aeec738f8243ae66f71dd0a443e4031ef83dc",
+    "untrustedHooks": 0,
+    "hooksExecuted": true,
+    "modelsStarted": true,
+    "authFileCreated": false,
+    "nativeProcessesExited": true,
+    "globalConfigTouched": false,
+    "trustRequest": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-host-upgrade-router-candidate/TRUST-REQUEST.zh-CN.md",
+    "version": "0.4.0+codex.20260914153541",
+    "trustedHooks": 7,
+    "approvalReceipt": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-host-upgrade-router-candidate/approved-router-trust.json",
+    "enrollmentReceipt": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-host-upgrade-router-candidate/native-enrollment.json"
+  },
+  "sourceEvidenceArchive": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-host-upgrade-router-candidate/source-checks",
+  "finalTaskClosure": {
+    "stageClosure": null,
+    "pendingStageWork": [],
+    "delegationGate": "available",
+    "historicalPendingOutcomesUnchanged": 1,
+    "independentReviewOutcomeSeq": 1470,
+    "nativeAcceptanceReviewOutcomeSeq": 1471,
+    "nativeAcceptanceReviewRouteId": "0af86723-9972-49a3-92d8-5e816dea33cc",
+    "nativeAcceptanceReviewRecordedAt": "2026-09-14T16:32:29.640Z",
+    "verifiedClosureRevision": 13,
+    "verifiedInputCount": 14,
+    "pendingOutcomes": 1,
+    "globalReservationsPending": 2,
+    "currentStageOutcome": "passed",
+    "currentStageGate": "full-checks"
+  },
+  "nativeAcceptanceDate": "2026-09-15",
+  "candidateNativeAcceptance": {
+    "state": "passed",
+    "sourceFingerprint": "ad5fb0ed7f6a63c155cd6233a5ed5b719b76532b1d1bc086687212d4e924b783",
+    "rootId": "01a0a0a7-eca4-7fb1-b409-be4cc278a0f1",
+    "rootModel": "gpt-6-astra",
+    "rootModelChanged": false,
+    "qualification": {
+      "nativeChildId": "01a0a0b3-b2d6-7c62-8720-ea9068f01488",
+      "schema": 2,
+      "state": "passed",
+      "outcomeSeq": 1,
+      "rawAudit": {
+        "passed": true,
+        "rawAuditAdapter": "native-child-no-work/1",
+        "rawAuditDigest": "85be8859a7a9862965c842709bf713426307e25f9d6320e2fb1d18ca1acaa71d",
+        "sourceBytes": 51508
+      }
+    },
+    "business": {
+      "rootId": "01a0a0a7-eca4-7fb1-b409-be4cc278a0f1",
+      "childId": "01a0a0b6-a3bd-72c2-8cc4-161069d364df",
+      "sameChildAcrossRestart": true,
+      "commands": 3,
+      "checkpointId": "2127c0012067e4aba1ead97172075f9234f99a1a4a8961d8e494fa6508a06514",
+      "continuationId": "03af9ca8ebd742b4ba385399d8dfbc3812b7987cff0687969599718270d45b5d",
+      "originalAcceptedUnchanged": true,
+      "outcomes": [
+        {
+          "routeId": "fe53198c-ac47-4909-a3ed-f4895392da7b",
+          "status": "passed",
+          "seq": 1
+        },
+        {
+          "routeId": "9c3b6c47-efc5-42f9-abda-6d180280775d",
+          "status": "passed",
+          "seq": 2
+        }
+      ]
+    },
+    "finalStatus": {
+      "stageClosure": null,
+      "pendingStageWork": [],
+      "pendingOutcomes": 0,
+      "delegationGate": {
+        "state": "available"
+      }
+    },
+    "isolation": {
+      "globalAuthUnchanged": true,
+      "globalConfigUnchanged": true,
+      "fixtureAuthAbsent": true
+    },
+    "ownedProcessesExited": true,
+    "reports": {
+      "qualification": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-host-upgrade-router-candidate/native-qualification-a5-verified.json",
+      "checkpoint": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-host-upgrade-router-candidate/native-business-open-1-verified.json",
+      "recovery": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-host-upgrade-router-candidate/native-business-recover-1-result.json",
+      "finalSnapshot": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-host-upgrade-router-candidate/native-driver-business-recover-1-final-snapshot.json",
+      "finalLedger": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-host-upgrade-router-candidate/native-driver-business-recover-1-final-ledger.json"
+    },
+    "qualificationChildren": 1,
+    "businessChildren": 1,
+    "originalChildCommands": 3,
+    "originalCommandRepeatCount": 0,
+    "syntheticBusinessLedger": false,
+    "originalOpaqueInputDecrypted": false,
+    "originalOpaqueInputRetransmitted": false,
+    "nativeInputIdSource": "external orchestrator read actual same-child native source; restricted target then called production resolve_checkpoint",
+    "initialHarnessFailuresPreserved": true,
+    "independentFinalVerification": {
+      "state": "passed",
+      "model": "gpt-6-astra",
+      "effort": "xhigh",
+      "report": "/Users/niuzhenya/Documents/adaptive-model-router-archives/20260914-host-upgrade-router-candidate/native-driver-final-verification.json",
+      "parentReviewOutcomeSeq": 1471,
+      "actualChildren": 2,
+      "uniquePassedOutcomes": 2,
+      "businessCommandsExecutedExactlyOnce": 3,
+      "ownedProcessesActuallyExited": 7,
+      "normalRootNativeInputLookupVerified": true,
+      "mcpOnlyRestrictedHostRecoveryVerified": false,
+      "remainingStageWork": []
+    }
+  },
+  "localDevelopmentValidationComplete": true
+}

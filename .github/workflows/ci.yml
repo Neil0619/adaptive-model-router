@@ -24,6 +24,10 @@ jobs:
         working-directory: plugins/adaptive-model-router
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Frozen A/B compatibility tests execute the reviewed historical
+          # source, not a rewritten approximation of the old runtime.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
@@ -33,6 +37,9 @@ jobs:
       - name: Run Windows smoke regression tests
         if: runner.os == 'Windows'
         run: node --test ../../scripts/test/windows-smoke.test.mjs
+      - name: Test automatic epoch coordinator and native OS lock
+        if: runner.os != 'Windows'
+        run: node --test ../../scripts/test/runtime-epoch-coordinator.test.mjs
       - name: Validate syntax, contracts, manifest, and marketplace
         run: npm run validate
       - name: Run bilingual routing benchmark

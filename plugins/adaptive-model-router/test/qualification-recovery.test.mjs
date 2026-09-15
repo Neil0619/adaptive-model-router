@@ -8,13 +8,13 @@ import { routeStage } from "../scripts/lib/router.mjs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
 import { consumeDelegationTicket, observeAgentResult } from "../scripts/lib/delegation-gate.mjs";
 import { recoverDelegation, readNativeRecoveryReceipt } from "../scripts/lib/delegation-recovery.mjs";
-import { observeQualificationHook, qualificationReadiness, readTaskQualification, runtimeSourceDigest } from "../scripts/lib/lifecycle-qualification.mjs";
+import { observeQualificationHook, qualificationReadiness, readTaskQualification, runtimeSourceDigest, lifecycleBinding } from "../scripts/lib/lifecycle-qualification.mjs";
 import { payloadHash } from "../scripts/lib/io.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-async function withFailedQualification(run) {
+async function withFailedQualification(run, { semantic = false } = {}) {
   const project = await temporaryProject("router-qualification-recovery-");
   try {
     await withRouterEnvironment(project, async () => {
@@ -22,7 +22,8 @@ async function withFailedQualification(run) {
       try {
         const stageInput = routeInput({ contextId: "qualification-parent" });
         const context = store.context({ cwd: project.root, contextId: stageInput.contextId });
-        const binding = { digest: "a".repeat(64), runtimeDigest: runtimeSourceDigest(),
+        const binding = semantic ? lifecycleBinding([], SOURCE_ROOT, SOURCE_ROOT, { cliVersion: "future-app-release" }, project.root)
+          : { digest: "a".repeat(64), runtimeDigest: runtimeSourceDigest(),
           configurationDigest: "d".repeat(64),
           taskCwdDigest: payloadHash(realpathSync(project.root)),
           shellRoots: [payloadHash(realpathSync(SOURCE_ROOT))], cliVersion: "0.153.0" };
@@ -96,8 +97,8 @@ test("failed qualification recovery preserves the failure and missing Hooks with
     assert.equal(store.status(context).delegationGate.state, "occupied");
     const recovered = await recoverDelegation({ ...input, apply: true, expectedEvidenceDigest: inspected.evidenceDigest }, options);
     assert.equal(recovered.status, "reconciled_failure");
-    assert.equal(recovered.receipt.schemaVersion, "native-thread-delegation-recovery/3");
-    assert.equal(recovered.receipt.rawAuditAdapter, "codex-0.153.0-no-work/1");
+    assert.equal(recovered.receipt.schemaVersion, "native-thread-delegation-recovery/5");
+    assert.equal(recovered.receipt.rawAuditAdapter, "native-child-no-work/1");
     const attempt = store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=?").get(route.routeId);
     assert.equal(attempt.ticket_consumed, 1);
     assert.equal(attempt.post_observed, 1);
@@ -126,7 +127,7 @@ test("failed qualification recovery preserves the failure and missing Hooks with
   });
 });
 
-test("qualification recovery rejects ordinary attempts, changed failures, incomplete Hooks, and incompatible builds", async () => {
+test("qualification recovery rejects ordinary attempts, changed failures, incomplete Hooks, and wrong native identity", async () => {
   const mutations = [
     (f) => f.changeQualification((q) => { q.state = "pending"; }),
     (f) => f.changeQualification((q) => { q.state = "passed"; }),
@@ -138,7 +139,7 @@ test("qualification recovery rejects ordinary attempts, changed failures, incomp
     (f) => f.changeQualification((q) => { q.proof = {}; }),
     (f) => { f.parent.turns[0].items[0].id = "different-call"; },
     (f) => { f.parent.turns[0].id = "different-turn"; },
-    (f) => { f.child.cliVersion = f.records[0].payload.cli_version = "0.154.0"; },
+    (f) => { f.records[0].payload.id = "different-child"; },
     (f) => { f.records[0].payload.session_id = "wrong-parent"; },
     (f) => { f.records[0].payload.agent_path = "/root/unmarked"; },
     (f) => { f.records[0].payload.cwd = "/other-project"; },
@@ -230,6 +231,34 @@ test("operator requalification preserves the failed archive and consumes one exa
     assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM delegation_attempts").get().n, 2);
     assert.equal(f.store.db.prepare("SELECT status FROM outcomes WHERE route_id=?").get(f.route.routeId).status, "failed");
   });
+});
+
+test("semantic failed qualification recovery and one-use retry survive diagnostic host changes", async () => {
+  const { authorizeRequalification } = await import("../scripts/lib/qualification-retry.mjs");
+  await withFailedQualification(async (f) => {
+    f.child.cliVersion = null;
+    f.parent.cliVersion = "another-host-release";
+    const inspected = await recoverDelegation(f.input, f.options);
+    assert.equal(inspected.status, "recoverable");
+    const applied = await recoverDelegation({ ...f.input, apply: true, expectedEvidenceDigest: inspected.evidenceDigest }, f.options);
+    assert.equal(applied.status, "reconciled_failure");
+    const key = `native_qualification:${f.context.projectId}:${f.context.contextKey}`;
+    const original = f.store.db.prepare("SELECT value FROM meta WHERE key=?").get(key).value;
+    const outcome = f.store.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(f.route.routeId);
+    const options = { store: f.store, cwd: f.project.root, inspectBinding: async () => ({ binding: f.binding }) };
+    const preflight = await authorizeRequalification(f.input, options);
+    assert.equal(preflight.status, "authorizable");
+    f.binding.cliVersion = "upgraded-between-inspection-and-authorization";
+    f.binding.hostObservation = { platform: "win32", cliVersion: null, executableDigest: null };
+    const approved = await authorizeRequalification({ ...f.input, apply: true, expectedEvidenceDigest: preflight.evidenceDigest }, options);
+    assert.equal(approved.status, "authorized");
+    const routed = await routeStage(f.stageInput, f.routeOptions);
+    assert.equal(routed.action, "delegate");
+    assert.equal(readTaskQualification(f.store.db, f.context).schema, 2);
+    assert.deepEqual(JSON.parse(f.store.db.prepare("SELECT value FROM meta WHERE key=?")
+      .get(`native_qualification_archive:${f.route.routeId}`).value), JSON.parse(original));
+    assert.deepEqual(f.store.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(f.route.routeId), outcome);
+  }, { semantic: true });
 });
 
 test("requalification rejects absent recovery, stale authorization, source drift and replay", async () => {

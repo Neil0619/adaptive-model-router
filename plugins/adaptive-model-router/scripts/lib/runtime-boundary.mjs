@@ -8,6 +8,8 @@ const proofs = new WeakMap();
 const boundaryState = (db, context) => payloadHash([
   db.prepare("SELECT * FROM runtime_tasks WHERE project_id=? AND context_key=?").get(context.projectId, context.contextKey),
   db.prepare("SELECT * FROM runtime_defaults").all(),
+  db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_epoch_ordinary_defaults'").get()
+    ? db.prepare("SELECT * FROM runtime_epoch_ordinary_defaults ORDER BY writer_digest,shell_digest").all() : [],
   db.prepare("SELECT * FROM runtime_root_commands WHERE project_id=? AND context_key=? ORDER BY call_id").all(context.projectId, context.contextKey),
   db.prepare("SELECT value FROM meta WHERE key=?").get(rootCoverageKey(context)),
 ]);

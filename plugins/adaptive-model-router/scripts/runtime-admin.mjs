@@ -3,6 +3,8 @@ import { resolve, join } from "node:path";
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { prepareRuntimeCandidate, inspectRuntimePackage, copyRuntimePackage, canonicalDestination } from "./lib/runtime-package.mjs";
 import { qualifyRuntimeCompatibility } from "./lib/runtime-compatibility.mjs";
@@ -38,6 +40,13 @@ function readOnlySnapshot(database) {
 }
 
 const [action, ...arguments_] = process.argv.slice(2);
+// Compatibility epochs have their own source verifier, exact native references
+// and automatic first sweep. Never funnel them through frozen candidate settle.
+if (["activate-epoch", "prepare-cold-epoch", "install-cold-epoch", "retire-cold-epoch", "restore-cold-epoch"].includes(action)) {
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL("./runtime-epoch.mjs", import.meta.url)), action.replace(/-epoch$/u, ""), ...arguments_],
+    { stdio: "inherit", env: process.env, windowsHide: true });
+  process.exit(result.status ?? 2);
+}
 try {
   const options = Object.fromEntries(arguments_.map((argument) => {
     const match = /^--([a-z-]+)=(.+)$/u.exec(argument);

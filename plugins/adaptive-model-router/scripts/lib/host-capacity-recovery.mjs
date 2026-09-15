@@ -1,8 +1,12 @@
 import { parseJson, payloadHash } from "./io.mjs";
 import { readTaskQualification } from "./lifecycle-qualification.mjs";
+import { HOST_CAPACITY_CONTRACT } from "./host-compatibility.mjs";
+import { recoveryRecordIntact } from "./native-recovery-receipt.mjs";
 
-export const CAPACITY_RECOVERY_SCHEMA = "native-thread-host-capacity-rejection-recovery/1";
-export const CAPACITY_AUDIT_ADAPTER = "codex-0.153.4-parent-agent-limit-rejection-v1";
+export const CAPACITY_RECOVERY_SCHEMA = "native-thread-host-capacity-rejection-recovery/2";
+export const CAPACITY_AUDIT_ADAPTER = HOST_CAPACITY_CONTRACT;
+const LEGACY_CAPACITY_SCHEMA = "native-thread-host-capacity-rejection-recovery/1";
+const LEGACY_CAPACITY_ADAPTER = "codex-0.153.4-parent-agent-limit-rejection-v1";
 export const CAPACITY_REJECTION = "collab spawn failed: agent thread limit reached";
 export const CAPACITY_REASON = "HOST_AGENT_LIMIT_REACHED";
 export const CAPACITY_SOURCE_BYTE_LIMIT = 512 * 1024 * 1024;
@@ -134,9 +138,9 @@ export function hostCapacityRecoverySubject(db, context, attempt) {
 }
 
 export function isHostCapacityRecoveryReceipt(receipt, context, routeId) {
-  return receipt.schemaVersion === CAPACITY_RECOVERY_SCHEMA
+  return ((receipt.schemaVersion === CAPACITY_RECOVERY_SCHEMA && receipt.rawAuditAdapter === CAPACITY_AUDIT_ADAPTER && recoveryRecordIntact(receipt))
+      || (receipt.schemaVersion === LEGACY_CAPACITY_SCHEMA && receipt.rawAuditAdapter === LEGACY_CAPACITY_ADAPTER && receipt.cliVersion === "0.153.4"))
     && receipt.recoveryKind === "host_agent_limit_rejected"
-    && receipt.rawAuditAdapter === CAPACITY_AUDIT_ADAPTER && receipt.cliVersion === "0.153.4"
     && receipt.subjectDigest === payloadHash([context.projectId, context.contextKey, routeId])
     && receipt.status === "reconciled_failure" && receipt.failureType === "tooling"
     && receipt.source === "native_thread_read" && receipt.originalHandshakeProven === true

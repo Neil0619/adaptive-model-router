@@ -83,7 +83,7 @@ function scan(snapshot, visit) {
 }
 
 function audit(snapshot, parent, attempt, contextId, cwd) {
-  requireFact(parent?.id === contextId && parent.cliVersion === "0.153.4" && !parent.parentThreadId
+  requireFact(parent?.id === contextId && !parent.parentThreadId
     && present(parent.cwd) && resolve(parent.cwd) === resolve(cwd) && capacityAttemptEligible(attempt));
   let call = null, callCount = 0;
   const firstDigest = scan(snapshot, ({ type, payload }) => {
@@ -119,8 +119,7 @@ function audit(snapshot, parent, attempt, contextId, cwd) {
     }
   });
   requireFact(firstDigest === secondDigest && mentions === 1 && outputs === 1 && metas === 1
-    && meta.id === contextId && !meta.parent_thread_id && meta.cli_version === "0.153.4"
-    && meta.originator === "Codex Desktop" && meta.source === "vscode" && resolve(meta.cwd) === resolve(cwd));
+    && meta.id === contextId && !meta.parent_thread_id && resolve(meta.cwd) === resolve(cwd));
   requireFact(Array.isArray(parent.turns) && parent.turns.length <= 10_000
     && parent.turns.filter(t => t.id === attempt.root_turn_id).length === 1);
   for (const turn of parent.turns) {
@@ -128,7 +127,7 @@ function audit(snapshot, parent, attempt, contextId, cwd) {
     for (const item of turn.items) if (item.type === "subAgentActivity") checkActivity(item);
   }
   return { projection: { schemaVersion: CAPACITY_RECOVERY_SCHEMA, recoveryKind: "host_agent_limit_rejected",
-    cliVersion: "0.153.4", rawAuditAdapter: CAPACITY_AUDIT_ADAPTER, rejectionCode: CAPACITY_REASON,
+    cliVersion: parent.cliVersion ?? null, rawAuditAdapter: CAPACITY_AUDIT_ADAPTER, rejectionCode: CAPACITY_REASON,
     originalDispatchConsumed: true, parentTurnDigest: hash(attempt.root_turn_id), launchItemDigest: hash(call.call_id),
     rejectionItemDigest: payloadHash(result), dispatchInputDigest: payloadHash(args),
     rawAuditDigest: payloadHash([CAPACITY_AUDIT_ADAPTER, meta, attempt.root_turn_id, call, result]) },

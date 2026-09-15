@@ -34,6 +34,7 @@ import { targetAllowed } from "./model-policy.mjs";
 import { createStageClosureSchema, createStageMessageSchema, stageClosureStatus, stageResponsibilities, verifyStageClosure } from "./stage-closure.mjs";
 import { reclaimGlobalReservations } from "./global-reservation-reclamation.mjs";
 import { reservationStatus } from "./reservation-ledger.mjs";
+import { prepareMessageProjections } from "./message-checkpoint.mjs";
 import { createChildCommandSchema } from "./child-command-journal.mjs";
 
 const GLOBAL_PROJECT = "__global__";
@@ -1326,6 +1327,7 @@ export class RouterStore {
   }
 
   insertOutcome(context, route, outcome, qualificationProof = null) {
+    prepareMessageProjections(this.db, context, { routeId: route.route_id });
     const normalized = {
       status: outcome.status,
       gate: outcome.gate,
@@ -1409,6 +1411,7 @@ export class RouterStore {
   }
 
   handleStop(context, { stopHookActive = false } = {}) {
+    prepareMessageProjections(this.db, context);
     return this.transaction(() => {
       const attempt = unresolvedAttempt(this.db, context);
       if (attempt && attempt.ticket_consumed === 0) {
