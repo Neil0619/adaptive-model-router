@@ -27,6 +27,10 @@
 
 该 CI 修复后的源码包摘要为 `512149dad7964b284368704b15a88ea2e68f2ea186756ac1df7bc193d0ad6dcc`，writer digest 不变。对应验证见 [CI 修复验证摘要](evidence/runtime-observability-repair-20260922-ci.json)；该文件与首轮快照分别保留，远端最新检查以相应提交的 CI 记录为准。
 
+第二轮 CI 的 Linux、macOS 和 Windows Node 24.15 检查通过，Windows Node 24.x 暴露 stdio 测试的两处问题：测试总时限包含进程启动，却仅给输入超时检查 2 秒；另一测试在进程树未收尾时删除 SQLite 夹具，报 `EBUSY` 并可能覆盖原始失败。后续修复只调整测试：分离 20 秒宿主总时限与产品计时、等待 `close`、处理 stdin 错误、有界终止自有进程树，并在失败时保留夹具与完整诊断。无法核实 Windows 异常退出后的后代清理时明确保留，不宣称清理成功。产品输入时限和 15 秒 MCP 时限未修改。独立真实进程探针及反例分别核验延迟启动、延迟收尾、缺少 EOF、无输入、无响应、提前退出和终止失败；这些探针不代表已知原 CI 锁持有者。
+
+stdio 测试修复后的源码包摘要为 `7fa5b397040ec03798bc38d375fcbeee00d09a5b2fe9c36ca9e9f65965713342`，writer digest 仍不变。验证与保留的失败证据见 [stdio 测试修复摘要](evidence/runtime-observability-repair-20260922-stdio.json)。
+
 源码提交、CI、已安装包与实际宿主验收是独立事实；Git 提交不更改已信任 Hook 或当前任务运行时。未来产品代码更新仍须冻结新包、核验对应信任并通过用户可见安装流程。
 
 ## 验收边界

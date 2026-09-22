@@ -1,0 +1,429 @@
+{
+  "schemaVersion": 1,
+  "kind": "source-stdio-test-ci-repair-validation",
+  "generatedAt": "2026-09-22T11:01:15.165475+00:00",
+  "basisCommit": "c7fa470775adec817638a40a722c000b3429fe76",
+  "scope": "Test lifecycle and host-watchdog repair only; no product timer, installed package, Hook trust or runtime database changed.",
+  "sourcePackage": {
+    "descriptor": {
+      "schemaVersion": 1,
+      "runtimeVersion": "0.4.0+codex.20260922043940",
+      "shellProtocolVersion": 2,
+      "toolContractVersion": 7,
+      "storageContractVersion": 3,
+      "databaseVersion": 10,
+      "entrypoints": {
+        "hook": "scripts/hook.mjs",
+        "service": "scripts/lib/service.mjs",
+        "probe": "scripts/runtime-probe.mjs"
+      }
+    },
+    "digest": "7fa5b397040ec03798bc38d375fcbeee00d09a5b2fe9c36ca9e9f65965713342",
+    "writerDigest": "3a4ed74cc37bc817fc49779c1b831d04409dfd840611942d0ba5d42301c03d78",
+    "shellDigest": "48b71a4749e50774a3baf6412a4f7d300e6c9b8b209cd70b827ea7091c8abf0b",
+    "lifecycleDigest": "3a4ed74cc37bc817fc49779c1b831d04409dfd840611942d0ba5d42301c03d78"
+  },
+  "testFile": {
+    "path": "test/stdio-tool.test.mjs",
+    "sha256": "08f5d89e8e512e42a4ac36d225777182b63dde25d6cdfde156bf66f5270aebca"
+  },
+  "unchangedProductBridgeSha256": "b6dc3e1348c65a3e716798e6f57cdc07b2db86a5ba8acca18c15d6037d82b1d2",
+  "previousHostedCI": {
+    "url": "https://github.com/Neil0619/adaptive-model-router/actions/runs/35715400584",
+    "conclusion": "failure",
+    "jobs": [
+      {
+        "name": "Installer syntax",
+        "conclusion": "success",
+        "url": "https://github.com/Neil0619/adaptive-model-router/actions/runs/35715400584/job/106705590840",
+        "startedAt": "2026-09-22T10:20:10Z",
+        "completedAt": "2026-09-22T10:20:15Z"
+      },
+      {
+        "name": "Plugin and skill validation",
+        "conclusion": "success",
+        "url": "https://github.com/Neil0619/adaptive-model-router/actions/runs/35715400584/job/106705591110",
+        "startedAt": "2026-09-22T10:20:10Z",
+        "completedAt": "2026-09-22T10:20:25Z"
+      },
+      {
+        "name": "macos-latest / Node 24.x",
+        "conclusion": "success",
+        "url": "https://github.com/Neil0619/adaptive-model-router/actions/runs/35715400584/job/106705591195",
+        "startedAt": "2026-09-22T10:20:16Z",
+        "completedAt": "2026-09-22T10:29:42Z"
+      },
+      {
+        "name": "windows-latest / Node 24.15.0",
+        "conclusion": "success",
+        "url": "https://github.com/Neil0619/adaptive-model-router/actions/runs/35715400584/job/106705591196",
+        "startedAt": "2026-09-22T10:20:10Z",
+        "completedAt": "2026-09-22T10:48:13Z"
+      },
+      {
+        "name": "ubuntu-latest / Node 24.x",
+        "conclusion": "success",
+        "url": "https://github.com/Neil0619/adaptive-model-router/actions/runs/35715400584/job/106705591259",
+        "startedAt": "2026-09-22T10:20:10Z",
+        "completedAt": "2026-09-22T10:25:51Z"
+      },
+      {
+        "name": "macos-latest / Node 24.15.0",
+        "conclusion": "success",
+        "url": "https://github.com/Neil0619/adaptive-model-router/actions/runs/35715400584/job/106705591260",
+        "startedAt": "2026-09-22T10:20:13Z",
+        "completedAt": "2026-09-22T10:27:42Z"
+      },
+      {
+        "name": "ubuntu-latest / Node 24.15.0",
+        "conclusion": "success",
+        "url": "https://github.com/Neil0619/adaptive-model-router/actions/runs/35715400584/job/106705591343",
+        "startedAt": "2026-09-22T10:20:10Z",
+        "completedAt": "2026-09-22T10:25:51Z"
+      },
+      {
+        "name": "windows-latest / Node 24.x",
+        "conclusion": "failure",
+        "url": "https://github.com/Neil0619/adaptive-model-router/actions/runs/35715400584/job/106705591480",
+        "startedAt": "2026-09-22T10:20:10Z",
+        "completedAt": "2026-09-22T10:40:21Z"
+      }
+    ],
+    "windowsNode24x": {
+      "tests": 682,
+      "pass": 661,
+      "fail": 2,
+      "skipped": 19,
+      "failures": [
+        {
+          "test": "stdio bridge processes one JSON line without waiting for stdin to close",
+          "observed": "EBUSY unlink observations.sqlite3 in finally cleanup; exact original holder and masked primary outcome unknown"
+        },
+        {
+          "test": "stdio bridge fails explicitly when an open stdin never supplies a request",
+          "observed": "2-second host test watchdog expired; does not establish product input timer malfunction"
+        }
+      ]
+    },
+    "windowsNode2415": {
+      "tests": 682,
+      "pass": 663,
+      "fail": 0,
+      "skipped": 19,
+      "extraSmokeTests": {
+        "pass": 6,
+        "fail": 0,
+        "skipped": 0
+      }
+    }
+  },
+  "diagnosis": {
+    "originalEvidenceLimit": "Original failing Windows line test did not retain stdout/stderr, PIDs or close events. Its exact database holder and masked primary outcome remain unknown.",
+    "sourceAndIndependentProbe": "The old 2-second watchdog included startup before the real input timer. The old 5-second line-test watchdog killed only the bridge and immediately removed a fixture while launcher/server could still hold SQLite. Controlled real-process macOS probes confirmed both defects.",
+    "firstCandidateReview": "Additional injected early bridge exit and stdin EPIPE exposed unsafe cleanup and an uncaught stream error; both were repaired before this snapshot."
+  },
+  "verification": {
+    "platform": "macOS arm64",
+    "node": "24.18.0",
+    "fullSuite": {
+      "tests": 682,
+      "pass": 672,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 10,
+      "todo": 0,
+      "durationMs": 276678.236417,
+      "skipReasons": [
+        "﹣ Windows discovery prefers a native host over an earlier npm shim and retains shim fallback (0.120959ms) # SKIP",
+        "﹣ exact Windows hook commands run through cmd.exe and Windows PowerShell (0.297791ms) # Windows shell integration test",
+        "﹣ native CLI first registration replaces the isolated marketplace and restores every legacy cache path (0.089334ms) # Requires explicit native CLI and exact isolated v1 fixture",
+        "﹣ actual native cold resume resolves the new MCP configuration for the same persisted task (0.330042ms) # Requires an explicit native CLI; this test does not run Hooks or model inference",
+        "﹣ actual native parent and original child Hook cold recovery (0.060834ms) # Opt in with approved native execution materials or captured owned parent/child evidence",
+        "﹣ real captured native inputs support encrypted checkpoint and same-child continuation parsing (0.017792ms) # Requires captured approved native queue and explicit recovery evidence",
+        "﹣ exact installed B, C1 and C2 qualify through real A/B writers; altered packages stay rejected (0.06375ms) # Set ADAPTIVE_ROUTER_INSTALLED_EPOCH_FIXTURES to isolated copies of the three exact retained packages",
+        "﹣ exact approved observability entry qualifies while changed entry or package bytes stay rejected (0.043458ms) # Requires an isolated copy of the exact approved observability package",
+        "﹣ exact installed diagnostics patch qualifies for receipt prevention; modified package cannot inherit admission (0.04625ms) # Requires an isolated copy of the exact installed diagnostics patch",
+        "﹣ Windows smoke recognizes completed legacy and native MCP trace events only (0.046625ms) # native PowerShell gate adapter"
+      ]
+    },
+    "linuxAmd64Node2421Stdio": {
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "storage": "disk-backed isolated Docker volume"
+    },
+    "validate": "passed",
+    "offlineEvaluation": {
+      "cases": 232,
+      "mismatches": 0,
+      "scope": "deterministic routing contract; not model output quality"
+    },
+    "independentReview": {
+      "result": "approved",
+      "scenarios": [
+        {
+          "name": "patched-delayed-startup",
+          "passed": true,
+          "elapsedMs": 2627
+        },
+        {
+          "name": "patched-delayed-descendant-success",
+          "passed": true,
+          "elapsedMs": 7101
+        },
+        {
+          "name": "patched-eof-only-mutant",
+          "passed": true,
+          "elapsedMs": 5470
+        },
+        {
+          "name": "patched-missing-input-timeout-mutant",
+          "passed": true,
+          "elapsedMs": 20209
+        },
+        {
+          "name": "patched-genuine-no-response",
+          "passed": true,
+          "elapsedMs": 15527
+        },
+        {
+          "name": "patched-hung-success-descendant",
+          "passed": true,
+          "elapsedMs": 20460
+        },
+        {
+          "name": "patched-spawn-error",
+          "passed": true,
+          "elapsedMs": 463
+        },
+        {
+          "name": "patched-stdin-error",
+          "passed": true,
+          "elapsedMs": 742
+        },
+        {
+          "name": "patched-early-exit",
+          "passed": true,
+          "elapsedMs": 1025
+        },
+        {
+          "name": "patched-termination-failure",
+          "passed": true,
+          "elapsedMs": 25620
+        }
+      ],
+      "semanticallySuccessfulTestProcesses": 2,
+      "expectedFailingTestProcesses": 8,
+      "successfulFixtureRemovals": 2,
+      "removalsWithLiveOwnedProcess": 0,
+      "allObservedProbePidsGoneAtFinalCheck": true,
+      "terminationFailureCaveat": "Injected EPERM reported cleanup failure and retained the fixture. Its descendant subsequently exited naturally, not by successful forced cleanup.",
+      "windowsFaultBranches": "source_review_only_not_executed_on_macOS"
+    },
+    "repairedHostedCI": "not_yet_dispatched_at_snapshot"
+  },
+  "acceptanceBoundaries": {
+    "installedPackageDigest": "08a717303357af962c0c55171ab292312944ef8d135488f12d808204e016db25",
+    "installedSourceEqualsCache": true,
+    "newClassificationFixInstalled": false,
+    "nativeWindowsLoggedIn": "not_run_host_unavailable",
+    "historicalLimitations": "Unchanged; see the original delivery snapshot."
+  },
+  "artifactDigests": [
+    {
+      "kind": "ci-stdio-hosted-baseline.json",
+      "sha256": "5fef33d1c62a6d96bc0463e459c5e0686a736ae5ed178604a80bc7c3631ecb04",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-second-run-final.json",
+      "sha256": "cc3a7013fd2291ade727975a1c25916ac8a0d79c5e94f22c55ec671e1b4b880e",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-repaired-windows-node24x-job.log",
+      "sha256": "6c4b23d82a6459043c1a37f85c4e187cc41923f0b14c76871601bc9cbf67b060",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-repaired-windows-node2415-job.log",
+      "sha256": "f91781a9325cf491dfdedf2a7c38d7950f861aa9a0548e03f4819880f4c693eb",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-package-provenance.json",
+      "sha256": "4b5c8bc0462450498648804a056b312c8a6ff8bb4d6dc49c606e1553d3fbbd6e",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-linux-candidate-2.log",
+      "sha256": "1b63ad22d77f9a6382623c41b99c5cf569d0e489281a6caab71d61cd1255e6a4",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-final-validate.log",
+      "sha256": "e305ec71b46bc6ffccb8296276e606238b63c2f21505097f5c614c7193277c9f",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-final-eval.log",
+      "sha256": "4bee6e63f199f906e87e7b9b1a11600dee0728e86b5ff2751657f0e0e575dcaa",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/findings.md",
+      "sha256": "b542676c57d0633738f96f3cc76fdf73c943a7c33b2a53f128ffc56fc296bf73",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/baseline-probe-results.json",
+      "sha256": "dcc8f68e2fcc27fb3dbd2ec31db3b1e7a5685c15c78bacbb085e6a9f9c133c4e",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/no-response-result.json",
+      "sha256": "44b756fc2f4ae2a2266064ae0076b46b33d55fa640847316dd210d2795cbb417",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-probe-summary.json",
+      "sha256": "4d4b8fd0146651084fa56b9469dbbf44841bb15e234fab58dcca188b02e6680a",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/second-patch-probe-console.jsonl",
+      "sha256": "98c99c68f2e01da5efc8a202e2984ca6eac84e48c65646f7414f57bcabbb5920",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/verify-patch.mjs",
+      "sha256": "63b02f961ca8a2439f8e745b1e4d1dbee73797205a64769aa5bf134e8e77d204",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/probe-preload.cjs",
+      "sha256": "fa0223ed42a8db893b2435f5f0970b5ad37a747d79169902ae5a4b0b16a971df",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-delayed-descendant-success/result.json",
+      "sha256": "9a8dd2898617d16e625c6c6e0b848b0ccfd45e6ca4fc85d7f1c7399f21d36875",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-delayed-startup/result.json",
+      "sha256": "58e0db2a754c85e4d8c857213b8145e03659e82068e5e00276bd8f0de0028390",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-early-exit/result.json",
+      "sha256": "4ab66bd3041bd16231b503ad4567d5f82cdd36b66be2e963054cb2c31dcc5d92",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-eof-only-mutant/result.json",
+      "sha256": "b8e2872744fc5e08939e5af015ea8112a8b33cbe5bf27245d3142710122cab62",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-genuine-no-response/result.json",
+      "sha256": "4399988840305c749db57b6d997e54559c08729f51c48fc798c0db0880de41a0",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-hung-success-descendant/result.json",
+      "sha256": "1eb929843ac74f0de5bb201555b7163e16dc0c6eca569639abd0aca0e0674095",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-missing-input-timeout-mutant/result.json",
+      "sha256": "7b10aa1c833e0ddcd2459c9969f9649828db5ded1483357d68bc6f11eda02a78",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-spawn-error/result.json",
+      "sha256": "02739d97ae7a15a00ee3dc10987b99a7a59f640311b545cbf1624048dbea8ce1",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-stdin-error/result.json",
+      "sha256": "bdd8f8ec4deaa8fe052531b5783761e9f0f32ed65665ec4df0dfeaf917a851a3",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-termination-failure/result.json",
+      "sha256": "79a4c6220485fbd22a6804499c96fa9dfff4a7a421a35ebca156d2f50edd251e",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-delayed-descendant-success/trace.jsonl",
+      "sha256": "f33f32066ae982041d3bbbae9cb6962c6be604b4bd40b5482ace0b097c129fc3",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-delayed-startup/trace.jsonl",
+      "sha256": "99e0b2d8772ab327365c08ac38d7420d8ab7ccd32a6807800130da63b63a3b6b",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-early-exit/trace.jsonl",
+      "sha256": "7b57e5cbdd404d3b5cadb909fce5bb022117e98d101fa3b7a1e51cc2ef5a85ef",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-eof-only-mutant/trace.jsonl",
+      "sha256": "5afe7674f8a602fd4c910b799bdba3a4a04edb0bc62688e5de262c20e9f07bdb",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-genuine-no-response/trace.jsonl",
+      "sha256": "5c956614942edb2fe9fe2e95d5efbef1a033b19efcbb7ad6492a04f1281ae27f",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-hung-success-descendant/trace.jsonl",
+      "sha256": "22d4e1b96ddfc1f78579b38c2fd02940eeae95c124ea04705032749174f7cbc3",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-missing-input-timeout-mutant/trace.jsonl",
+      "sha256": "0ae4b12e017b727c2e275978bc1510bf86ea0ba7ba8170bd8154b441e9acc22c",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-spawn-error/trace.jsonl",
+      "sha256": "80c979b73202fba341ae5b4f8cb5b8a3a3ed9e60410a0f67dffece518ca607a7",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-stdin-error/trace.jsonl",
+      "sha256": "03fa40ea88bd93877616abc2268a27a324d2366fbc6b1398ed9aecee12c758a3",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-windows-independent/patched-termination-failure/trace.jsonl",
+      "sha256": "78ed69ac220be8ae600454db66bf765f04f5bb1b08aeb30e73f22e9fc33d8214",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-final-full-tests.log",
+      "sha256": "e0508e104361e8516b79b3827b5709cb7e98ff3112f190c2d7e4559d43eb3df8",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-final-full-tests-result.json",
+      "sha256": "9ac13d960e997a3e4708e4bed4418a8dec940311e393312087620d04a9f10b01",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-independent-root-check.json",
+      "sha256": "f8be59eefb7e5a5b63cba1b7d42c76ef87d0e11a65e0ef97dc6ac3c90004b513",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-unchanged-contracts.json",
+      "sha256": "6c2a7a81384dfd5a7a15b279ecd6060afb3efc1d36bf5b9fe9725d0d8abec661",
+      "availability": "retained privately; raw host paths and identities omitted"
+    }
+  ]
+}

@@ -5,10 +5,81 @@ import { access, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 import { enrollRuntimeFixture } from "./runtime-fixtures.mjs";
 
 const pluginRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const bridge = join(pluginRoot, "scripts", "stdio-tool.mjs");
+
+// This host deadline includes Node startup, module loading and child shutdown.
+// It is separate from the bridge's input and MCP protocol timers.
+async function bridgeWithOpenStdin({ env, input, expectedCode = 0, timeoutMs = 20_000 }) {
+  const child = spawn(process.execPath, [bridge], {
+    cwd: pluginRoot, env: { ...process.env, ...env },
+    stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+    detached: process.platform !== "win32",
+  });
+  let stdout = "", stderr = "", spawnError, stdinError, timedOut = false, stopTimer;
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  child.once("error", (error) => { spawnError = error; });
+  child.stdin.on("error", (error) => { stdinError = error; });
+  const closed = new Promise((resolveClosed) => {
+    child.once("close", (code, signal) => resolveClosed({ code, signal }));
+  });
+  let failCleanup;
+  const cleanupFailed = new Promise((_, reject) => { failCleanup = reject; });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try {
+      // Kill only this test's owned tree, never a parent or a process-name match.
+      // Killing the bridge alone can leave its launcher/MCP holding SQLite.
+      if (process.platform === "win32") {
+        const stop = spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+          encoding: "utf8", timeout: 5_000, windowsHide: true,
+        });
+        if (stop.error || stop.status !== 0) throw stop.error || new Error(stop.stderr || stop.stdout);
+      } else process.kill(-child.pid, "SIGKILL");
+      stopTimer = setTimeout(() => failCleanup(new Error(`owned bridge tree did not close after termination; retain its fixture: ${JSON.stringify({ stdout, stderr })}`)), 5_000);
+    } catch (error) {
+      failCleanup(new Error(`could not terminate the owned bridge tree; retain its fixture: ${JSON.stringify({ stdout, stderr })}`, { cause: error }));
+    }
+  }, timeoutMs);
+  // Deliberately keep the parent's pipe open: neither successful line parsing
+  // nor an input timeout may depend on the caller sending EOF.
+  if (input !== undefined) child.stdin.write(input);
+  try {
+    const result = await Promise.race([closed, cleanupFailed]);
+    clearTimeout(timer);
+    clearTimeout(stopTimer);
+    let cleanupError;
+    if (child.pid && (timedOut || stdinError || result.code !== expectedCode || result.signal)) {
+      if (process.platform === "win32") {
+        // A vanished parent cannot safely identify its descendants with /T.
+        // Retain failed fixtures instead of deleting a possibly open database.
+        if (!timedOut) cleanupError = new Error("bridge exited abnormally; descendant cleanup is unverified on Windows");
+      } else {
+        try {
+          try { process.kill(-child.pid, "SIGKILL"); }
+          catch (error) { if (error.code !== "ESRCH") throw error; }
+          const deadline = Date.now() + 5_000;
+          while (true) {
+            try { process.kill(-child.pid, 0); }
+            catch (error) { if (error.code === "ESRCH") break; throw error; }
+            if (Date.now() >= deadline) throw new Error("owned process group remains after termination");
+            await delay(25);
+          }
+        } catch (error) { cleanupError = error; }
+      }
+    }
+    return { ...result, stdout, stderr, timedOut, spawnError, stdinError, cleanupError };
+  } finally {
+    clearTimeout(timer);
+    clearTimeout(stopTimer);
+  }
+}
 
 test("stdio bridge calls the installed route_stage contract for a frozen task inventory", async () => {
   const home = await mkdtemp(join(tmpdir(), "adaptive-router-stdio-test-"));
@@ -71,82 +142,53 @@ test("stdio bridge rejects tools not auto-approved by the installed MCP contract
 test("stdio bridge processes one JSON line without waiting for stdin to close", async () => {
   const home = await mkdtemp(join(tmpdir(), "adaptive-router-stdio-line-test-"));
   enrollRuntimeFixture({ home, shellRoot: pluginRoot, cwd: pluginRoot, contextId: "open-stdin-line-test" });
+  let passed = false;
   try {
-    const output = await new Promise((resolveOutput, reject) => {
-      const child = spawn(process.execPath, [bridge], {
-        cwd: pluginRoot,
-        env: {
-          ...process.env,
-          ADAPTIVE_ROUTER_HOME: home,
-          CODEX_THREAD_ID: "open-stdin-line-test",
-          ADAPTIVE_ROUTER_LOCAL_ONLY: "1",
-        },
-        stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
-      });
-      let stdout = "";
-      let stderr = "";
-      const timer = setTimeout(() => {
-        child.kill();
-        reject(new Error("stdio bridge waited for EOF"));
-      }, 5_000);
-      child.stdout.setEncoding("utf8");
-      child.stderr.setEncoding("utf8");
-      child.stdout.on("data", (chunk) => { stdout += chunk; });
-      child.stderr.on("data", (chunk) => { stderr += chunk; });
-      child.once("error", (error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
-      child.once("exit", (code) => {
-        clearTimeout(timer);
-        if (code === 0) resolveOutput(stdout);
-        else reject(new Error(stderr || `bridge exited ${code}`));
-      });
-      child.stdin.write(`${JSON.stringify({
+    const output = await bridgeWithOpenStdin({
+      env: { ADAPTIVE_ROUTER_HOME: home, PLUGIN_DATA: home,
+        CODEX_THREAD_ID: "open-stdin-line-test", ADAPTIVE_ROUTER_LOCAL_ONLY: "1" },
+      input: `${JSON.stringify({
         name: "get_route_status",
         arguments: { contextId: "open-stdin-line-test" },
-      })}\n`);
+      })}\n`,
     });
-    const result = JSON.parse(output);
+    assert.ifError(output.spawnError);
+    assert.ifError(output.stdinError);
+    assert.equal(output.timedOut, false, `bridge exceeded the host test deadline: ${JSON.stringify(output)}`);
+    assert.equal(output.code, 0, JSON.stringify(output));
+    assert.ifError(output.cleanupError);
+    const result = JSON.parse(output.stdout);
     assert.equal(result.transport, "stdio-bridge");
     assert.equal(result.isError, false);
+    passed = true;
   } finally {
-    await rm(home, { recursive: true, force: true });
+    if (passed) await rm(home, { recursive: true, force: true });
+    else console.error(`stdio test failed; retaining fixture: ${home}`);
   }
 });
 
 test("stdio bridge fails explicitly when an open stdin never supplies a request", async () => {
-  const result = await new Promise((resolveResult, reject) => {
-    const child = spawn(process.execPath, [bridge], {
-      cwd: pluginRoot,
-      env: {
-        ...process.env,
-        ADAPTIVE_ROUTER_STDIO_INPUT_TIMEOUT_MS: "50",
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
+  const home = await mkdtemp(join(tmpdir(), "adaptive-router-stdio-empty-test-"));
+  let passed = false;
+  try {
+    const result = await bridgeWithOpenStdin({
+      expectedCode: 1,
+      env: { ADAPTIVE_ROUTER_HOME: home, PLUGIN_DATA: home,
+        ADAPTIVE_ROUTER_STDIO_INPUT_TIMEOUT_MS: "50" },
     });
-    let stderr = "";
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error("stdio bridge did not time out while waiting for its request"));
-    }, 2_000);
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.once("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.once("exit", (code) => {
-      clearTimeout(timer);
-      resolveResult({ code, stderr });
-    });
-  });
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /timed out before receiving JSON/i);
-  assert.match(result.stderr, /same command/i);
-  assert.match(result.stderr, /confirmed writable session/i);
+    assert.ifError(result.spawnError);
+    assert.ifError(result.stdinError);
+    assert.equal(result.timedOut, false, `bridge exceeded the host test deadline: ${JSON.stringify(result)}`);
+    assert.equal(result.code, 1, JSON.stringify(result));
+    assert.ifError(result.cleanupError);
+    assert.match(result.stderr, /timed out before receiving JSON/i);
+    assert.match(result.stderr, /same command/i);
+    assert.match(result.stderr, /confirmed writable session/i);
+    passed = true;
+  } finally {
+    if (passed) await rm(home, { recursive: true, force: true });
+    else console.error(`stdio test failed; retaining fixture: ${home}`);
+  }
 });
 
 test("frozen-inventory instructions make bridge input delivery and one corrective retry explicit", async () => {
