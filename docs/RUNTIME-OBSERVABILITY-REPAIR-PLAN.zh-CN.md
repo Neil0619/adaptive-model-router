@@ -31,6 +31,8 @@
 
 stdio 测试修复后的源码包摘要为 `7fa5b397040ec03798bc38d375fcbeee00d09a5b2fe9c36ca9e9f65965713342`，writer digest 仍不变。验证与保留的失败证据见 [stdio 测试修复摘要](evidence/runtime-observability-repair-20260922-stdio.json)。
 
+后续 macOS CI 又暴露持续锁夹具的调度竞态：固定 550 毫秒释放可能先于写入进程的实际 SQLite 操作。持续锁现保留到真实写入进程关闭，并核验事务仍在；冷启动夹具使用保留锁来实际触发 WAL 的有限重试。测试进程另设独立的 20 秒终止界限，产品等待预算不变。延迟调度、禁用等待、移除重试及无限等待反例均单独检查；短锁成功本身不证明每次都发生过锁等待。该修复后的包摘要为 `29e7364a1f7f8c32c13a39027c86a0fd4742ae4c506ba050f8648a4bc6306a97`，writer digest 不变，具体证据见 [持续锁测试修复摘要](evidence/runtime-observability-repair-20260922-lock-lifetime.json)。
+
 源码提交、CI、已安装包与实际宿主验收是独立事实；Git 提交不更改已信任 Hook 或当前任务运行时。未来产品代码更新仍须冻结新包、核验对应信任并通过用户可见安装流程。
 
 ## 验收边界

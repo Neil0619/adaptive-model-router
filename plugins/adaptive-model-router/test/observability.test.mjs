@@ -46,9 +46,12 @@ function journalWriter(project, path, count, onReady = (start) => start()) {
     process.stdout.write(JSON.stringify(results)+'\\n');`;
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--input-type=module", "-e", code, path], {
-      env: { ...process.env, CODEX_HOME: join(project.root, "codex"), ADAPTIVE_ROUTER_HOME: project.home, PLUGIN_DATA: project.home }
+      env: { ...process.env, CODEX_HOME: join(project.root, "codex"), ADAPTIVE_ROUTER_HOME: project.home, PLUGIN_DATA: project.home },
+      // This writer has no descendants. A broken wait must fail and close the
+      // owned process before the caller releases its lock and removes files.
+      timeout: 20_000, killSignal: "SIGKILL", windowsHide: true,
     });
-    let stdout = "", stderr = "", ready = false;
+    let stdout = "", stderr = "", ready = false, childError;
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
       if (!ready && stdout.startsWith("READY\n")) {
@@ -57,10 +60,12 @@ function journalWriter(project, path, count, onReady = (start) => start()) {
       }
     });
     child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.once("error", reject);
-    child.once("close", (status) => {
+    child.once("error", (error) => { childError = error; });
+    child.stdin.on("error", (error) => { childError ||= error; });
+    child.once("close", (status, signal) => {
       try {
-        assert.equal(status, 0, stderr);
+        assert.ifError(childError);
+        assert.equal(status, 0, JSON.stringify({ status, signal, stdout, stderr }));
         assert.equal(ready, true);
         resolve(JSON.parse(stdout.slice("READY\n".length)));
       } catch (error) { reject(error); }
@@ -359,12 +364,17 @@ for (const warm of [false, true]) for (const short of [true, false]) {
       const prior = warm ? await journalWriter(project, path, 1) : [];
       if (warm) assert.equal(prior[0].accepted, true);
       lock = new DatabaseSync(observationPath(path));
-      lock.exec(warm ? "BEGIN IMMEDIATE" : "CREATE TABLE lock_control(id INTEGER); BEGIN EXCLUSIVE");
+      // A reserved rollback-journal lock makes cold WAL enrollment return
+      // SQLITE_BUSY immediately, exercising the explicit bounded WAL retry.
+      lock.exec(warm ? "BEGIN IMMEDIATE" : "CREATE TABLE lock_control(id INTEGER); BEGIN IMMEDIATE");
       const results = await journalWriter(project, path, 1, (start) => {
         start();
-        timer = setTimeout(() => lock.exec("ROLLBACK"), short ? 55 : 550);
+        if (short) timer = setTimeout(() => lock.exec("ROLLBACK"), 55);
       });
       clearTimeout(timer);
+      // A wall-clock release can precede the writer's actual SQLite attempt
+      // on a busy host. Sustain this lock until the bounded writer has closed.
+      if (!short) assert.equal(lock.isTransaction, true);
       if (lock.isTransaction) lock.exec("ROLLBACK");
       lock.close(); lock = null;
       assert.equal(results[0].accepted, short, JSON.stringify(results));
