@@ -16,6 +16,8 @@ const observability = process.env.ADAPTIVE_ROUTER_INSTALLED_OBSERVABILITY_FIXTUR
 const observabilityDigest = "168f5886af293a5a5d701fb83949accc813a84c88f16d7ee53e2c334d62d6d1a";
 const diagnostics = process.env.ADAPTIVE_ROUTER_INSTALLED_DIAGNOSTICS_FIXTURE;
 const diagnosticsDigest = "69425bc27ec7e7359f80c9d18f34b626d32d00be03f8a8f18da03d2f73479853";
+const validation = process.env.ADAPTIVE_ROUTER_INSTALLED_VALIDATION_FIXTURE;
+const validationDigest = "08a717303357af962c0c55171ab292312944ef8d135488f12d808204e016db25";
 const digests = [
   "8732d9524390ff549a3e9fc616dacc41ffc7341ae8d6049ace8de0d27cc05989",
   "316a1facca3b8b1cc8f71a5da80c8e8e1d1aeb08bab5e2c5b737e16144cdc84a",
@@ -109,4 +111,26 @@ test("exact installed diagnostics patch qualifies for receipt prevention; modifi
   for (const cold of [false, true]) assert.throws(() => qualifyHostEpochPublication(inspectRuntimePackage(copy), candidate, { cold }),
     /unreviewed_invocation_registration/);
   assert.equal(inspectRuntimePackage(original.root).digest, diagnosticsDigest);
+});
+
+test("exact installed validation patch qualifies for JSON classification; modified entries and packages stay rejected", {
+  skip: !validation && "Requires an isolated copy of the exact installed validation patch",
+}, () => {
+  const original = inspectRuntimePackage(validation);
+  assert.equal(original.digest, validationDigest);
+  for (const cold of [false, true]) assert.ok(qualifyHostEpochPublication(original, candidate, { cold }));
+  const copy = join(work, "validation"); cpSync(original.root, copy, { recursive: true });
+  const retained = inspectRuntimePackage(copy);
+  for (const name of ["scripts/lib/runtime-dispatch.mjs", "scripts/lib/runtime-isolation.mjs", "scripts/node-launcher.mjs", "scripts/mcp-server.mjs"]) {
+    const path = join(copy, name), bytes = readFileSync(path);
+    writeFileSync(path, Buffer.concat([bytes, Buffer.from("\n// changed validation entry\n")]));
+    assert.throws(() => qualifyHostEpochPublication(retained, candidate, { cold: true }), /Runtime content integrity changed/);
+    for (const cold of [false, true]) assert.throws(() => qualifyHostEpochPublication(inspectRuntimePackage(copy), candidate, { cold }),
+      /unreviewed_invocation_registration/);
+    writeFileSync(path, bytes);
+  }
+  writeFileSync(join(copy, "unreviewed-release-note.txt"), "A release label or matching entries cannot approve a different package.\n");
+  for (const cold of [false, true]) assert.throws(() => qualifyHostEpochPublication(inspectRuntimePackage(copy), candidate, { cold }),
+    /unreviewed_invocation_registration/);
+  assert.equal(inspectRuntimePackage(original.root).digest, validationDigest);
 });
