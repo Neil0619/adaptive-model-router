@@ -1,0 +1,3 @@
+# Runtime recovery verifies historical fixtures and their JavaScript dependency
+# closure byte-for-byte. Preserve original LF bytes on Windows checkouts too.
+*.mjs text eol=lf

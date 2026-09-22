@@ -27,6 +27,66 @@ async function fixture(run) {
   }); } finally { await project.cleanup(); }
 }
 
+const GAP_DIAGNOSTIC = "Adaptive Model Router observation unavailable; evidence coverage is incomplete.\n";
+
+function journalWriter(project, path, count, onReady = (start) => start()) {
+  const module = new URL("../scripts/lib/observability.mjs", import.meta.url).href;
+  const code = `import {appendObservation} from ${JSON.stringify(module)};
+    import {randomUUID} from 'node:crypto';
+    process.stdout.write('READY\\n');
+    await new Promise(resolve => process.stdin.once('data', resolve));
+    process.stdin.pause();
+    const results = [];
+    for(let i=0;i<${count};i++) {
+      const eventId = randomUUID(), diagnostics = [], started = performance.now();
+      const accepted = appendObservation({eventId,component:'service',event:'finished',operation:'succeeded'},
+        {mainPath:process.argv[1],stderr:{write(value){diagnostics.push(value);}}});
+      results.push({eventId,accepted,elapsedMs:performance.now()-started,diagnostics});
+    }
+    process.stdout.write(JSON.stringify(results)+'\\n');`;
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", code, path], {
+      env: { ...process.env, CODEX_HOME: join(project.root, "codex"), ADAPTIVE_ROUTER_HOME: project.home, PLUGIN_DATA: project.home }
+    });
+    let stdout = "", stderr = "", ready = false;
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      if (!ready && stdout.startsWith("READY\n")) {
+        ready = true;
+        onReady(() => child.stdin.end("GO\n"));
+      }
+    });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("close", (status) => {
+      try {
+        assert.equal(status, 0, stderr);
+        assert.equal(ready, true);
+        resolve(JSON.parse(stdout.slice("READY\n".length)));
+      } catch (error) { reject(error); }
+    });
+  });
+}
+
+function verifyJournalResults(path, results, priorIds = []) {
+  assert.equal(new Set(results.map((r) => r.eventId)).size, results.length);
+  const accepted = results.filter((r) => r.accepted), rejected = results.filter((r) => !r.accepted);
+  assert.deepEqual(events(path).map((r) => r.eventId).sort(), [...priorIds, ...accepted.map((r) => r.eventId)].sort());
+  for (const result of accepted) assert.deepEqual(result.diagnostics, []);
+  for (const result of rejected) {
+    assert.deepEqual(result.diagnostics, [GAP_DIAGNOSTIC]);
+    assert.ok(result.elapsedMs >= 140, `writer failed before its lock wait: ${JSON.stringify(result)}`);
+  }
+  if (rejected.length) {
+    const gap = JSON.parse(readFileSync(observationGapPath(path)));
+    assert.equal(gap.state, "incomplete");
+    assert.equal(gap.droppedCount, "at_least_one");
+    assert.equal(gap.errorCode, "STORAGE_BUSY");
+    assert.equal(gap.errorCategory, "storage_busy");
+  } else assert.equal(existsSync(observationGapPath(path)), false);
+  return { accepted, rejected };
+}
+
 test("observation fields are closed and never capture arguments, paths, exception text or arbitrary codes", async () => {
   await fixture(({ store }) => {
     const secret = "never-persist-this-secret";
@@ -259,23 +319,81 @@ test("health counts maintenance after the original bounded attempt was pruned", 
   } finally { await project.cleanup(); }
 });
 
-test("independent journal writers serialize concurrent appends without losing terminal observations", async () => {
+test("an uncontended journal writer accepts every observation", async () => {
   const project = await temporaryProject();
   try {
     const path = join(project.home, "router.sqlite3");
-    const module = new URL("../scripts/lib/observability.mjs", import.meta.url).href;
-    const code = `import {appendObservation} from ${JSON.stringify(module)};
-      for(let i=0;i<25;i++) if(!appendObservation({component:'service',event:'finished',operation:'succeeded'},{mainPath:process.argv[1]})) process.exitCode=1;`;
-    const results = await Promise.allSettled(Array.from({ length: 4 }, () => new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, ["--input-type=module", "-e", code, path], { env: { ...process.env, CODEX_HOME: join(project.root, "codex"), ADAPTIVE_ROUTER_HOME: project.home, PLUGIN_DATA: project.home } });
-      let stderr = ""; child.stderr.on("data", (chunk) => { stderr += chunk; }); child.once("error", reject);
-      child.once("exit", (status) => { try { assert.equal(status, 0, stderr); resolve(); } catch (error) { reject(error); } });
-    })));
-    assert.deepEqual(results.map((r) => r.status), ["fulfilled", "fulfilled", "fulfilled", "fulfilled"],
-      JSON.stringify({ results: results.map((r) => r.reason?.message || "ok"), gap: existsSync(observationGapPath(path)) ? JSON.parse(readFileSync(observationGapPath(path))) : null }));
-    assert.equal(events(path).length, 100);
+    const results = await journalWriter(project, path, 25);
+    assert.equal(verifyJournalResults(path, results).accepted.length, 25);
   } finally { await project.cleanup(); }
 });
+
+test("concurrent journal writers retain accepted events and account for bounded lock failures", async () => {
+  const project = await temporaryProject();
+  try {
+    const path = join(project.home, "router.sqlite3"), starts = [];
+    const results = (await Promise.all(Array.from({ length: 4 }, () => journalWriter(project, path, 25, (start) => {
+      starts.push(start);
+      if (starts.length === 4) starts.forEach((release) => release());
+    })))).flat();
+    assert.equal(results.length, 100);
+    // The journal has a finite lock wait. A busy disk may exhaust it; success
+    // must be exact, and every rejected append must leave honest gap evidence.
+    const { accepted } = verifyJournalResults(path, results);
+    assert.ok(accepted.length > 0);
+    const gap = existsSync(observationGapPath(path)) ? readFileSync(observationGapPath(path)) : null;
+    const recovery = await journalWriter(project, path, 1);
+    assert.equal(recovery[0].accepted, true);
+    assert.deepEqual(events(path).map((r) => r.eventId).sort(), [...accepted, ...recovery].map((r) => r.eventId).sort());
+    if (gap) assert.deepEqual(readFileSync(observationGapPath(path)), gap);
+  } finally { await project.cleanup(); }
+});
+
+for (const warm of [false, true]) for (const short of [true, false]) {
+  test(`${warm ? "warm transaction" : "cold journal"} ${short ? "recovers after a short lock" : "records a bounded lock failure and recovers"}`, async () => {
+    const project = await temporaryProject();
+    let lock, timer;
+    try {
+      const path = join(project.home, "router.sqlite3");
+      mkdirSync(project.home, { recursive: true });
+      const prior = warm ? await journalWriter(project, path, 1) : [];
+      if (warm) assert.equal(prior[0].accepted, true);
+      lock = new DatabaseSync(observationPath(path));
+      lock.exec(warm ? "BEGIN IMMEDIATE" : "CREATE TABLE lock_control(id INTEGER); BEGIN EXCLUSIVE");
+      const results = await journalWriter(project, path, 1, (start) => {
+        start();
+        timer = setTimeout(() => lock.exec("ROLLBACK"), short ? 55 : 550);
+      });
+      clearTimeout(timer);
+      if (lock.isTransaction) lock.exec("ROLLBACK");
+      lock.close(); lock = null;
+      assert.equal(results[0].accepted, short, JSON.stringify(results));
+      assert.ok(results[0].elapsedMs < 1500, JSON.stringify(results));
+      if (warm || short) verifyJournalResults(path, results, prior.map((r) => r.eventId));
+      else {
+        // A cold failure can precede schema creation, so inspect rows after recovery.
+        assert.deepEqual(results[0].diagnostics, [GAP_DIAGNOSTIC]);
+        assert.ok(results[0].elapsedMs >= 140, JSON.stringify(results));
+        const gap = JSON.parse(readFileSync(observationGapPath(path)));
+        assert.equal(gap.state, "incomplete");
+        assert.equal(gap.droppedCount, "at_least_one");
+        assert.equal(gap.errorCode, "STORAGE_BUSY");
+        assert.equal(gap.errorCategory, "storage_busy");
+      }
+      const gap = short ? null : readFileSync(observationGapPath(path));
+      const recovery = await journalWriter(project, path, 1);
+      assert.equal(recovery[0].accepted, true);
+      assert.deepEqual(events(path).map((r) => r.eventId).sort(),
+        [...prior, ...results.filter((r) => r.accepted), ...recovery].map((r) => r.eventId).sort());
+      if (gap) assert.deepEqual(readFileSync(observationGapPath(path)), gap);
+    } finally {
+      clearTimeout(timer);
+      if (lock?.isTransaction) lock.exec("ROLLBACK");
+      lock?.close();
+      await project.cleanup();
+    }
+  });
+}
 
 test("health isolates malformed observation records and incompatible store schemas", async () => {
   await fixture(async ({ store, project }) => {
