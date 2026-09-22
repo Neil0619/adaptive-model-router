@@ -1,4 +1,5 @@
 import { canonicalJson } from "./io.mjs";
+import { VERIFICATION_EVIDENCE_SCHEMA } from "./audit-records.mjs";
 import { OPERATION_ACTIONS, OPERATION_REVIEW_SCHEMA } from "./operation-contract.mjs";
 import { CHECKPOINT_ACTIONS, CHECKPOINT_FIELDS } from "./message-checkpoint.mjs";
 
@@ -9,6 +10,16 @@ export function compatibleToolDefinitions(previous, next) {
   const contract = (definitions) => definitions.map(({ name, inputSchema }) => ({ name, inputSchema }));
   const before = contract(previous);
   const after = contract(next);
+  const oldEvidence = before.find((tool) => tool.name === "record_outcome")?.inputSchema?.properties?.verificationEvidence;
+  const newOutcome = after.find((tool) => tool.name === "record_outcome")?.inputSchema;
+  if (oldEvidence && !newOutcome?.properties?.verificationEvidence) return compatibleToolDefinitions(next, previous);
+  if (!oldEvidence && newOutcome?.properties?.verificationEvidence) {
+    if (canonicalJson(newOutcome.properties.verificationEvidence) !== canonicalJson(VERIFICATION_EVIDENCE_SCHEMA)
+      || newOutcome.required?.includes("verificationEvidence")) return false;
+    const projected = structuredClone(next);
+    delete projected.find((tool) => tool.name === "record_outcome").inputSchema.properties.verificationEvidence;
+    return compatibleToolDefinitions(previous, projected);
+  }
   if (canonicalJson(before) === canonicalJson(after)) return true;
   if (after.filter((tool) => tool.name === "manage_stage").length !== 1) return false;
   const previousManage = before.find((tool) => tool.name === "manage_stage")?.inputSchema;

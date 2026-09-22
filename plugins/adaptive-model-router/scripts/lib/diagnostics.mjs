@@ -19,8 +19,8 @@ function stateRootSource(env) {
 }
 
 export function classifyDiagnosticError(error, fallback = "unknown") {
-  if (error instanceof SyntaxError) return "invalid_input";
   const code = typeof error?.code === "string" ? error.code : "";
+  if (code === "INVALID_INPUT") return "invalid_input";
   if (ERROR_CATEGORIES.has(code)) return ERROR_CATEGORIES.get(code);
   const message = typeof error?.message === "string" ? error.message : "";
   if (/\b(?:SQLITE_BUSY|SQLITE_LOCKED|database is locked|database is busy)\b/i.test(message)) return "sqlite_busy";

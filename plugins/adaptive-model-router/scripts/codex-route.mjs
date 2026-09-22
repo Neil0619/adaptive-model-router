@@ -30,6 +30,7 @@ function help() {
 Usage:
   node scripts/codex-route.mjs doctor [--context ID]
   node scripts/codex-route.mjs hook-doctor [--context ID] [--turn ID] [--global]
+  node scripts/codex-route.mjs health [--scope project|local] [--from ISO] [--to ISO] [--limit 50] [--cursor TOKEN]
   node scripts/codex-route.mjs status [--context ID]
   node scripts/codex-route.mjs history [--context ID] [--limit 20] [--action all|delegate|continue|ask_user]
   node scripts/codex-route.mjs catalog
@@ -52,6 +53,11 @@ async function main() {
   assertRuntime();
   const args = parseArgs(process.argv.slice(2));
   const command = args._[0] || "doctor";
+  if (command === "health") {
+    const { readHealth } = await import("./lib/health-reader.mjs");
+    return print(readHealth({ scope: args.scope || "project", from: args.from, to: args.to,
+      limit: args.limit === undefined ? 50 : Number(args.limit), cursor: args.cursor }));
+  }
   if (command === "hook-doctor") {
     const { readHookIdentityDiagnostic } = await import("./lib/hook-diagnostics.mjs");
     return print(readHookIdentityDiagnostic(process.env, {

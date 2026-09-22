@@ -8,7 +8,8 @@ import { canonicalJson, payloadHash } from "./io.mjs";
 import { ensureHostEpochSchema, hasHostEpochSchema } from "./host-epoch-storage.mjs";
 import { copyRuntimePackage, managedRuntimeDestination, inspectRuntimePackage, verifyRuntimePackage } from "./runtime-package.mjs";
 import { runtimeGeneration, runtimeTask, runtimeEpochGenerationCompatible } from "./runtime-isolation.mjs";
-import { runtimeSourceDigest, commitHistoricalQualificationAdoption } from "./lifecycle-qualification.mjs";
+import { runtimeSourceDigest, commitHistoricalQualificationAdoption, readTaskQualification } from "./lifecycle-qualification.mjs";
+import { historicalQualificationAuditCurrent } from "./historical-qualification-recovery.mjs";
 import { readStableRollout, rolloutIdentity } from "./native-rollout-reader.mjs";
 import { NativeOperationEvidence } from "./native-operation-evidence.mjs";
 import { readChildTurnEvidence } from "./child-turn-evidence.mjs";
@@ -19,7 +20,7 @@ import { opaqueId } from "./context.mjs";
 import { readHookIdentityDiagnostic } from "./hook-diagnostics.mjs";
 import { settleCoveredRootBatches, rootCoverageKey } from "./runtime-root-operations.mjs";
 import { assertColdEpochRetirement, assertColdMessageCheckpoint } from "./runtime-cold-install.mjs";
-import { knownOperationCall } from "./runtime-operation-contract.mjs";
+import { knownOperationCall, knownRootOperationCall } from "./runtime-operation-contract.mjs";
 import { installedEpochEntry } from "./installed-epoch-entry.mjs";
 import { applyOperationReviews } from "./operation-reconciliation.mjs";
 import { RootEpochOperations } from "./root-epoch-operations.mjs";
@@ -39,6 +40,37 @@ const REVIEWED_V2_ENTRY = {
   "scripts/node-launcher.mjs": "0a7e3a24b250ae68630a833d73bdcce1dbb873bc0e740e01873ad5feb96c949a",
   "scripts/mcp-server.mjs": "b1019aa693dcd39987eb95c94c820f47d9a91737ba544ba62a05f8c4ab706feb",
 };
+// These retained B/C1/C2 packages were independently checked for atomic
+// generation selection/registration, receipt consumption, completion retention
+// and retirement blocking. Bind the complete entry tuple to each exact package;
+// a changed document, manifest or other writer is a new, unreviewed package.
+const REVIEWED_INSTALLED_EPOCH_ENTRY = { ...Object.fromEntries([
+  "8732d9524390ff549a3e9fc616dacc41ffc7341ae8d6049ace8de0d27cc05989",
+  "316a1facca3b8b1cc8f71a5da80c8e8e1d1aeb08bab5e2c5b737e16144cdc84a",
+  "4b950f2687b1a8da98ce87a66a5c813a51f7ccd76c8292f7ad38e9d7862176a9",
+].map((digest) => [digest, {
+  "scripts/lib/runtime-dispatch.mjs": "4569a2191dabb39965e35b8f336bca36b2fc990b90986b91a9c47c90c19ebfe9",
+  "scripts/lib/runtime-isolation.mjs": "3e5ca8e0976845eb65ea92a93897222bbcdcd3420de8746715ed74d4ad9416a8",
+  "scripts/node-launcher.mjs": "0a7e3a24b250ae68630a833d73bdcce1dbb873bc0e740e01873ad5feb96c949a",
+  "scripts/mcp-server.mjs": "b1019aa693dcd39987eb95c94c820f47d9a91737ba544ba62a05f8c4ab706feb",
+}])),
+  // Exact approved observability r4 entry, reviewed before the diagnostic-only
+  // launcher change. Keep admission bound to the whole frozen package.
+  "168f5886af293a5a5d701fb83949accc813a84c88f16d7ee53e2c334d62d6d1a": {
+    "scripts/lib/runtime-dispatch.mjs": "35560c929d26953c8d81c90740cec955441d620d4c692e0fb63b646fba325ebb",
+    "scripts/lib/runtime-isolation.mjs": "899b5a71515a91ab8940c6ac47d61280bd86ccc52efd323af70766920069851d",
+    "scripts/node-launcher.mjs": "f37b4a8e47f1d23b34f217c9073729105b5b2300c6b7b923981b2fa673c271be",
+    "scripts/mcp-server.mjs": "bfe38a1cd4f83ee2580d3c0b84fb68f17b608178553733162822c3582bdb0c08",
+  },
+  // Exact installed diagnostics patch, before rejection-only Pre settlement.
+  // This grants no transition by itself: its actual A/B suite still runs.
+  "69425bc27ec7e7359f80c9d18f34b626d32d00be03f8a8f18da03d2f73479853": {
+    "scripts/lib/runtime-dispatch.mjs": "35560c929d26953c8d81c90740cec955441d620d4c692e0fb63b646fba325ebb",
+    "scripts/lib/runtime-isolation.mjs": "899b5a71515a91ab8940c6ac47d61280bd86ccc52efd323af70766920069851d",
+    "scripts/node-launcher.mjs": "25d0b9eda72404e564e65771b097f097bce3c1a4b2afab4797d4e85c26dfb2ab",
+    "scripts/mcp-server.mjs": "bfe38a1cd4f83ee2580d3c0b84fb68f17b608178553733162822c3582bdb0c08",
+  },
+};
 
 function reviewedEntry(record, { cold = false } = {}) {
   verifyRuntimePackage(record);
@@ -47,6 +79,12 @@ function reviewedEntry(record, { cold = false } = {}) {
     return;
   }
   requireFact(record.descriptor.shellProtocolVersion === 2, "v1_native_entry_retirement_unproven");
+  const reviewedInstalled = REVIEWED_INSTALLED_EPOCH_ENTRY[record.digest];
+  if (reviewedInstalled) {
+    requireFact(Object.entries(reviewedInstalled).every(([path, digest]) => sha(readFileSync(join(record.root, path))) === digest),
+      "unreviewed_invocation_registration");
+    return;
+  }
   for (const [path, digest] of Object.entries(REVIEWED_V2_ENTRY)) {
     const bytes = readFileSync(join(record.root, path));
     // The exact pre-lifecycle-adapter default was reviewed independently of
@@ -174,7 +212,7 @@ function rootQuiescence(db, context, reference, deadline) {
       if (turn !== p.turn_id) { turn = p.turn_id; ended = false; }
     }
     if (entry.type === "response_item" && ["function_call", "custom_tool_call"].includes(p?.type)) {
-      requireFact(knownOperationCall(p), "unknown_external_operation_contract");
+      requireFact(knownRootOperationCall(p), "unknown_external_operation_contract");
       requireFact(p.call_id && !seenCalls.has(p.call_id) && !ended, "duplicate_or_late_native_call");
       seenCalls.add(p.call_id); pendingCalls.add(p.call_id);
     }
@@ -195,12 +233,20 @@ function rootQuiescence(db, context, reference, deadline) {
 // A stopped child may retain accepted but unconsumed inputs and deferred work.
 // Only execution quiescence is required here; closure/consumption is still owned
 // by the original stage ledger and no outcome is produced by the epoch.
-export async function prepareHostEpochHandover(store, reference, { candidate, adoptionToken = null, shellRoot, inspect = null } = {}) {
+export async function prepareHostEpochHandover(store, reference, { candidate, adoptionToken = null, recoveryAudit = null, shellRoot, inspect = null } = {}) {
   ensureHostEpochSchema(store.db);
   const context = store.context({ cwd: reference.cwd, contextId: reference.contextId, create: false });
   const task = runtimeTask(store.db, context);
   requireFact(task, "task_not_observed_by_v2_dispatch_yet");
   const source = runtimeGeneration(store.db, task.generation), target = runtimeGeneration(store.db, candidate);
+  const scopedQualification = readTaskQualification(store.db, { ...context, runtimeDigest: source.digest });
+  const qualificationContext = { ...context, runtimeDigest: scopedQualification ? source.digest : undefined };
+  const priorQualification = scopedQualification || readTaskQualification(store.db, qualificationContext);
+  if (recoveryAudit || (priorQualification && priorQualification.state !== "passed")) {
+    requireFact(!adoptionToken && priorQualification && historicalQualificationAuditCurrent(store, recoveryAudit, qualificationContext),
+      "historical_qualification_recovery_unproven");
+    requireFact(!readTaskQualification(store.db, { ...context, runtimeDigest: candidate }), "candidate_qualification_already_exists");
+  }
   const nativeEntry = await installedEpochEntry(store.db, shellRoot);
   const assertRetirement = (generation) => nativeEntry.shell.digest === candidate
     ? assertColdEpochRetirement(store.db, generation, candidate) : nativeEntry.assertRetirement(generation);
@@ -321,10 +367,13 @@ export async function prepareHostEpochHandover(store, reference, { candidate, ad
         disposition: "preserved_without_business_settlement" } }, children, stages,
     verifier: runtimeSourceDigest(), nativeEntry: { shell: nativeEntry.shell.digest, verifier: nativeEntry.verifier },
     hookDigest: payloadHash(hook), turnDigest: payloadHash(reference.turnId),
-    responsibility: "execution_continuation_only; original inputs, routes, tickets, outcomes and coverage retained" };
+    responsibility: "execution_continuation_only; original inputs, routes, tickets, outcomes and coverage retained",
+    ...(recoveryAudit ? { historicalQualificationRecovery: { routeId: priorQualification.routeId,
+      evidenceDigest: recoveryAudit.evidenceDigest, rawAuditDigest: recoveryAudit.rawAuditDigest,
+      preservedState: priorQualification.state, candidateQualification: "required" } } : {}) };
   record.id = payloadHash(record);
   const token = Object.freeze({});
-  HANDOVERS.set(token, { store, context, reference, source, target, stageSources, state, sources, hook, record, adoptionToken,
+  HANDOVERS.set(token, { store, context, reference, source, target, stageSources, state, sources, hook, record, adoptionToken, recoveryAudit, qualificationContext,
     expiresAt: Date.now() + 5_000, root, cold, assertRetirement, nativeEntry });
   return token;
 }
@@ -384,6 +433,8 @@ export function commitHostEpochHandover(store, token) {
     }
     requireFact(Date.now() <= writeDeadline, "epoch_commit_budget_exhausted");
     requireFact(saved.sources.every(([path, identity]) => rolloutIdentity(path) === identity), "native_source_changed");
+    requireFact(!saved.recoveryAudit || historicalQualificationAuditCurrent(store, saved.recoveryAudit, saved.qualificationContext),
+      "historical_qualification_recovery_changed");
     requireFact(payloadHash(snapshot(store.db, context)) === record.baselineDigest, "task_stage_invocation_or_input_revision_changed");
     requireFact(payloadHash(readHookIdentityDiagnostic(process.env, { contextId: saved.reference.contextId, turnId: saved.reference.turnId })) === payloadHash(saved.hook), "current_Hook_changed");
     for (const original of saved.stageSources.values()) verifyRuntimePackage(original);
@@ -408,6 +459,8 @@ export function commitHostEpochHandover(store, token) {
       .run(record.id, entry.invocation_id);
     requireFact(Date.now() <= writeDeadline, "epoch_commit_budget_exhausted");
     requireFact(saved.sources.every(([path, identity]) => rolloutIdentity(path) === identity), "native_source_changed");
+    requireFact(!saved.recoveryAudit || historicalQualificationAuditCurrent(store, saved.recoveryAudit, saved.qualificationContext),
+      "historical_qualification_recovery_changed");
     store.db.prepare("UPDATE runtime_stages SET generation=? WHERE project_id=? AND context_key=?")
       .run(record.candidate, context.projectId, context.contextKey);
     store.db.prepare("UPDATE runtime_tasks SET generation=?,candidate=NULL WHERE project_id=? AND context_key=?")
@@ -435,7 +488,7 @@ export function epochAdmissionState(db, context, stageId = null) {
   const generation = stage?.generation || execution?.candidate || execution?.generation || task.generation;
   return { required: true, ready: rootReady && childReady, rootReady, childReady, receiptId: task.receipt_id,
     generation, epochGeneration: task.generation,
-    reasonCode: rootReady ? "HOST_EPOCH_CHILD_ENTRY_UNCONFIRMED" : "HOST_EPOCH_ENTRY_UNCONFIRMED" };
+    reasonCode: !rootReady ? "HOST_EPOCH_ENTRY_UNCONFIRMED" : !childReady ? "HOST_EPOCH_CHILD_ENTRY_UNCONFIRMED" : null };
 }
 
 // Call only from the selected B Hook/service, after trusted identity resolution.

@@ -18,6 +18,25 @@ function replay(entries) {
   return { native, retained: epoch.reconcile(native) };
 }
 
+const cuaCall = { type: "response_item", payload: { type: "function_call", namespace: "mcp__cua_repl", name: "js", call_id: "cua", arguments: JSON.stringify({ code: "await page.click()" }) } };
+const cuaResult = { type: "response_item", payload: { type: "function_call_output", call_id: "cua", output: "opaque tool response" } };
+const cuaTerminal = { type: "event_msg", payload: { type: "item_completed", thread_id: "root", turn_id: "turn",
+  item: { type: "McpToolCall", id: "cua", server: "cua_repl", tool: "js", arguments: { code: "await page.click()" },
+    status: "completed", result: { content: [], isError: false, _meta: { "codex/nodeReplExecutionDurationMs": 10 } } } } };
+test("root CUA calls require an exact native terminal and retain their unverified external business", () => {
+  assert.ok(replay([cuaCall, cuaResult]).native.active.size);
+  const done = replay([cuaCall, cuaTerminal, cuaResult]);
+  assert.equal(done.native.active.size, 0);
+  assert.equal(done.retained.length, 1);
+  assert.equal(done.retained[0].businessState, "unverified_preserved");
+  for (const patch of [{ thread_id: "other" }, { turn_id: "other" }, { item: { ...cuaTerminal.payload.item, id: "other" } },
+    { item: { ...cuaTerminal.payload.item, status: "in_progress" } },
+    { item: { ...cuaTerminal.payload.item, arguments: { code: "other" } } },
+    { item: { ...cuaTerminal.payload.item, result: { content: [], isError: false } } }])
+    assert.ok(replay([cuaCall, { ...cuaTerminal, payload: { ...cuaTerminal.payload, ...patch } }, cuaResult]).native.active.size);
+  assert.ok(replay([cuaCall, cuaTerminal]).native.unanswered.size);
+});
+
 test("epoch retains opaque root business while a native terminal proves only its code interpreter returned", () => {
   for (const status of ["completed", "failed", "terminated"]) {
     const { native, retained } = replay([call("opaque", "exec", "await tools.external_action({})"), result("opaque", `Script ${status}`)]);

@@ -5,6 +5,9 @@ import { writeJsonLine } from "./lib/io.mjs";
 import { formatRouteHistory, formatRouteStatus } from "./lib/presentation.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
 import { emitDiagnostic } from "./lib/diagnostics.mjs";
+import { beginObservation, activeInvocationObservation } from "./lib/observability.mjs";
+import { requestError } from "./lib/request-errors.mjs";
+import { parseRequestJson } from "./lib/request-json.mjs";
 import { isBoundedSubagent, resolveHookIdentity } from "./lib/hook-identity.mjs";
 import { recordHookIdentityDiagnostic } from "./lib/hook-diagnostics.mjs";
 import { resolveLifecyclePluginRoot } from "./lib/hook-readiness.mjs";
@@ -19,7 +22,7 @@ import {
   parseCarrierTaskName,
   parseLegacyCarrierMessage,
 } from "./lib/delegation-gate.mjs";
-import { readThreadSpawnIdentity } from "./lib/subagent-session.mjs";
+import { readThreadSpawnIdentity, readNativeTaskOrigin } from "./lib/subagent-session.mjs";
 import { createLifecycleDiagnostic } from "./lib/lifecycle-diagnostics.mjs";
 import { childToolRestriction, isRouterChildTarget, observeManagedMessage, observeManagedStop, registerManagedChild, targetedChild } from "./lib/stage-closure.mjs";
 
@@ -32,6 +35,10 @@ let RouterStore;
 let diagnosticIdentity;
 let lifecycleDiagnostic = () => {};
 let epochConfirmationRequired = false;
+let hookRejected = false;
+const hookObservation = beginObservation({ component: "hook", transport: "native-hook",
+  callId: process.env.ADAPTIVE_ROUTER_OBSERVATION_CALL_ID,
+  invocationId: process.env.ADAPTIVE_ROUTER_INVOCATION_ID }, { requireExistingMain: true });
 
 // Only an actually selected Hook process can create this entry observation.
 // Dispatcher invocation/source checks remain inside observeEpochExecution;
@@ -59,11 +66,11 @@ function readInput() {
     process.stdin.setEncoding("utf8");
     process.stdin.on("data", (chunk) => {
       value += chunk;
-      if (value.length > 1_000_000) reject(new Error("hook input is too large"));
+      if (value.length > 1_000_000) reject(requestError("INVALID_INPUT", "Hook input is too large."));
     });
     process.stdin.on("end", () => {
       try {
-        resolve(JSON.parse(value || "{}"));
+        resolve(parseRequestJson(value || "{}"));
       } catch (error) {
         reject(error);
       }
@@ -90,6 +97,8 @@ function preToolDecision(permissionDecision, fields = {}) {
 }
 
 function denyRouterAgent(reason) {
+  hookRejected = true;
+  hookObservation.detail({ operation: "rejected", error: requestError("HOOK_REJECTED", "Hook denied a managed operation.") });
   preToolDecision("deny", { permissionDecisionReason: reason });
 }
 
@@ -158,6 +167,8 @@ function requireIdentity(input, event) {
   diagnosticIdentity = identity;
   if (identity.contextId) return identity;
   recordIdentity(identity, "blocked_missing_session_id");
+  hookRejected = true;
+  hookObservation.detail({ operation: "rejected", error: requestError("HOOK_IDENTITY_MISSING", "Trusted session identity is unavailable.") });
   process.stderr.write("Adaptive Model Router hook skipped: trusted session identity unavailable.\n");
   emitDiagnostic({
     component: "hook",
@@ -227,6 +238,8 @@ function injectManagedSubagentContext(input, hookEventName, options = {}) {
   lifecycleDiagnostic("result", { contextInjected: result.marked === true && result.managed === true });
   if (!result.marked) return false;
   if (!result.managed || result.state?.trusted === false) {
+    hookRejected = true;
+    hookObservation.detail({ operation: "rejected", error: requestError("HOOK_REJECTED", "Bounded child context validation failed.") });
     additionalContext(rejectedSubagentContext(), hookEventName);
     return true;
   }
@@ -584,7 +597,8 @@ async function preToolUseHook(input) {
     // Codex accepts deny here but rejects permissionDecision=allow. Continuing
     // with an empty result preserves the host's ordinary permission boundary.
     writeJsonLine(process.stdout, {});
-  } catch {
+  } catch (error) {
+    hookObservation.detail({ operation: "failed", error });
     denyRouterAgent("Router-marked Agent call could not be validated against trusted durable state.");
   } finally {
     store?.close();
@@ -626,6 +640,7 @@ async function postToolUseHook(input) {
       if (observed.correlated) observeQualificationHook(store.db, context, observed.routeId, "post", resolveLifecyclePluginRoot());
       if (observed.routeId) observeCapacitySpawn(store.db, context, observed.routeId);
       lifecycleDiagnostic("result", { correlated: observed.correlated === true });
+      if (!observed.correlated) hookObservation.detail({ operation: "rejected", error: requestError("HOOK_UNCORRELATED", "PostToolUse could not be correlated.") });
     });
   } finally {
     store.close();
@@ -706,7 +721,8 @@ function managedChildToolHook(input) {
     });
     if (!restriction.restricted) return false;
     denyRouterAgent(restriction.reason);
-  } catch {
+  } catch (error) {
+    hookObservation.detail({ operation: "failed", error });
     denyRouterAgent("This bounded child's Router state is unavailable. Preserve its work and return the missing evidence to the root; do not run business tools.");
   } finally { store?.close(); }
   return true;
@@ -774,6 +790,13 @@ let input;
 try {
   stage = "input";
   input = await readInput();
+  const execution = activeInvocationObservation({ input });
+  const origin = execution.identitySource === "native_hook" ? readNativeTaskOrigin(input) : {};
+  hookObservation.bind({ hookEvent: input?.hook_event_name, ...execution,
+    ...origin, executionOrigin: origin.taskOrigin,
+    // Managed child invocations belong to the parent's routing ledger. Their
+    // execution provenance must not rename the owning root task's provenance.
+    taskOrigin: origin.taskOrigin === "bounded_child" ? "unknown" : origin.taskOrigin });
   lifecycleDiagnostic = createLifecycleDiagnostic(input, process.argv[2]);
   stage = "runtime";
   assertRuntime();
@@ -803,7 +826,9 @@ try {
     await subagentStopHook(input);
   }
   lifecycleDiagnostic("exit");
+  hookObservation.finish({ operation: hookRejected ? "rejected" : "succeeded" });
 } catch (error) {
+  hookObservation.finish({ error, operation: "failed" });
   lifecycleDiagnostic("exception");
   process.stderr.write("Adaptive Model Router hook failed safely.\n");
   const category = stage === "runtime" ? "runtime" : stage === "input" ? "invalid_input" : undefined;

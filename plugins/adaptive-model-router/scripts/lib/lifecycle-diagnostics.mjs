@@ -1,10 +1,11 @@
 import { DatabaseSync } from "node:sqlite";
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, realpathSync, writeSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { databasePath } from "./context.mjs";
 import { payloadHash } from "./io.mjs";
 import { runtimeSourceDigest } from "./lifecycle-qualification.mjs";
 import { resolveLifecyclePluginRoot } from "./hook-readiness.mjs";
+import { appendObservation } from "./observability.mjs";
 
 const MODES = new Set(["subagent-start", "subagent-stop", "pre-tool-use", "post-tool-use"]);
 const STAGES = new Set(["entry", "identity", "carrier", "result", "exit", "exception"]);
@@ -63,7 +64,12 @@ export function createLifecycleDiagnostic(input, mode) {
       const path = join(directory, `native-lifecycle-${authorization.authorizationDigest.slice(0, 24)}.jsonl`);
       fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW || 0), 0o600);
       const stats = fstatSync(fd);
-      if (!stats.isFile() || (stats.mode & 0o077) !== 0 || stats.size + line.length > 65536) return;
+      if (!stats.isFile() || (stats.mode & 0o077) !== 0) return;
+      if (stats.size + line.length > 65536) {
+        writeFileSync(`${path}.truncated.json`, JSON.stringify({ schemaVersion: 1, truncated: true, observedAt: new Date().toISOString(), limitBytes: 65536 }), { mode: 0o600, flag: "wx" });
+        appendObservation({ component: "retention", event: "truncated", evidenceKind: "lifecycle_diagnostic", count: 1 });
+        return;
+      }
       writeSync(fd, line);
     } catch { /* Diagnostics never alter Hook decisions or stdout. */ }
     finally { if (fd !== undefined) closeSync(fd); }

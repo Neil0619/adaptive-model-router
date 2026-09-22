@@ -23,6 +23,8 @@ export function resolveRolloutPath(path) {
 
 const BUSINESS_LINE_LIMIT = 16 * 1024 * 1024;
 const COMPACTED_LINE_LIMIT = 32 * 1024 * 1024;
+const DEFAULT_FILE_LIMIT = 512 * 1024 * 1024;
+export const COLD_ROLLOUT_FILE_LIMIT = 1024 * 1024 * 1024;
 const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 // Native compaction carries complete replacement/guardian histories. It is
 // metadata, never a live operation or input. Permit the observed native shape
@@ -45,14 +47,22 @@ function compactedMetadata(entry) {
 /** Child verification requires a stable whole file. Message reconciliation can
  * instead pin a complete prefix while the active parent appends new events;
  * that prefix is independently rehashed before it is accepted. */
-export function readStableRollout(path, accept, { allowAppend = false, allowCompactedMetadata = false, deadline = Infinity } = {}) {
+export function readStableRollout(path, accept, { allowAppend = false, allowCompactedMetadata = false, deadline = Infinity,
+  maxBytes = DEFAULT_FILE_LIMIT } = {}) {
+  // Cold installation may inspect long-lived parent logs beyond the normal
+  // Hook budget. This only expands a finite streaming byte bound; record,
+  // identity, complete-content hashing and caller time limits still apply.
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > COLD_ROLLOUT_FILE_LIMIT)
+    throw new Error("native transcript byte budget is invalid");
+  if (maxBytes > DEFAULT_FILE_LIMIT && !Number.isFinite(deadline))
+    throw new Error("expanded native transcript budget requires a finite deadline");
   path = resolveRolloutPath(path);
   const fd = openSync(path, "r");
   try {
     // Windows file IDs can exceed Number's exact integer range. Keep identity
     // and timestamps lossless; only the bounded byte count becomes a Number.
     const before = fstatSync(fd, { bigint: true });
-    if (!before.isFile() || before.size > 512n * 1024n * 1024n) throw new Error("native transcript exceeds evidence bounds");
+    if (!before.isFile() || before.size > BigInt(maxBytes)) throw new Error("native transcript exceeds evidence bounds");
     const size = Number(before.size);
     const hash = createHash("sha256");
     const lineLimit = allowCompactedMetadata ? COMPACTED_LINE_LIMIT : BUSINESS_LINE_LIMIT;

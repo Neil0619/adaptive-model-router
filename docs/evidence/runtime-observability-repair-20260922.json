@@ -1,0 +1,621 @@
+{
+  "schemaVersion": 1,
+  "kind": "source-delivery-validation",
+  "generatedAt": "2026-09-22T09:22:24.707460+00:00",
+  "baseCommit": "fab0ff28c0462071c23ea9ebb07d20398753aecc",
+  "scope": "Source repair and validation only. This is not a new installed-runtime or public-release acceptance.",
+  "provenance": {
+    "packagePath": "plugins/adaptive-model-router",
+    "source": {
+      "descriptor": {
+        "schemaVersion": 1,
+        "runtimeVersion": "0.4.0+codex.20260922043940",
+        "shellProtocolVersion": 2,
+        "toolContractVersion": 7,
+        "storageContractVersion": 3,
+        "databaseVersion": 10,
+        "entrypoints": {
+          "hook": "scripts/hook.mjs",
+          "service": "scripts/lib/service.mjs",
+          "probe": "scripts/runtime-probe.mjs"
+        }
+      },
+      "digest": "00d38e670d02369417f101ea0e43fd9250fb69ccd4ad0133a7293386c1bd64f1",
+      "writerDigest": "3a4ed74cc37bc817fc49779c1b831d04409dfd840611942d0ba5d42301c03d78",
+      "shellDigest": "48b71a4749e50774a3baf6412a4f7d300e6c9b8b209cd70b827ea7091c8abf0b",
+      "lifecycleDigest": "3a4ed74cc37bc817fc49779c1b831d04409dfd840611942d0ba5d42301c03d78"
+    },
+    "installedPackage": {
+      "descriptor": {
+        "schemaVersion": 1,
+        "runtimeVersion": "0.4.0+codex.20260922043940.runtime2",
+        "shellProtocolVersion": 2,
+        "toolContractVersion": 7,
+        "storageContractVersion": 3,
+        "databaseVersion": 10,
+        "entrypoints": {
+          "hook": "scripts/hook.mjs",
+          "service": "scripts/lib/service.mjs",
+          "probe": "scripts/runtime-probe.mjs"
+        }
+      },
+      "digest": "08a717303357af962c0c55171ab292312944ef8d135488f12d808204e016db25",
+      "writerDigest": "1af960443ea5aeace742068493c670559327bc347ab4e70a6b1b981cf8280ea2",
+      "shellDigest": "6da0213cf5839594d2edf1d0cb2e421f825731b309600534f76a35480b6ddfcd",
+      "lifecycleDigest": "1af960443ea5aeace742068493c670559327bc347ab4e70a6b1b981cf8280ea2"
+    },
+    "installedSourceEqualsCache": true,
+    "sourceWriterEqualsInstalled": false,
+    "sourceClassificationFixInstalled": false,
+    "unreleasedVersionLabel": "The source retains its prior version label. Package digests, not the version string alone, identify the new uninstalled fix.",
+    "differences": [
+      {
+        "path": ".codex-plugin/plugin.json",
+        "workspace": "183225cd02d8deb3c90ffe82eafca0ffb499b19dab1f21c844e31f20e95d56a8",
+        "cache": "f9695ad2ba4485feb76b114dee4539b3bb014ea948b9dc63691280db1fedf239"
+      },
+      {
+        "path": ".mcp.json",
+        "workspace": "2c0cf81fc0fa814726250f9dd9cb81c180ed3f2ea14afcf42513fe894cdf2ae1",
+        "cache": "71f1dcf77ce9140ff21effd3b313b136aaa532a773a8e43d80a8ada170a194cc"
+      },
+      {
+        "path": "hooks/hooks.json",
+        "workspace": "985a617e789a105f640b1ac617d6e937426e27a8d64b6aa794a5d6dfd0c9ac66",
+        "cache": "becf253f67921c4caa40e7d0ce66f18e53a281e45295e4320d6bdd6d30f47c1d"
+      },
+      {
+        "path": "runtime-host.json",
+        "workspace": null,
+        "cache": "b030da9e1cdc2f470daec75fc256f8aa25546dbaf659c00678c311b08402f25a"
+      },
+      {
+        "path": "runtime.json",
+        "workspace": "22cacccd9bf84dd7f4423478060c8432392511fe3d3f3bc3f68c24bc331263df",
+        "cache": "9ea49fdbf0ec9e678faf3bf14a375cefda31b8ab9ebe0203c7bde3422ccabfab"
+      },
+      {
+        "path": "scripts/hook.mjs",
+        "workspace": "d91b7530779d801bfd1fe85307969107bfde5c166393204da833bca95fef8544",
+        "cache": "6351d8376125e734e6b4fad7aa1696e16b0dbefd8db6f6ecde415c1926e33338"
+      },
+      {
+        "path": "scripts/lib/diagnostics.mjs",
+        "workspace": "75721aa91eb64e22237eca1cce4b3e6ad372bf71810569dafac51532812c9001",
+        "cache": "270c26c6d10b171443efd27bd1461ba20167fce643e6c2151337a93c9c1c8d7f"
+      },
+      {
+        "path": "scripts/lib/request-errors.mjs",
+        "workspace": "53ac051b24205e61724d07fe8e9c759c19b0fdbb1ef4b837ca9555336f14e465",
+        "cache": "d865446d2d13ef68c79bec11235471e45187a45bf6d6d8a204a4de9f8bcae970"
+      },
+      {
+        "path": "scripts/lib/request-json.mjs",
+        "workspace": "1c2177af376e85b3416a0273a143dbbb61e72b5ffce01587e32a11fa134c23f2",
+        "cache": null
+      },
+      {
+        "path": "scripts/node-launcher.mjs",
+        "workspace": "9324a79f467d3153720fd1abb383ddfe279ce9fb741a8eeef4f5ff37fb3c8aff",
+        "cache": "25d0b9eda72404e564e65771b097f097bce3c1a4b2afab4797d4e85c26dfb2ab"
+      },
+      {
+        "path": "scripts/stdio-tool.mjs",
+        "workspace": "b6dc3e1348c65a3e716798e6f57cdc07b2db86a5ba8acca18c15d6037d82b1d2",
+        "cache": "39449c475c8887ac41b013bcf2a982e0e5ac273a393603f2531b6c2a48eb483e"
+      },
+      {
+        "path": "test/request-error-classification.test.mjs",
+        "workspace": "addc1519e210142db90ae0d11d35d2a5f85b1383dd4a828df6eaca42a3e3b16b",
+        "cache": null
+      },
+      {
+        "path": "test/runtime-call-reconciliation.test.mjs",
+        "workspace": "ff76ce42c109c7c228ab86d4eca5090e5b1338de6ea9e41c6c57167a218621e2",
+        "cache": "b923ef5101442dd6cf9573bdd6cad1dfed25a23eab6185050a8afd8bf3bcfc2f"
+      },
+      {
+        "path": "test/runtime-epoch.test.mjs",
+        "workspace": "60f08b64a2820b65df34e5a25c807dde3f9dc112eea6f5f923598a5501e60bd0",
+        "cache": "b98003653c3b47feaea59868c2e4d18da10ec656517d93541fd928ee6a9f08c0"
+      },
+      {
+        "path": "test/support/legacy-request-errors.mjs",
+        "workspace": "d865446d2d13ef68c79bec11235471e45187a45bf6d6d8a204a4de9f8bcae970",
+        "cache": null
+      }
+    ],
+    "sourceFileDigests": {
+      ".codex-plugin/plugin.json": "183225cd02d8deb3c90ffe82eafca0ffb499b19dab1f21c844e31f20e95d56a8",
+      ".mcp.json": "2c0cf81fc0fa814726250f9dd9cb81c180ed3f2ea14afcf42513fe894cdf2ae1",
+      "RUNTIME.md": "f624275ecfe241fa6a66d951e8d9981f9ce3596999baeca716f380d6238564e2",
+      "compatibility.json": "98136391aed82afcdd2185a4c435b94466a8e78f54fe4ef5da1e15ee8ab5853f",
+      "eval/quality.mjs": "498786bd80dc7762cd71ec3dac7796bf0efbf6adfce39d81d1f97ad9edb60ac0",
+      "eval/routes.json": "0d66954288c77b77c551816df5b483ec51928d6aa56e922c6b2bfc8b1227a4e8",
+      "eval/run.mjs": "397b1368ffc5e160fc3d1f4f09981d8f0ffdd5fa60b3dc307083f1eb66f66377",
+      "hooks/hooks.json": "985a617e789a105f640b1ac617d6e937426e27a8d64b6aa794a5d6dfd0c9ac66",
+      "model-policy.json": "00f4f93596c8a378d4452d716ba1a2a3d95fbef4985bdf3dafc453c48b5222e2",
+      "package.json": "5577ef0e92a0261c65cb30a9112f4266eec6475bb9b53b61c3857bc19ed14de9",
+      "runtime.json": "22cacccd9bf84dd7f4423478060c8432392511fe3d3f3bc3f68c24bc331263df",
+      "scripts/authorize-requalification.mjs": "4bffdf8658a3da25af26984549a62783127984c285b7c05a6ea36a43f1881bc0",
+      "scripts/codex-route.mjs": "d2a786cbb1c929b9fe78543b06cdd8ae84b9269557035216f16f3a3a43a329d9",
+      "scripts/generate-sbom.mjs": "1178c2bd0457d0f982cd6aca71991a1a3ff8fec89069f3c3485db003f215c69a",
+      "scripts/hook.mjs": "d91b7530779d801bfd1fe85307969107bfde5c166393204da833bca95fef8544",
+      "scripts/lib/app-server.mjs": "f600bc1cf2061b057fa516c3a72218d5f91b27d21f9f8fbdb86ba1578222d83c",
+      "scripts/lib/audit-records.mjs": "da9421f9c7239f0b661c659707d8503c0e8f4df241a77b4e3c58179e9e417a18",
+      "scripts/lib/catalog.mjs": "f9ba0a8d89f0801f55f69ee925855f11bd82f985dac997b74c3a0d8757e0281b",
+      "scripts/lib/child-command-journal.mjs": "8f1bf7d58bdd83577a1ab56a9555928ce45b82486c888e3b7b7ba6293ea31116",
+      "scripts/lib/child-turn-evidence.mjs": "87c29c7838d4970e90b785c8bfda19389a45962f6616f526d6133a8d548d3cad",
+      "scripts/lib/classifier.mjs": "50dd265907da352f5fdfa44c65407c20cbd96ff0526454245aeec359ae09115e",
+      "scripts/lib/code-mode-tool-evidence.mjs": "882a9728cc7c617e65bc1bb77ee66f033eb9710c1e90afddc658c095d3b342f7",
+      "scripts/lib/codex-command.mjs": "382c8ef649a26c1989de19ef9775f1e3627ba3fd1297ad55dd2929610c45b520",
+      "scripts/lib/compatibility.mjs": "ee6944da97411fc79b28ddd61383018a066816defb1f5adc58c816f29404df85",
+      "scripts/lib/constants.mjs": "964ddefb1c75976cb53bb15051d667a88898d2db429f316494085d682c165d79",
+      "scripts/lib/context.mjs": "ce93fd57476f8fba2f979cc928009e9ed36bccf72855376876f323049febdee7",
+      "scripts/lib/contracts.mjs": "d280956ef7e7663af48010294ce3496e494855489bb4667d0542642fa15ee896",
+      "scripts/lib/control.mjs": "2898a49d43f8660c32fc293c3fd6505830b04f8b1ccb91c2c223b4b863349b45",
+      "scripts/lib/database.mjs": "f98f0f523491efb4f5f422b8c5c03ddcb7fd61231004c12bf2a6a00741decfeb",
+      "scripts/lib/delegation-gate.mjs": "c475bec7c01dba9f706bd81f33f1174f97e8e41b221e5fbc048eff51c57dcbe8",
+      "scripts/lib/delegation-recovery.mjs": "5a72ea740eb828b93e9e328f7234c2ad774dffc4dbec3627d0a5c8d781048d72",
+      "scripts/lib/diagnostics.mjs": "75721aa91eb64e22237eca1cce4b3e6ad372bf71810569dafac51532812c9001",
+      "scripts/lib/epoch-verification-entry.mjs": "1a4f3d3527784ddab02cca713c5f736b6ce5ec94c7cc69ca0058a655c1248d91",
+      "scripts/lib/global-reservation-reclamation.mjs": "48a3f0492dd6ace2b7f12b932d1fa99ada67199efc6978978bf589d799c4a26e",
+      "scripts/lib/health-reader.mjs": "74250f5958625c3236d05fa5b8f3ec869d1a28c6e0f9a115e4775a1cce4371e2",
+      "scripts/lib/historical-qualification-recovery.mjs": "8131625501efde096d71d27d2ef9f9c8e698484ab39b135ff59bd522d7a3c92b",
+      "scripts/lib/hook-command.mjs": "0702b9b14d745104814584ce7a2b655e0efdf1ce62b5d9eae1857c32197e7e60",
+      "scripts/lib/hook-diagnostics.mjs": "51e7e2305dd22cfeaf925f15f24e2baa199e0b6491700de2e8b0c39d932f8371",
+      "scripts/lib/hook-identity.mjs": "061940fbeaa4c981de08841855b967d903afc3554a0b0da2b1a5b38044896fd8",
+      "scripts/lib/hook-readiness.mjs": "e7bcd736c46540cc53ec829784900b2a950f49232721c090ebf38b2e2b74df9b",
+      "scripts/lib/host-capacity-recovery.mjs": "e4104d53ad576e69368220add5642b93e94f8d1cef09abc9389593a40f405c2e",
+      "scripts/lib/host-compatibility.mjs": "f5cf060ed5ae411265e1910dab452633f9f136eb3bd692084d173a613b47a30d",
+      "scripts/lib/host-epoch-storage.mjs": "be739fc92ea47495cbf651549c1ac0b6b85684a9b20f24426a524745b30fa132",
+      "scripts/lib/installation-surface.mjs": "8b468cb7322d9cc13ed5d1461373b52d1706cbdf8a2d763233d80b691be815ce",
+      "scripts/lib/installed-epoch-entry.mjs": "37432142f68adfa50cbeac86cac6af7dfcccbbd9b1cfe06d0388fdd8e88c0308",
+      "scripts/lib/io.mjs": "5994274ea83c8390127c7c673799211ee373ef2d50c5ee9a94ed20b0a6862e46",
+      "scripts/lib/learning.mjs": "212a37127272fbd1b0364deefab747c4234dc7785a9464ec27fbcfc751662211",
+      "scripts/lib/legacy.mjs": "1bcdcd0527fef0bf91999e7a59a6587cfb2ec405e31099bf679e9d36e777ec6c",
+      "scripts/lib/lifecycle-diagnostics.mjs": "5bab9220d88e49a1ccdc3141520ea136971888b4da921f2c451a1948d05c306b",
+      "scripts/lib/lifecycle-qualification.mjs": "2abf5538825f721d605ce25ad376322db950cf59ad6ef070ee8e10b916bbbbce",
+      "scripts/lib/materialized-marketplace.mjs": "8f2d5d90300774c446989a48aba85884908631b8828683075831e6ba1cd49e71",
+      "scripts/lib/message-checkpoint.mjs": "6adf98c6c4a2639ec89fc94e812fd8573aaa7e20747c4ec695869a0e8c6f2753",
+      "scripts/lib/model-policy-store.mjs": "05ecdc5ea5abafa053f62bbbc8f11713faaf54f5489e6b1b7bc477a221767e5f",
+      "scripts/lib/model-policy.mjs": "b454463ee5b894b98a185e8812b2f01647f9f8b1660d03aa4f826034cf139538",
+      "scripts/lib/model-slug.mjs": "9693bfb21cb024efca92125d34c2618764c49813ff6b4493aa940b718f73e53e",
+      "scripts/lib/native-activity.mjs": "8dbf3e12129504509a009c566614cf54a85b1cff8af94a3afddaef7b0d136193",
+      "scripts/lib/native-host-capacity-audit.mjs": "10825c353ca81911c309a0d4589fd4cb739bd40b3198870170e26665fba9bb8b",
+      "scripts/lib/native-host-executable.mjs": "55478299df244466ad0eed17dd20918cec718a7ec8dcb58b5800f9b6de8fb093",
+      "scripts/lib/native-lifecycle-audit.mjs": "3858fa8b4196806de542b56fce3782ea9e294a395a956a49c323cccd82e02d32",
+      "scripts/lib/native-metadata-recovery-audit.mjs": "9f9a8b4df3efde4cd00ece3b8a3c3dbbeb74119e4e93667fc2822a057070265c",
+      "scripts/lib/native-operation-evidence.mjs": "245af39f0f7b087b19432a5326d104f4d2bfc006cc4047be6039b1c7d4da8147",
+      "scripts/lib/native-predispatch-audit.mjs": "65de4b84c9badf52590757ae7c958b81179419c9c0762b246594cf6ecd848162",
+      "scripts/lib/native-recovery-audit.mjs": "1b9c90aad7049e04c83d1d2e95f08a72bd53551ec062c49f09875be757ad50c9",
+      "scripts/lib/native-recovery-receipt.mjs": "383cd57c2d54dd3502be2738c2ff3832e8b72a5c6ca6b0a3351002f62706265b",
+      "scripts/lib/native-rollout-reader.mjs": "dbe527ce96f5df9a87a47918283005b894fda65c9e0e27bcc613fdfc2f0c602c",
+      "scripts/lib/node-discovery.mjs": "367e892b19c5056189aaded5aea660a5adc6b3a4b038f7e8c097440394691923",
+      "scripts/lib/observability.mjs": "e16585a31894e63fc5877124d42fde0b44c03c9b4750cfd21b57341a58b8fc0c",
+      "scripts/lib/operation-contract.mjs": "24a762f44baa0b3ed82bb79b950b885cf92d0976dbdd8ac55d7d3f6ef6af62bf",
+      "scripts/lib/operation-reconciliation.mjs": "57abd23b23896859f7e97c16334aa107b1f895f986ea09bff9d256150a9c58e5",
+      "scripts/lib/plugin-data.mjs": "8fce0f37b5ac11ded2a771aa43f6aea2a16ffc619a156f720421b603ae23db75",
+      "scripts/lib/presentation.mjs": "789503092173781928b880fb6e0bb72b18646d40b359699e8dfcfded498deaed",
+      "scripts/lib/private-state.mjs": "e65afde506abe2deefac15b8922a6ff1cd79b8c3c0078f01a132410434506058",
+      "scripts/lib/qualification-policy.mjs": "0786e4901d28c51084da3810463e67acd4be73d9b6fcc92bdf3ce34b366587db",
+      "scripts/lib/qualification-recovery.mjs": "4a57a0391303f840b54dd35fabc55966c4437f441f9a13f5f478c6857f14c56d",
+      "scripts/lib/qualification-retry.mjs": "1659a8a90a9426966fdc91d6e5d87655c7b6f75e666f0e04ac932b9618346230",
+      "scripts/lib/read-only-snapshot.mjs": "15790cf71c5cb7fc95511167eb4651b44aa10c3069f64aecf5c93d260696f8c6",
+      "scripts/lib/request-errors.mjs": "53ac051b24205e61724d07fe8e9c759c19b0fdbb1ef4b837ca9555336f14e465",
+      "scripts/lib/request-json.mjs": "1c2177af376e85b3416a0273a143dbbb61e72b5ffce01587e32a11fa134c23f2",
+      "scripts/lib/reservation-ledger.mjs": "e1cc7d9326edcf6dad6e1ba6518cf845539cd2c02f511573293867a2d07f3ebd",
+      "scripts/lib/residency-model-relay.mjs": "e452eb09fbbeb0ef115fa55e6aae98ec4c0d3ca8bd959037edbbaf97400d3a81",
+      "scripts/lib/root-epoch-operations.mjs": "1c1c51158768fc9a913e6f7c31f9bef04c496239572d4c9c92ac398ecaa4c47a",
+      "scripts/lib/router.mjs": "c54a23cf8335be409703aa550f3bd814b52950d3a5e7947ac1a5625ddbd2b597",
+      "scripts/lib/runtime-boundary.mjs": "e467c2ba1a421349c9aa7bdd27ac9bbe6d703389da25b263063b04d951cba1c6",
+      "scripts/lib/runtime-call-reconciliation.mjs": "2c436abe0e56fbd16ddd7b7c5e9a09a761da5e20953dda7c2b98d2f2e85d5aeb",
+      "scripts/lib/runtime-cold-install.mjs": "446830b4054d866aec9ccdf750f2efaff6bac6ac6f5fb1b4b16a684be30265cf",
+      "scripts/lib/runtime-cold-transition.mjs": "275b07521cee30cbb39bb878b05e9ab7cbd08948d04d44d1c116c14bd21fb8e9",
+      "scripts/lib/runtime-compatibility.mjs": "a9f8c678f29e8c755130993a6ae9f30b544e48290c1da3eeed75d7aa9e7a4d73",
+      "scripts/lib/runtime-dispatch.mjs": "d3b1088865056609540366bc7964931a36a3302d6ea12eb87d7a859914817f72",
+      "scripts/lib/runtime-epoch-sweep.mjs": "d9f0b25bbc41cff621d9526456eaadd0db6cee9bf03ecbaf2a89f80e11b75a44",
+      "scripts/lib/runtime-epoch.mjs": "0eed2b5031e5fe078c1e1efedfec8708832fd888129fc5865bf0c704a017d949",
+      "scripts/lib/runtime-host-entry.mjs": "14247891dac10e7d8a3d61e12cb237c9aaff14433a120fccf72fc20d3061a39f",
+      "scripts/lib/runtime-host-retention.mjs": "6ea2276660e27f5c8ef94f37560398cd42bc55ea7f68745fa55c15d53c40fe22",
+      "scripts/lib/runtime-isolation.mjs": "899b5a71515a91ab8940c6ac47d61280bd86ccc52efd323af70766920069851d",
+      "scripts/lib/runtime-lifecycle.mjs": "02876c46fcc26693eb0fc7d37cba0f255fdb795bc1c3c2d16a41c78eda971be3",
+      "scripts/lib/runtime-loader.mjs": "8f2783ebca9af4bc2382b8e4213437af756ca7b18807071182102696215d5b21",
+      "scripts/lib/runtime-operation-contract.mjs": "29448cc458201065326d870cc6ce2605f93833c09740bf4ffa91634695b44e64",
+      "scripts/lib/runtime-package.mjs": "1c46ec662181621025ae9a5b58080c1cbeace1e0caaafb9d3edc8ef99e32c7dc",
+      "scripts/lib/runtime-root-operations.mjs": "34f46dbd0e85fc083340a611c8e79f0ab56e8e58e3622ca8d5cf4fbc013b1c92",
+      "scripts/lib/runtime.mjs": "df4a504d29837747757bdac8d7a6064c429c7479b16426065edcf820fe1d2046",
+      "scripts/lib/schema.mjs": "429e7a0cc8663e57268948016c9261ce162dba3c1738e392acdb7db521b99772",
+      "scripts/lib/scorer.mjs": "4801b42e8f16b26db8fac49b2c9520337bd92412dde04919bb0b670a6979d0d4",
+      "scripts/lib/scoring-boundary.mjs": "2c657e2927c63c57faa47edde1b0a9d095ceab1d1822a6b4db012c9eecadf700",
+      "scripts/lib/service-shell-contract.mjs": "d818b207ebbf02c6b7f53790a66678983e0fdd512674d3ce08fe149fe2f4cd39",
+      "scripts/lib/service.mjs": "59993287ae93a90d764c73f2ba68985c92b630b15d3ad4925a2fb86269dacd2a",
+      "scripts/lib/stage-closure.mjs": "3800989ee575cafb372a9c726157c5710dc2f07ce620e25fa1efa49fb3819ca7",
+      "scripts/lib/stage-reconciliation.mjs": "9a47f27db619387060c0441c1456e55d042e80d8c15cb121772524d391136930",
+      "scripts/lib/subagent-session.mjs": "ef29d112e80fcb56c67c4653dd557278881d8b48cd751c8e2b35597ebf00156d",
+      "scripts/lib/tool-contract-compatibility.mjs": "036f298e0971261c31fa37c792572fffe89d276a5324a70c20f15432808d57e2",
+      "scripts/manage-install.mjs": "59a8ea332e99945d78ae3bc1fd87f2809d1c5899175de4d3b9ca90645f829e6f",
+      "scripts/mcp-server.mjs": "152c99883f326ef329b979a49c296b1129fcf1b41eeedeee5035ac713cfc3a7f",
+      "scripts/node-launcher.mjs": "9324a79f467d3153720fd1abb383ddfe279ce9fb741a8eeef4f5ff37fb3c8aff",
+      "scripts/probe-native-lifecycle.mjs": "d91828eef4ae7855599930119ee4d9bdd50f24ba780e2a7e71d7e719a24ccf78",
+      "scripts/probe-native-qualification.mjs": "7f1ea94ab832e7606a3b97974edc82c3f2bb54f5f7a29f69f87acf20007fce4d",
+      "scripts/probe-residency-acceptance.mjs": "dbdbb192c8ca7cac0f167ea467327ef7aae5d2e4ca35328e830321fe21ef560f",
+      "scripts/reconcile-delegation.mjs": "7310abfcb88a41f83a5e9230cdfb5dcb456e5bb69462a8eb7b1ad712a181a4fb",
+      "scripts/reconcile-historical-qualification.mjs": "b89f2cfdd6ea5335f4033bfea8f4f398de5d795da7fec25a45e7f7f04ea7863d",
+      "scripts/reconcile-native-call-rejections.mjs": "db8963006744bf61c0a7220ec9684712b4fb52f270655f87110ff10271b81f1f",
+      "scripts/release-reservations.mjs": "27a3131d8ff48528c688b93081515c7b508094e9455d3cbf4fc455b7ab4ec952",
+      "scripts/runtime-admin.mjs": "3b3a9e5578702fdb58963b72a94108dbc372defe6ef9b7cafc86a6fedf8b6205",
+      "scripts/runtime-epoch.mjs": "391f34764a1a6254298ee543af02e1884dba339718e3c4b172781eba98891267",
+      "scripts/runtime-probe.mjs": "c944c9cbefb7723cb28fc01ca625c0b91ee688820d104cc35edc2450a8794d1a",
+      "scripts/stdio-tool.mjs": "b6dc3e1348c65a3e716798e6f57cdc07b2db86a5ba8acca18c15d6037d82b1d2",
+      "scripts/sync-runtime-version.mjs": "a3f67cf996e52569f00106a01d2c6b8c59ad1049c4435e945e211b9db705051b",
+      "scripts/test-isolated.mjs": "902b9b4aa584e499448b099c91089c630cefa70075d41b140375cf9f8031f25a",
+      "scripts/validate.mjs": "19bee89f4363f05439ce2791cedc00174a86d4d026512b77ff166bbfc95bcba6",
+      "scripts/verify-cold-epoch-compatibility.mjs": "28cec831e6f2d31e0b48245f390799ed3871337f4b43ee0d1e9e787a8df7a25d",
+      "scripts/verify-host-epoch-compatibility.mjs": "8829e71b2dc8457299f73674d28a45f9d2d0b449cbb82243e5fa898c5366fcc8",
+      "scripts/verify-runtime-compatibility.mjs": "748caabe85d3d7f6a27d16e2228d8fb3a71ee1f98e44cbf58f52fb7ade082291",
+      "scripts/verify-task-tools.mjs": "cf368dffbbb9e67a7ad06de8eec6f2333fe65944f5ca83201eda27a0934e89a2",
+      "skills/adaptive-model-router/SKILL.md": "4d84372a73a6486ff8ae502496e67cc9ad8110c98244a805a22f1986ea0deedf",
+      "skills/adaptive-model-router/agents/openai.yaml": "b5eee76b60917375c9edf279fe9c852ea409a2213cb237c9a9d8ce8b01941f46",
+      "test/RUNTIME-TESTS.md": "9768ac420e8b6584f152273e1bee2ec1bdacbfcef3a06d1f30c283834b5b1434",
+      "test/catalog.test.mjs": "cace1e9d455862329a8053f48f074adc5b38423f4cf2f1b575ac3c1b7c7af0fe",
+      "test/child-command-journal.test.mjs": "75613ec41ed488d7ef41606645e282bf9caa710dee48990b6ee5c079bc2f1a5e",
+      "test/classifier.test.mjs": "84217b5a228411fa5d027895728b06cd7ffc5f137fd535fe44b8132274a77162",
+      "test/code-mode-tool-evidence.test.mjs": "4f3d3f5a4897d8e954ff0cdf922bb0ba42064b27d9587e6f1df98628d76252f7",
+      "test/concurrency-worker.mjs": "fb5231acf509013708ac1f2edcb94f14dadfbe6d5fd149c39abb894aaad8fd0f",
+      "test/concurrency.test.mjs": "4ff9cbd18d5c5295738d3bbf17bdf5be0f5c8f7f750812bb977b663ee67534ad",
+      "test/context.test.mjs": "e6205a85360f6e7b81400423cbb695381628abe036fbab28fcfd0283f75c6f6a",
+      "test/database.test.mjs": "635da3e6226534bfd190db47ecf5aefe1818b7cdac14fe4e97159dbd20e3530c",
+      "test/delegation-gate.test.mjs": "57777a5a6112c00ada6bca91d2e25d34022e30194fc9ab532fa61a3b10742d3b",
+      "test/delegation-recovery.test.mjs": "364d167a19a75f9dbe779e0d9d2312c539531615512eadcc8905770d252a2955",
+      "test/diagnostic-worker.mjs": "faf3b542d2142a87d24a882ed1f8c2b7410664a1a6dcc63d307dd76aec33f124",
+      "test/diagnostics.test.mjs": "45b20d9590cac03de59ab81727eead51df1ea8601a6af02303854a6688bf0eb3",
+      "test/epoch-verification-isolation.test.mjs": "dfd1e6db6b6b3dab8a9d78d108f366fef6cd0ab9e5c4935e2e0bcaa8be55b14f",
+      "test/fixtures.mjs": "28130b8067294868cdfcace786426d1feba73d8faf204b6bac3943a3bd2785f3",
+      "test/historical-qualification-recovery.test.mjs": "f6e4585772dbcefcc698505322c58a4f83eae2eae57edb30f7ab2a90d74bfca1",
+      "test/historical-runtime.test.mjs": "7167639de0d3c19b7ec845828ad44529e692e306d0ce125a746d72087c77c2fd",
+      "test/history.test.mjs": "730f0624ba891fec8ed3d6a107b632c3fc3970c1cf17b157655620bd7cd93b2e",
+      "test/hook-command.test.mjs": "93b97d5bbcfa46484e839e4142a3a9f3da305ff2621fe9fdf1203451decd2f5d",
+      "test/hook-diagnostic-scope.test.mjs": "dbc83540a956c0293f55eb40b2e8a797a62d4daefbd3cb31a1d8f2bef7027ae0",
+      "test/hook-identity.test.mjs": "803d367af47441ded1ae01bb71517f6f29615477f4fc611fea91617b92581f4a",
+      "test/hook-readiness.test.mjs": "b341c4be59821a29c6c37513f08bcaee99211c29228687c6714373bf4d7ae28a",
+      "test/hook.test.mjs": "a63b86146b5cc3390b4babab38463f61008d7c952e757a0551a135436cb69c37",
+      "test/hooks-windows-shells.test.mjs": "39c84bfd344db60112e4ccefd0c3257923d28a3292027c65eaff74fa9d871f76",
+      "test/host-capacity-recovery.test.mjs": "73ce0d3490a63a4fc308ce4f18f321e18b94dced73a7b7390af18414270701f1",
+      "test/host-compatibility.test.mjs": "968dec49aa3c64b880fcf7067c05b1736221d6cbaa16cb78dde6d9c7b7e6223d",
+      "test/host-epoch-feasibility.test.mjs": "9e56d9e12d4cce37bfd3f76c29b2f8501a1dba93eba5a60373c31635863f15c5",
+      "test/host-model.test.mjs": "34bf7485c85b5de229818fc2065e28a7478ddf8f8401390066c5c2862a7fc9b8",
+      "test/installation-surface.test.mjs": "36ea07f88a8358b8ea606a4582247622a4fbae1ccac882c95474dff0e61bdb7e",
+      "test/installer.test.mjs": "01bf3fb552c85a09d85f0717163c3803f943abc983896721ecad8a9d1395cd06",
+      "test/installer.v1-archive.mjs": "46d6ec3f97714e8c1f796106b98df1727da81bd574d9cba8581dd0393f4a64a7",
+      "test/learning.test.mjs": "0dd6c89494e9ab3b2ca8b5f510e87fa35f4ed30f2839ccdcbe226987ae889bc6",
+      "test/legacy.test.mjs": "68cbf4c3fb59e6beb4b4fcc6dbd8bc92787961a2fa52b8e8a4e8acd2b34b6008",
+      "test/lifecycle-diagnostics.test.mjs": "fbaf57317c2ed9a8f1f62030af63c6b6f1b3465700c6c5e39b96c022eba1c82c",
+      "test/materialized-marketplace.test.mjs": "21f8f54f1aa7c4d195c1db31168fa8fd5bc247e2c68f7951b67a8f5ba139ebb0",
+      "test/mcp-validation-receipts.test.mjs": "1a62dc70c6ca51676beb7a22f277daab91469e337688193322d9e749aba8b839",
+      "test/mcp.test.mjs": "5bf0f84ff6ff006c6ede241833142e422ac1ab45c0c0f482d7ba8055a83d846e",
+      "test/model-policy.test.mjs": "99aca46d54d079b98bc76769d8653c13af94869baf6b4c0f26e178921ea3e944",
+      "test/native-activity.test.mjs": "32724b745d99468283c353020a1f68d460493c14c3cbd1c1bbc35c5bba8b3c5a",
+      "test/native-cold-entry.test.mjs": "1b21fe9536fdf7430d5f582f574bb10944fea983bda16b105c9111da9a5c3b30",
+      "test/native-cold-hooks.test.mjs": "aceb2e7509e758ab15672f669bae080947080a06a288a298e9694ffab7468524",
+      "test/native-host-executable.test.mjs": "35041cc1eb33d2b6d145893697a0babea283f678b4f7c317d9e7378e0b381bc4",
+      "test/native-lifecycle-audit.test.mjs": "82d5f2a08ecfe19c3959e2092e8925ad8426fc537c8f104be37c7e6446aea9d0",
+      "test/native-metadata-recovery-audit.test.mjs": "222e351ba4425c00468e17bd732e88c0d5418792a70c081debda73993b76956b",
+      "test/native-qualification.test.mjs": "4dd32875b90d78aec83e649e7712853cd660983d1b6bc81e925ae758962254de",
+      "test/native-rollout-reader.test.mjs": "9ea1ea300f6ede7c2a6aeea174c3acc5d74b7a0622579931924346ae568e778b",
+      "test/observability.test.mjs": "5a3df9d898d921d1f13354327db4707dc58632200cd202c65ea46b10a458cc66",
+      "test/predispatch-recovery.test.mjs": "00de3e089febf0444fb7f31ac21c76d232c6dfcf47ccd89ca24cd036abae3104",
+      "test/privacy.test.mjs": "80e7e28d0c3c9b4af0ec3dbf11683de0a79f0a01020b13f3144cea2b1e0b778d",
+      "test/qualification-recovery.test.mjs": "74944b24940582abdd1e9491313987387aa118e743bf12be972edf18d78ed379",
+      "test/request-error-classification.test.mjs": "addc1519e210142db90ae0d11d35d2a5f85b1383dd4a828df6eaca42a3e3b16b",
+      "test/residency-model-relay.test.mjs": "f92eb72decec78be6399774ab7fc6f9e89a2f42c8c3eb0e17681d87d0c6db5b2",
+      "test/root-epoch-operations.test.mjs": "e94aebde72ca33b1fea1ac32296349e83f8525bb441c11ed286332fa5b82ee47",
+      "test/router.test.mjs": "c46f039c8d39eea9f9aebdb8b055e344d571f138b191fe4b1b645755a42aee70",
+      "test/runtime-call-reconciliation.test.mjs": "ff76ce42c109c7c228ab86d4eca5090e5b1338de6ea9e41c6c57167a218621e2",
+      "test/runtime-cold-install.test.mjs": "9f6d788a8bfa6070109df099526f60c6cca73a41edb3d3714f112a8236ca431d",
+      "test/runtime-cold-upgrade.test.mjs": "a1f2c7fb4682a47ce5ff478eb0525c51ea67d0ee6d1ab93354f9fe15d321b85f",
+      "test/runtime-epoch-installed-entry.test.mjs": "7f5b2b928796348fca7790a225d5e69c7e172aebc90685d7b09231803b61946a",
+      "test/runtime-epoch.test.mjs": "60f08b64a2820b65df34e5a25c807dde3f9dc112eea6f5f923598a5501e60bd0",
+      "test/runtime-fixtures.mjs": "caa239c43871946370b6e9c8210fe04b340c1078d5bff7e1d72923f1a50803a5",
+      "test/runtime-hot-upgrade.v1-archive.mjs": "66376d813027aa0cf286a676ef9e6610e283dbd798ea01c4764e26ff38698a36",
+      "test/runtime-isolation.test.mjs": "b587f79f4f3aad10dac70ea3fb73d7cd1f38e162eee5670582d30ed2861c0f6f",
+      "test/runtime-launcher.test.mjs": "7da943eee39e5cbff21b5cd5d65ee723fa46ece9c91440f795f5bde87fafb0b5",
+      "test/runtime-lifecycle.test.mjs": "4d0ea472b63aabf20df898782192b06e006c7aa80935268db346b713be7af495",
+      "test/runtime-vault-recovery.v1-archive.mjs": "3d1eb50e2a7ec79544c4fb4fe3ee6be19b3d52774495ac7d6c00c66a9ba952c6",
+      "test/scoring-boundary.test.mjs": "10a1ca093f060da1dfc2ff565b33383d670a906bcddfa9ea02ee9bf7c5d1e8fb",
+      "test/scoring-evolution.test.mjs": "e0a75ac6ccddd543278073d9f2e7b3cafb461581b413f2fe402f3cc2d291bd26",
+      "test/smoke-evidence.test.mjs": "9317ca5225a79cdb4150344cee0630a1669cb39ea3bd6ee380b9b2a553258541",
+      "test/stage-closure.test.mjs": "5b5143cd1a493f7d4dc6bd9daec459c03fb88c4b83dff77645e69227a77f8364",
+      "test/state-sharing.test.mjs": "341bf5cd306ce8f18f1e00e669710e66edfc8ecd5eddab433f97c98b7860df00",
+      "test/stdio-tool.test.mjs": "6b3a6dd5ce8e068f16f81a78fa293cc1a9af82670de6dc2d8538fd97ef4e3b62",
+      "test/support/historical-qualification.mjs": "35ae6f07c85e9d0d01146ff24ad44d1efbd77df30934cb98216740cd65f27885",
+      "test/support/historical-runtime.mjs": "a6bc1653b508986be5a8c0307b0764679f2cabadf99bf40a40985abc4a9e88b2",
+      "test/support/legacy-mcp-validation-server.mjs": "bfe38a1cd4f83ee2580d3c0b84fb68f17b608178553733162822c3582bdb0c08",
+      "test/support/legacy-request-errors.mjs": "d865446d2d13ef68c79bec11235471e45187a45bf6d6d8a204a4de9f8bcae970",
+      "test/support/native-checkpoint-capture.mjs": "a8bdaae083703d7fe353f2b755de071d0b2a0e993d2a270382578c229bc8c5be",
+      "test/support/native-cold-hooks.mjs": "2ecd466ebc9ddee1698d50bb3d8597c8bcc9641003a970b2b4f966cdc6b38aca",
+      "test/tool-contract-compatibility.test.mjs": "59e1971d919d48d0d9d49a6ec0428448ee0ea0b41692af21134933b25a1c7bd7",
+      "test/windows-smoke-trace.test.mjs": "25361117a5470f562363655a1f5895a2b0cfa179e1ea4586376f35dcfd92e749"
+    }
+  },
+  "verification": {
+    "platform": "macOS",
+    "nodeVersion": "24.18.0",
+    "fullSuite": {
+      "command": "node scripts/test-isolated.mjs",
+      "exitCode": 0,
+      "counts": {
+        "tests": 677,
+        "pass": 667,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 10,
+        "todo": 0
+      },
+      "durationMs": 280635,
+      "legacyFixtureDigest": "9d23b8ae47f6d9bd6b388a33b75c7f94741546116efa29d3e33d9ebc72a1c9b2",
+      "skipped": [
+        {
+          "test": "Windows discovery prefers a native host over an earlier npm shim and retains shim fallback",
+          "reason": "Windows-only discovery test; skipped on macOS (process.platform !== win32)",
+          "rawReason": "SKIP"
+        },
+        {
+          "test": "exact Windows hook commands run through cmd.exe and Windows PowerShell",
+          "reason": "Windows shell integration test"
+        },
+        {
+          "test": "native CLI first registration replaces the isolated marketplace and restores every legacy cache path",
+          "reason": "Requires explicit native CLI and exact isolated v1 fixture"
+        },
+        {
+          "test": "actual native cold resume resolves the new MCP configuration for the same persisted task",
+          "reason": "Requires an explicit native CLI; this test does not run Hooks or model inference"
+        },
+        {
+          "test": "actual native parent and original child Hook cold recovery",
+          "reason": "Opt in with approved native execution materials or captured owned parent/child evidence"
+        },
+        {
+          "test": "real captured native inputs support encrypted checkpoint and same-child continuation parsing",
+          "reason": "Requires captured approved native queue and explicit recovery evidence"
+        },
+        {
+          "test": "exact installed B, C1 and C2 qualify through real A/B writers; altered packages stay rejected",
+          "reason": "Set ADAPTIVE_ROUTER_INSTALLED_EPOCH_FIXTURES to isolated copies of the three exact retained packages"
+        },
+        {
+          "test": "exact approved observability entry qualifies while changed entry or package bytes stay rejected",
+          "reason": "Requires an isolated copy of the exact approved observability package"
+        },
+        {
+          "test": "exact installed diagnostics patch qualifies for receipt prevention; modified package cannot inherit admission",
+          "reason": "Requires an isolated copy of the exact installed diagnostics patch"
+        },
+        {
+          "test": "Windows smoke recognizes completed legacy and native MCP trace events only",
+          "reason": "native PowerShell gate adapter"
+        }
+      ]
+    },
+    "validate": {
+      "command": "node scripts/validate.mjs",
+      "exitCode": 0
+    },
+    "offlineEvaluation": {
+      "kind": "offline-policy-conformance",
+      "measuresModelQuality": false,
+      "cases": 232,
+      "bilingualRouteCases": 30,
+      "scoreBandCases": 202,
+      "routeAgreement": 1,
+      "riskFloorRecall": 1,
+      "negativeControlMutations": 0,
+      "positiveControlMisses": 0,
+      "mismatches": []
+    },
+    "targetedFixRegression": {
+      "passed": 64,
+      "failed": 0,
+      "skipped": 0
+    },
+    "independentReview": {
+      "initialScopeFiles": 59,
+      "initialResult": "One blocking P2 classification finding; original review preserved.",
+      "findingResolution": "Fixed in source and independently verified; not installed.",
+      "boundaryChecks": [
+        {
+          "name": "unmarked SyntaxError is internal; explicit validation still input",
+          "status": "passed",
+          "publicMessage": {
+            "code": "INTERNAL_ERROR",
+            "message": "Router internal operation failed.",
+            "hint": "An unexpected internal error occurred; inspect the correlated diagnostic event."
+          }
+        },
+        {
+          "name": "valid MCP request with private generation corruption fails internally",
+          "status": "passed",
+          "validControl": true,
+          "error": {
+            "code": "INTERNAL_ERROR",
+            "message": "Router internal operation failed.",
+            "hint": "An unexpected internal error occurred; inspect the correlated diagnostic event."
+          },
+          "observation": {
+            "operation": "failed",
+            "errorCode": "INTERNAL_ERROR",
+            "errorCategory": "internal",
+            "identitySource": "unavailable",
+            "runtimeState": "unknown"
+          }
+        },
+        {
+          "name": "external malformed JSON keeps protocol parse error and typed hook input rejection",
+          "status": "passed",
+          "mcp": {
+            "code": -32700,
+            "message": "Parse error"
+          },
+          "bridge": {
+            "exitCode": 1,
+            "operation": "rejected",
+            "errorCode": "INVALID_INPUT",
+            "errorCategory": "input_validation",
+            "identitySource": "unavailable",
+            "runtimeState": "unknown"
+          },
+          "directHook": {
+            "exitCode": 0,
+            "operation": "failed",
+            "errorCode": "INVALID_INPUT",
+            "errorCategory": "input_validation",
+            "identitySource": "unavailable",
+            "runtimeState": "unknown"
+          },
+          "launcherHook": {
+            "exitCode": 2,
+            "operation": "rejected",
+            "errorCode": "INVALID_INPUT",
+            "errorCategory": "input_validation",
+            "identitySource": "unavailable",
+            "runtimeState": "unknown"
+          }
+        },
+        {
+          "name": "real Hook Pre schema rejection settles exact receipt only; duplicates stay pending",
+          "status": "passed",
+          "uniqueMatchedReceipt": "rejected",
+          "unrelatedReceipt": "pending",
+          "duplicateReceipts": "pending",
+          "businessUnchanged": true,
+          "observation": {
+            "operation": "rejected",
+            "errorCode": "INVALID_INPUT",
+            "errorCategory": "input_validation",
+            "identitySource": "native_hook",
+            "runtimeState": "unknown"
+          }
+        },
+        {
+          "name": "historical whitelist remains exact legacy byte authority",
+          "status": "passed",
+          "legacyErrorsSha256": "d865446d2d13ef68c79bec11235471e45187a45bf6d6d8a204a4de9f8bcae970",
+          "newErrorsSha256": "53ac051b24205e61724d07fe8e9c759c19b0fdbb1ef4b837ca9555336f14e465",
+          "authorityUnchanged": true
+        },
+        {
+          "name": "original frozen validator still authorizes exact recovery",
+          "status": "passed",
+          "legacyServer": true,
+          "newErrorBytes": false,
+          "eligible": 1,
+          "unresolvedReasons": [],
+          "receiptState": "rejected",
+          "businessOutcomes": 0
+        },
+        {
+          "name": "new errors cannot impersonate frozen legacy validator",
+          "status": "passed",
+          "legacyServer": true,
+          "newErrorBytes": true,
+          "eligible": 0,
+          "unresolvedReasons": [
+            "Native call recovery blocked: unreviewed schema dependency"
+          ],
+          "receiptState": "pending",
+          "businessOutcomes": 0
+        }
+      ],
+      "targetedRegression": {
+        "passed": 49,
+        "failed": 0,
+        "skipped": 0
+      },
+      "temporaryFixturesCleaned": true,
+      "sourceFilesStableAcrossBoundaryChecks": true
+    },
+    "redGreenHistory": {
+      "beforeFix": {
+        "passed": 3,
+        "failed": 3,
+        "expectedFailure": true
+      },
+      "firstImplementationAttempt": {
+        "passed": 41,
+        "failed": 23,
+        "status": "retained_failed_attempt"
+      },
+      "correctedImplementation": {
+        "passed": 64,
+        "failed": 0
+      }
+    },
+    "hostedCI": "not_yet_run_for_this_source_delivery"
+  },
+  "acceptanceBoundaries": {
+    "installedMacOSPackage": "Previously accepted at the exact installed package digest; original private acceptance retained.",
+    "newClassificationFixLoggedInAcceptance": "not_run_not_installed",
+    "nativeWindows": "not_run_host_unavailable",
+    "rootModelManagement": "Codex native host only; Router never changes the root model."
+  },
+  "retainedLimitations": [
+    "One old ambiguous delegation lacks authoritative no-child evidence; its reservation remains.",
+    "One original historical transcript prefix has no matching retained source.",
+    "Thirteen early routes predate observation coverage.",
+    "Legacy raw transcript qualification failure remains historical evidence.",
+    "One old auxiliary acceptance artifact has a retained digest and command receipt, but its complete original bytes are unavailable."
+  ],
+  "artifactDigests": [
+    {
+      "kind": "source-full-tests",
+      "sha256": "d254a97f54a1706b41ea85fe243e1f23f9221cda26700209955deefb4d131ad9",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "source-full-tests-result",
+      "sha256": "8188b7d2b7f9e90f5d977cd589bdfe46be4bb8ad930f7a5df17420473b1f84be",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "targeted-fix-tests",
+      "sha256": "3e2f3f84097e798d7704520e5a8000b1de4880d5a2326c2c304c2301cd1bf15a",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "validate",
+      "sha256": "e305ec71b46bc6ffccb8296276e606238b63c2f21505097f5c614c7193277c9f",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "eval",
+      "sha256": "4bee6e63f199f906e87e7b9b1a11600dee0728e86b5ff2751657f0e0e575dcaa",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "independent-boundary-probes",
+      "sha256": "9baeef0a0438cab795c23055fcdf961118709077ee41bc0c7469a622df523098",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "independent-targeted-tests",
+      "sha256": "e09898bb51bf23a5ec6e2c389aa8563c64a9acd26544c5c5fa3ea82947a05b6c",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "independent-dynamic-review",
+      "sha256": "b502376238acda8da4ee4edc2b8fbf6dc7197d8986a7e92816c6eb42fe595505",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "initial-independent-review",
+      "sha256": "f49b261413a40ebe7d82099bd26ead936d9e5b0cbe3720a3dc1566de7a23355a",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "installed-package-acceptance",
+      "sha256": "e2b7e677f5111ea095ebb28942e83d3ffd50963cf4ba6d88d3d32c79da21db9c",
+      "availability": "retained privately; raw host paths and identities omitted"
+    }
+  ]
+}

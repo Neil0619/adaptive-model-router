@@ -19,6 +19,11 @@ async function fixture(run) {
   }); } finally { await project.cleanup(); }
 }
 
+test("unexpected programming defects are not reported as storage-unavailable fallback", async () => {
+  const defect = new TypeError("synthetic internal defect");
+  await assert.rejects(routeStage(routeInput(), { store: { context() { throw defect; } } }), (error) => error === defect);
+});
+
 test("legacy score bands retain their historical meaning", () => {
   const base = {
     category: "general",

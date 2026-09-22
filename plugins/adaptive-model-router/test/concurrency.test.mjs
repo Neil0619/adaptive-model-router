@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,7 @@ import {
 } from "../scripts/lib/delegation-gate.mjs";
 import { listPolicyProposals } from "../scripts/lib/learning.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
-import { CATALOG, routeInput, temporaryProject } from "./fixtures.mjs";
+import { CATALOG, HOST_CAPABILITIES, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
 
 const worker = join(dirname(fileURLToPath(import.meta.url)), "concurrency-worker.mjs");
 
@@ -159,6 +159,45 @@ test("concurrent Stop and verified outcome writers leave one consistent terminal
     if (previousHome == null) delete process.env.ADAPTIVE_ROUTER_HOME;
     else process.env.ADAPTIVE_ROUTER_HOME = previousHome;
     await project.cleanup();
+  }
+});
+
+test("automatic fallback decisions atomically respect a competing delegation after their initial idle read", async () => {
+  for (const mode of ["pending-winner", "failed-winner", "hook-fallback"]) {
+    const project = await temporaryProject("adaptive route decision race ");
+    try { await withRouterEnvironment(project, async () => {
+      const store = new RouterStore();
+      try {
+        const contextId = "shared", context = store.context({ cwd: project.root, contextId });
+        store.setOverride(context, { scope: "session", model: "gpt-6-astra", effort: "medium" });
+        store.setOverride(context, { scope: "once", model: "gpt-6-astra", effort: "high" });
+        const active = store.activeDelegationRouteId.bind(store);
+        let winner, readOccupiedUnderWriteLock = false;
+        const compete = () => {
+          const result = spawnSync(process.execPath, [worker, mode === "failed-winner" ? "route-outcome" : "route-only",
+            project.root, contextId, "0"], { encoding: "utf8", env: process.env });
+          assert.equal(result.status, 0, "Independent winner process completed");
+          const value = JSON.parse(result.stdout); winner = value.route || value;
+          assert.equal(winner.action, "delegate");
+        };
+        store.activeDelegationRouteId = ctx => {
+          const result = active(ctx);
+          if (result && store.db.isTransaction) readOccupiedUnderWriteLock = true;
+          if (!winner && mode !== "hook-fallback") compete();
+          return result;
+        };
+        const route = await routeStage({ goal: "Rename generated fixture group 49 using the fixed mapping.", phase: "implementation",
+          evidence: { workProduct: true, mechanical: true, requirementsSettled: true, batchSize: 50 }, contextId,
+          hostCapabilities: HOST_CAPABILITIES }, { catalog: CATALOG, cwd: project.root, store,
+          ...(mode === "hook-fallback" ? { lifecycleHookProbe: async () => { compete(); return { ready: false, reasonCode: "HOOK_TRUST_REQUIRED" }; } } : {}) });
+        assert.equal(route.action, "busy", mode);
+        assert.equal(route.blockingRouteId, winner.routeId);
+        assert.equal(readOccupiedUnderWriteLock, true, "Busy ownership is rechecked under the route commit write lock");
+        assert.equal(store.db.prepare("SELECT count(*) n FROM routes").get().n, 1, "No late ask_user/continue history is inserted");
+        assert.equal(store.db.prepare("SELECT count(*) n FROM overrides WHERE scope='once'").get().n, 0);
+        assert.equal(active(context), winner.routeId, "The original reservation is retained");
+      } finally { store.close(); }
+    }); } finally { await project.cleanup(); }
   }
 });
 

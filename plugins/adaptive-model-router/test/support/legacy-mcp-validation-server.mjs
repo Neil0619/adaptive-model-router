@@ -8,7 +8,7 @@ import { compatibleToolDefinitions } from "./lib/tool-contract-compatibility.mjs
 import { assertSchema } from "./lib/schema.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
 import { pluginRootFrom, resolveRuntime, runtimeModuleUrl } from "./lib/runtime-loader.mjs";
-import { beginMcpDispatch, endRuntimeDispatch, rejectMcpValidationReceipt } from "./lib/runtime-dispatch.mjs";
+import { beginMcpDispatch, endRuntimeDispatch } from "./lib/runtime-dispatch.mjs";
 import { createRuntimeLifecycleProbe, inspectRuntimeQualification } from "./lib/runtime-lifecycle.mjs";
 import { acquireRuntimeInvocation, runtimeGeneration, runtimeTask, finishRuntimeInvocation, settleRuntimeMigration } from "./lib/runtime-isolation.mjs";
 
@@ -101,24 +101,8 @@ async function handle(message) {
       ...observationIdentity({ contextId: message.params?.arguments?.contextId }) });
     try {
       const definition = TOOL_DEFINITIONS.find((tool) => tool.name === message.params?.name);
-      try {
-        if (!definition) throw requestError("INVALID_INPUT", "Unknown Router tool.");
-        assertSchema(definition.inputSchema, message.params?.arguments || {}, `${definition.name} input`);
-      } catch (error) {
-        if (error.code === "INVALID_INPUT") {
-          try {
-            const rejected = rejectMcpValidationReceipt(message.params?.name, message.params?.arguments, { shellRoot: pluginRoot });
-            if (rejected) {
-              observation.bind({ projectKey: rejected.context.projectId, contextKey: rejected.context.contextKey,
-                identitySource: "native_hook", receiptKey: rejected.receiptKey, shellRuntimeDigest: rejected.shellDigest });
-              if (rejected.cleanupError) observation.detail({ error: rejected.cleanupError, operation: "failed" });
-            }
-          } catch (settlementError) {
-            observation.detail({ error: settlementError, operation: "failed", lifecycle: "unknown" });
-          }
-        }
-        throw error; // Preserve the original rejection, including its schema hint.
-      }
+      if (!definition) throw requestError("INVALID_INPUT", "Unknown Router tool.");
+      assertSchema(definition.inputSchema, message.params?.arguments || {}, `${definition.name} input`);
       dispatch = beginMcpDispatch(message.params?.name, message.params?.arguments || {}, { shellRoot: pluginRoot });
       if (message.params?.name === "route_stage") dispatch = await settleCandidate(dispatch, message.params.arguments);
       const runtime = { resolution: dispatch.selected, service: await importRuntime(dispatch.selected) };

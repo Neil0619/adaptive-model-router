@@ -1,3 +1,5 @@
+import { beginObservation, observationIdentity, clearProjectObservations } from "./observability.mjs";
+import { requestError } from "./request-errors.mjs";
 import { DEFAULT_SCORING_PROFILE, EFFORT_ORDER } from "./constants.mjs";
 import { OUTCOME_INPUT_SCHEMA, ROUTE_INPUT_SCHEMA } from "./contracts.mjs";
 import { RouterStore } from "./database.mjs";
@@ -74,7 +76,7 @@ const CURRENT_TOOL_DEFINITIONS = [
       contextId: CONTEXT, expectedDigest: { type: "string", pattern: "^[a-f0-9]{64}$" }, confirm: { type: "string", enum: ["ROLLBACK_MODEL_POLICY"] } } } },
   {
     name: "route_stage",
-    description: "Choose whether to continue locally, ask the user, report a busy Router gate, or delegate one bounded stage to an available model and effort.",
+    description: "Choose whether to continue, ask, report busy, or delegate a bounded stage. Retry a verified failed stage with its latest previousRouteId, unchanged stageId and matching failureType. An independent new issue uses ordinary new-stage evidence without verificationFailed. Rejected requests and busy responses are not failed outcomes.",
     inputSchema: ROUTE_INPUT_SCHEMA,
   },
   {
@@ -275,6 +277,9 @@ const CURRENT_TOOL_DEFINITIONS = [
 
 export const TOOL_DEFINITIONS = await toolDefinitionsForShell(CURRENT_TOOL_DEFINITIONS, import.meta.url);
 const TOOLS = new Map(CURRENT_TOOL_DEFINITIONS.map((tool) => [tool.name, tool]));
+// Internal capability query uses executable schemas, independent of the
+// intentionally frozen discovery view exported to an older shell.
+export const executionToolDefinition = (name) => TOOLS.get(name);
 
 function contextFor(store, args, cwd) {
   return store.context({ cwd, contextId: args.contextId });
@@ -289,7 +294,7 @@ function configure(store, args, cwd) {
   );
   if (!Object.keys(changes).length) throw new Error("configure_router requires at least one setting");
   if (Object.hasOwn(changes, "autoActivate") && args.scope !== "global") {
-    throw new Error("autoActivate is a global setting");
+    throw requestError("INVALID_INPUT", "autoActivate is a global setting.");
   }
   return store.configure(context, changes, args.scope);
 }
@@ -404,9 +409,25 @@ async function readStageParent(contextId) {
   });
 }
 
-export async function callRouterTool(name, args, { store, cwd = process.cwd(), routeOptions = null, qualificationOptions = {}, recoveryOptions = {}, stageOptions = {} } = {}) {
+export async function callRouterTool(name, args, options = {}) {
+  const { store, cwd = process.cwd(), observation: outerObservation } = options;
+  const observation = outerObservation || beginObservation({ component: "service", tool: name, transport: "direct",
+    ...observationIdentity({ store, cwd, contextId: args?.contextId }),
+    runtimeDigest: store?.runtimeInvocation?.generation, invocationId: store?.runtimeInvocation?.id,
+  }, { mainPath: store?.path });
+  try {
+    const result = await executeRouterTool(name, args, options);
+    if (!outerObservation) observation.finish({ result });
+    return result;
+  } catch (error) {
+    if (!outerObservation) observation.finish({ error });
+    throw error;
+  }
+}
+
+async function executeRouterTool(name, args, { store, cwd = process.cwd(), routeOptions = null, qualificationOptions = {}, recoveryOptions = {}, stageOptions = {} } = {}) {
   const definition = TOOLS.get(name);
-  if (!definition) throw new Error(`unknown tool: ${name}`);
+  if (!definition) throw requestError("INVALID_INPUT", "Unknown Router tool.");
   assertSchema(definition.inputSchema, args, `${name} input`);
   if (name === "manage_stage") {
     const readOnly = ["read_disposition", "read_operations", "read_checkpoints"].includes(args.action);
@@ -493,7 +514,11 @@ export async function callRouterTool(name, args, { store, cwd = process.cwd(), r
     const context = contextFor(store, args, cwd);
     return { ...store.diagnose(context), hostCompatibility: hostCompatibilityStatus(store, context) };
   }
-  if (name === "clear_project_data") return store.clearProject(contextFor(store, args, cwd));
+  if (name === "clear_project_data") {
+    const context = contextFor(store, args, cwd);
+    const result = store.clearProject(context);
+    return { ...result, observations: clearProjectObservations(context.projectId, store.path) };
+  }
   throw new Error(`unknown tool: ${name}`);
 }
 
