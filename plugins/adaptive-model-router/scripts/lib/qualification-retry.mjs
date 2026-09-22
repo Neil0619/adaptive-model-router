@@ -5,6 +5,7 @@ import { NATIVE_LIFECYCLE_CLI_VERSIONS } from "./native-lifecycle-audit.mjs";
 import { HOST_LIFECYCLE_CONTRACT, HOOK_DISPATCH_CONTRACT } from "./host-compatibility.mjs";
 import { recoveryRecordIntact } from "./native-recovery-receipt.mjs";
 import { isMetadataContractAudit } from "./native-metadata-recovery-audit.mjs";
+import { historicalQualificationRecoveryBasis, historicalQualificationAuditCurrent, recoverHistoricalQualification } from "./historical-qualification-recovery.mjs";
 
 const DURATION_MS = 60 * 60 * 1000;
 const digest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
@@ -123,21 +124,24 @@ function completedFailedBasis(db, context, qualification) {
   return payloadHash({ qualification, route, outcome, attempt });
 }
 
-function authorizationEvidence(contextDigest, basisDigest, binding, audit = null, renewedFrom = null) {
+function authorizationEvidence(contextDigest, basisDigest, binding, audit = null, renewedFrom = null, kind = "completed-failed-noop") {
   return payloadHash({ contextDigest, basisDigest, binding,
-    ...(audit ? { kind: "completed-failed-noop", rawAuditDigest: audit } : {}),
+    ...(audit ? { kind, rawAuditDigest: audit } : {}),
     ...(renewedFrom ? { renewedFrom } : {}) });
 }
 
 function authorizedBasis(db, context, qualification, authorization) {
+  if (authorization?.kind === "historical-no-work-recovery" && digest(authorization.rawAuditDigest))
+    return historicalQualificationRecoveryBasis(db, context, qualification);
   return authorization?.kind === "completed-failed-noop" && digest(authorization.rawAuditDigest)
     ? completedFailedBasis(db, context, qualification) : recoveredBasis(db, context, qualification);
 }
 
 function authorizationEvidenceMatches(value) {
-  return (value.renewedFrom === undefined || digest(value.renewedFrom))
+  return [undefined, "completed-failed-noop", "historical-no-work-recovery"].includes(value.kind)
+    && (value.renewedFrom === undefined || digest(value.renewedFrom))
     && value.evidenceDigest === authorizationEvidence(value.contextDigest, value.basisDigest, value.binding,
-      value.kind === "completed-failed-noop" ? value.rawAuditDigest : null, value.renewedFrom);
+      value.kind ? value.rawAuditDigest : null, value.renewedFrom, value.kind);
 }
 
 function renewableAuthorization(value, { routeId, basisDigest, contextDigest, binding }, now = Date.now()) {
@@ -195,12 +199,19 @@ export async function authorizeRequalification(input, { store, cwd, inspectBindi
   const qualification = read(store.db, qualificationKey(context));
   if (qualification?.routeId !== input.routeId) return denied();
   const legacyBasis = recoveredBasis(store.db, context, qualification);
-  const basisDigest = legacyBasis || completedFailedBasis(store.db, context, qualification);
+  const historicalBasis = historicalQualificationRecoveryBasis(store.db, context, qualification);
+  const basisDigest = legacyBasis || historicalBasis || completedFailedBasis(store.db, context, qualification);
   if (!basisDigest) return denied();
-  let rawAuditDigest = null;
+  let rawAuditDigest = null, historicalAudit = null;
   if (legacyBasis) {
     const { readNativeRecoveryReceipt } = await import("./delegation-recovery.mjs");
     if (!readNativeRecoveryReceipt(store.db, context, input.routeId)) return denied();
+  } else if (historicalBasis) {
+    const audited = await recoverHistoricalQualification({ contextId: input.contextId, routeId: input.routeId },
+      { store, cwd, ...noopAuditOptions, verifyRetainedNative: true });
+    if (audited.status !== "reconciled_failure" || !digest(audited.rawAuditDigest)) return denied();
+    rawAuditDigest = audited.rawAuditDigest;
+    historicalAudit = audited;
   } else {
     try {
       const { auditFailedQualificationNoop } = await import("./lifecycle-qualification.mjs");
@@ -217,7 +228,9 @@ export async function authorizeRequalification(input, { store, cwd, inspectBindi
   const contextDigest = payloadHash(input.contextId);
   const renewal = existing && renewableAuthorization(existing, { routeId: input.routeId, basisDigest, contextDigest, binding });
   const renewedFrom = renewal ? payloadHash(existing) : existing?.renewedFrom;
-  const evidenceDigest = authorizationEvidence(contextDigest, basisDigest, binding, rawAuditDigest, renewedFrom);
+  const auditKind = historicalBasis ? "historical-no-work-recovery" : "completed-failed-noop";
+  const evidenceDigest = authorizationEvidence(contextDigest, basisDigest, binding, rawAuditDigest, renewedFrom, auditKind);
+  if (historicalAudit && !historicalQualificationAuditCurrent(store, historicalAudit)) return denied();
   if (existing && !renewal) return existing.state === "authorized" && existing.evidenceDigest === evidenceDigest
     && isFresh(existing) && (!input.apply || input.expectedEvidenceDigest === evidenceDigest)
     ? { status: "authorized", evidenceDigest, idempotent: true, ordinaryDelegationEnabled: false } : denied();
@@ -227,7 +240,8 @@ export async function authorizeRequalification(input, { store, cwd, inspectBindi
   return store.transaction(() => {
     if (store.db.prepare("SELECT value FROM meta WHERE key=?").get(retryKey(input.routeId))?.value !== existingRaw
       || store.activeDelegationRouteId(context)
-      || (legacyBasis ? recoveredBasis : completedFailedBasis)(store.db, context, read(store.db, qualificationKey(context))) !== basisDigest) return denied();
+      || (historicalAudit && !historicalQualificationAuditCurrent(store, historicalAudit))
+      || (legacyBasis ? recoveredBasis : historicalBasis ? historicalQualificationRecoveryBasis : completedFailedBasis)(store.db, context, read(store.db, qualificationKey(context))) !== basisDigest) return denied();
     // An unused grant made stale by expiry or changed source/configuration may
     // be renewed only by this explicit command,
     // after the full source audit above. Preserve it exactly and bind the new
@@ -242,7 +256,7 @@ export async function authorizeRequalification(input, { store, cwd, inspectBindi
     const expiresAt = new Date(Date.parse(issuedAt) + DURATION_MS).toISOString();
     const authority = { schema: 1, state: "authorized", priorRouteId: input.routeId, contextDigest,
       basisDigest, binding, evidenceDigest, issuedAt, expiresAt,
-      ...(rawAuditDigest ? { kind: "completed-failed-noop", rawAuditDigest } : {}),
+      ...(rawAuditDigest ? { kind: auditKind, rawAuditDigest } : {}),
       ...(renewal ? { renewedFrom } : {}) };
     store.db.prepare("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
       .run(retryKey(input.routeId), canonicalJson(authority));

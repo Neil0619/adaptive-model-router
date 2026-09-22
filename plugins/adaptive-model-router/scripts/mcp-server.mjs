@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import { createInterface } from "node:readline";
+import { beginObservation, observationIdentity } from "./lib/observability.mjs";
+import { requestError, publicRequestError } from "./lib/request-errors.mjs";
 import { ROUTER_VERSION } from "./lib/constants.mjs";
-import { sanitizedError, writeJsonLine } from "./lib/io.mjs";
+import { writeJsonLine } from "./lib/io.mjs";
 import { compatibleToolDefinitions } from "./lib/tool-contract-compatibility.mjs";
 import { assertSchema } from "./lib/schema.mjs";
 import { assertRuntime } from "./lib/runtime.mjs";
 import { pluginRootFrom, resolveRuntime, runtimeModuleUrl } from "./lib/runtime-loader.mjs";
-import { beginMcpDispatch, endRuntimeDispatch } from "./lib/runtime-dispatch.mjs";
+import { beginMcpDispatch, endRuntimeDispatch, rejectMcpValidationReceipt } from "./lib/runtime-dispatch.mjs";
 import { createRuntimeLifecycleProbe, inspectRuntimeQualification } from "./lib/runtime-lifecycle.mjs";
 import { acquireRuntimeInvocation, runtimeGeneration, runtimeTask, finishRuntimeInvocation, settleRuntimeMigration } from "./lib/runtime-isolation.mjs";
 
@@ -94,20 +96,52 @@ async function handle(message) {
   }
   if (message.method === "tools/call") {
     let store, dispatch;
+    const observation = beginObservation({ component: "mcp", transport: "mcp", tool: message.params?.name,
+      callId: message.params?._meta?.["adaptive-model-router/observation-call-id"],
+      ...observationIdentity({ contextId: message.params?.arguments?.contextId }) });
     try {
       const definition = TOOL_DEFINITIONS.find((tool) => tool.name === message.params?.name);
-      if (!definition) throw new Error("Unknown Router tool");
-      assertSchema(definition.inputSchema, message.params?.arguments || {}, `${definition.name} input`);
+      try {
+        if (!definition) throw requestError("INVALID_INPUT", "Unknown Router tool.");
+        assertSchema(definition.inputSchema, message.params?.arguments || {}, `${definition.name} input`);
+      } catch (error) {
+        if (error.code === "INVALID_INPUT") {
+          try {
+            const rejected = rejectMcpValidationReceipt(message.params?.name, message.params?.arguments, { shellRoot: pluginRoot });
+            if (rejected) {
+              observation.bind({ projectKey: rejected.context.projectId, contextKey: rejected.context.contextKey,
+                identitySource: "native_hook", receiptKey: rejected.receiptKey, shellRuntimeDigest: rejected.shellDigest });
+              if (rejected.cleanupError) observation.detail({ error: rejected.cleanupError, operation: "failed" });
+            }
+          } catch (settlementError) {
+            observation.detail({ error: settlementError, operation: "failed", lifecycle: "unknown" });
+          }
+        }
+        throw error; // Preserve the original rejection, including its schema hint.
+      }
       dispatch = beginMcpDispatch(message.params?.name, message.params?.arguments || {}, { shellRoot: pluginRoot });
       if (message.params?.name === "route_stage") dispatch = await settleCandidate(dispatch, message.params.arguments);
       const runtime = { resolution: dispatch.selected, service: await importRuntime(dispatch.selected) };
       store = runtime.service.createServiceStore({ runtimeInvocation: dispatch.invocation });
+      observation.bind({ ...observationIdentity({ store, context: dispatch.context, trusted: true }),
+        invocationId: dispatch.invocation.id, runtimeDigest: dispatch.selected.digest,
+        runtimeState: "selected",
+        runtimeVersion: dispatch.selected.descriptor.runtimeVersion,
+        shellRuntimeDigest: dispatch.shellDigest, stageOwnerRuntimeDigest: dispatch.stageOwnerDigest,
+        receiptKey: dispatch.receiptKey });
       const lifecycleHookProbe = createRuntimeLifecycleProbe(dispatch.selected, pluginRoot);
+      const executionDefinition = runtime.service.executionToolDefinition?.(message.params.name)
+        || runtime.service.TOOL_DEFINITIONS.find((tool) => tool.name === message.params.name);
+      if (message.params?.arguments?.verificationEvidence !== undefined
+        && !executionDefinition?.inputSchema?.properties?.verificationEvidence)
+        throw requestError("VERIFICATION_EVIDENCE_UNSUPPORTED", "The selected retained runtime cannot store verificationEvidence.");
+      observation.bind({ runtimeState: "entered" });
       let result = await runtime.service.callRouterTool(
         message.params?.name,
         message.params?.arguments || {},
         {
           store,
+          observation,
           routeOptions: {
             enforceLifecycleHooks: true,
             pluginRoot,
@@ -130,6 +164,7 @@ async function handle(message) {
           contentDigest: runtime.resolution.digest, shellProtocolVersion: 2, taskIsolation: true,
           migrationPending: Boolean(runtimeTask(store.db, dispatch.context)?.candidate) } };
       }
+      observation.finish({ result });
       send({
         jsonrpc: "2.0",
         id: message.id,
@@ -140,14 +175,17 @@ async function handle(message) {
         },
       });
     } catch (error) {
+      observation.finish({ error });
       send({
         jsonrpc: "2.0",
         id: message.id,
-        result: { content: [{ type: "text", text: sanitizedError(error) }], isError: true },
+        result: { content: [{ type: "text", text: publicRequestError(error) }], isError: true },
       });
     } finally {
-      store?.close();
-      endRuntimeDispatch(dispatch);
+      // Cleanup failures are additional evidence; never replace the response
+      // or pretend that a failed operation left no completed invocation.
+      try { store?.close(); } catch (error) { observation.detail({ error, operation: "failed" }); }
+      try { endRuntimeDispatch(dispatch); } catch (error) { observation.detail({ error, operation: "failed", lifecycle: "unknown" }); }
     }
     return;
   }

@@ -43,25 +43,17 @@ if (!supportsNodeRuntime(process.versions.node)) {
   process.exit(Number.isInteger(relaunched.status) ? relaunched.status : 2);
 }
 const ownRoot = pluginRootFrom(import.meta.url);
+const hookTarget = /[\\/]scripts[\\/]hook\.mjs$/u.test(target);
+const launchTransport = hookTarget ? "native-hook"
+  : /[\\/]scripts[\\/]mcp-server\.mjs$/u.test(target) ? "mcp" : "direct";
 let launchEnv;
 let endRuntimeDispatch = () => {};
 let resolvedTarget = target;
 let selectedDispatch = null;
 let hookInput = null;
 let nativeHookInput = null;
+let observation = null;
 try {
-  const hookTarget = /[\\/]scripts[\\/]hook\.mjs$/u.test(target);
-  if (hookTarget) {
-    const chunks = [];
-    let bytes = 0;
-    for await (const chunk of process.stdin) {
-      bytes += chunk.length;
-      if (bytes > 1048576) throw new Error("Hook input exceeds the bounded read limit");
-      chunks.push(chunk);
-    }
-    hookInput = Buffer.concat(chunks);
-    nativeHookInput = JSON.parse(hookInput.toString("utf8"));
-  }
   const hostConfig = join(ownRoot, "runtime-host.json");
   if (existsSync(hostConfig)) {
     const host = JSON.parse(readFileSync(hostConfig, "utf8"));
@@ -73,19 +65,48 @@ try {
   launchEnv = environmentWithPluginData(import.meta.url);
   // Dispatcher and launched runtime use the same resolved persistent domain.
   Object.assign(process.env, launchEnv);
+  const { beginObservation, observationIdentity } = await import("./lib/observability.mjs");
+  if (hookTarget) {
+    const { parseRequestJson } = await import("./lib/request-json.mjs");
+    observation = beginObservation({ component: "launcher", transport: "native-hook" }, { requireExistingMain: true });
+    const chunks = [];
+    let bytes = 0;
+    for await (const chunk of process.stdin) {
+      bytes += chunk.length;
+      if (bytes > 1048576) throw Object.assign(new Error("Hook input exceeds the bounded read limit"), { code: "INVALID_INPUT" });
+      chunks.push(chunk);
+    }
+    hookInput = Buffer.concat(chunks);
+    nativeHookInput = parseRequestJson(hookInput.toString("utf8"));
+    observation.bind({ hookEvent: nativeHookInput?.hook_event_name,
+      ...observationIdentity({ contextId: nativeHookInput?.session_id, input: nativeHookInput }) });
+  }
   const currentRoot = launchEnv.PLUGIN_ROOT ? resolve(launchEnv.PLUGIN_ROOT) : ownRoot;
   if (hookTarget) {
     if (realpathSync(target) !== realpathSync(resolve(currentRoot, "scripts/hook.mjs"))) throw new Error("Hook target differs from the stable shell");
     const dispatcher = await import("./lib/runtime-dispatch.mjs"); endRuntimeDispatch = dispatcher.endRuntimeDispatch;
     selectedDispatch = dispatcher.beginHookDispatch(nativeHookInput, { env: launchEnv, shellRoot: currentRoot });
-    if (selectedDispatch.unmanaged) process.exit(0);
+    if (selectedDispatch.unmanaged) { observation?.finish({ operation: "succeeded" }); process.exit(0); }
+    observation.bind({ ...observationIdentity({ context: selectedDispatch.context, input: nativeHookInput, trusted: true }),
+      runtimeDigest: selectedDispatch.selected.digest, runtimeVersion: selectedDispatch.selected.descriptor.runtimeVersion,
+      shellRuntimeDigest: selectedDispatch.shellDigest, stageOwnerRuntimeDigest: selectedDispatch.stageOwnerDigest,
+      invocationId: selectedDispatch.invocation.id, receiptKey: selectedDispatch.receiptKey });
     resolvedTarget = runtimeEntrypoint(selectedDispatch.selected, "hook");
     launchEnv.ADAPTIVE_ROUTER_INVOCATION_ID = selectedDispatch.invocation.id;
+    launchEnv.ADAPTIVE_ROUTER_OBSERVATION_CALL_ID = observation.callId;
     // Qualification still validates the actual stable, trusted host entry.
     launchEnv.ADAPTIVE_ROUTER_SHELL_ROOT = currentRoot;
     if (launchEnv.ADAPTIVE_ROUTER_RUNTIME_TRACE === "1") process.stderr.write(`Adaptive Model Router runtime=${selectedDispatch.selected.descriptor.runtimeVersion} digest=${selectedDispatch.selected.digest}\n`);
   }
 } catch (error) {
+  if (!observation) {
+    try {
+      Object.assign(process.env, environmentWithPluginData(import.meta.url));
+      const { beginObservation } = await import("./lib/observability.mjs");
+      observation = beginObservation({ component: "launcher", transport: launchTransport }, { requireExistingMain: true });
+    } catch { /* The fixed stderr diagnostic remains available on old Node. */ }
+  }
+  observation?.finish({ error });
   process.stderr.write(`Adaptive Model Router runtime dispatch refused: ${error.message}\n`);
   // Failure only closes Router-owned operations. An ordinary root command must
   // remain usable to diagnose/repair Router. No command coverage or completion
@@ -96,7 +117,8 @@ try {
     || String(input.tool_input?.message || "").startsWith("[[adaptive-model-router:ticket:")
     || /^(?:\/root\/)?router_[a-f0-9]{32}$/u.test(targetName) || /^[a-f0-9-]{36}$/u.test(targetName)
     || /adaptive[-_]model[-_]router/iu.test(input.tool_name || "");
-  process.stderr.write("Adaptive Model Router runtime_coverage_gap: native Hook dispatch was not recorded.\n");
+  const dispatchLabel = hookTarget ? "native Hook" : launchTransport === "mcp" ? "native MCP" : "launcher";
+  process.stderr.write(`Adaptive Model Router runtime_coverage_gap: ${dispatchLabel} dispatch was not recorded.\n`);
   if (targetArgs[0] === "pre-tool-use" && managed) {
     process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:"Runtime ownership could not be verified."}}) + "\n");
     process.exit(2);
@@ -114,7 +136,8 @@ try {
     shell: false,
   });
 } catch (error) {
-  endRuntimeDispatch(selectedDispatch, false);
+  observation?.finish({ error, lifecycle: "unknown" });
+  try { endRuntimeDispatch(selectedDispatch, false); } catch (cleanupError) { observation?.detail({ error: cleanupError, lifecycle: "unknown" }); }
   process.stderr.write(failure);
   emitDiagnostic({ component: "launcher", stage, error, category: "spawn_failed", startedAt });
   process.exit(2);
@@ -137,7 +160,8 @@ child.once("error", (error) => {
   if (settled) return;
   settled = true;
   cleanup();
-  endRuntimeDispatch(selectedDispatch, false);
+  observation?.finish({ error, lifecycle: "unknown" });
+  try { endRuntimeDispatch(selectedDispatch, false); } catch (cleanupError) { observation?.detail({ error: cleanupError, lifecycle: "unknown" }); }
   process.stderr.write(failure);
   emitDiagnostic({ component: "launcher", stage: "spawn", error, category: "spawn_failed", startedAt });
   process.exitCode = 2;
@@ -148,7 +172,10 @@ child.once("exit", (code, signal) => {
   settled = true;
   cleanup();
   process.exitCode = Number.isInteger(code) ? code : 1;
-  endRuntimeDispatch(selectedDispatch, signal == null && code === 0);
+  // This reports process transport completion; the Hook itself records its
+  // operation result, including fail-safe errors that deliberately exit zero.
+  observation?.finish({ operation: signal == null && code === 0 ? "succeeded" : "failed", lifecycle: signal == null && code === 0 ? "completed" : "unknown" });
+  try { endRuntimeDispatch(selectedDispatch, signal == null && code === 0); } catch (error) { observation?.detail({ error, lifecycle: "unknown" }); }
   if (process.exitCode !== 0) {
     emitDiagnostic({ component: "launcher", stage: "child", category: "child_exit", startedAt });
   }

@@ -6,6 +6,10 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Record bounded, redacted request and Hook observations with explicit retention
+  coverage, actual runtime identity, read-only paginated inspection, and optional
+  outcome verification digests. Keep diagnostic evidence separate from native
+  lifecycle authority and report gaps instead of treating missing records as success.
 - Route bounded work through GPT-6 only, with all six efforts available and
   high as the default. Explicit task conditions select stable work levels;
   diagnostic score bands and legacy learning offsets no longer select models.
@@ -25,6 +29,19 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Classify malformed JSON only at external request boundaries. Report damaged
+  internal JSON as a redacted internal failure, preserve explicit input errors
+  through the stdio bridge, and keep historical validator dependencies frozen.
+- Settle a unique native Pre receipt when the MCP shell rejects a tool name or
+  schema before dispatch, preserving the original error without opening the
+  business store or modifying unrelated tasks. Retain ambiguous receipts.
+- Reconcile supported historical qualification failures using original native
+  evidence and separate receipts; preserve prior outcomes and require new
+  qualification before ordinary delegation. Unproven history remains blocked.
+- Make repeated cold-install preparation atomic and restore exact registry and
+  publication state on failure. Keep already retired host entries retired.
+- Preserve launcher transport classification and ready-epoch diagnostics, and
+  isolate copied-package test candidates from installation-specific host bindings.
 - Align smoke runbooks with scoped Windows Router-process cleanup, native
   host-model intent checks and restoration, and runtime-pointer fallback
   diagnostics. Preserve historical smoke evidence as historical evidence.

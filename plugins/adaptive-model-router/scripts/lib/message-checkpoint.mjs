@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { canonicalJson, payloadHash } from "./io.mjs";
 import { openPrivateState, sealPrivateState } from "./private-state.mjs";
-import { readStableRollout, rolloutIdentity } from "./native-rollout-reader.mjs";
+import { readStableRollout, rolloutIdentity, COLD_ROLLOUT_FILE_LIMIT } from "./native-rollout-reader.mjs";
 import { readChildTurnEvidence, readChildInputEvidence } from "./child-turn-evidence.mjs";
 import { readChildCommands } from "./child-command-journal.mjs";
 import { rememberedRootTranscript } from "./stage-reconciliation.mjs";
@@ -21,10 +21,10 @@ const SENDER_READS = new WeakMap();
 const acceptedRows = (db, child) => db.prepare("SELECT * FROM delegation_messages WHERE route_id=? AND status='accepted' AND kind!='interrupt_agent' ORDER BY revision").all(child.route_id);
 const messageSummary = (row, reason) => ({ routeId: row.route_id, callId: row.call_id, revision: row.revision, inputDigest: row.input_digest, reason });
 
-function withSenderReads(db, rows, run) {
+function withSenderReads(db, rows, run, { coldBatch = false } = {}) {
   const previous = SENDER_READS.get(db);
   if (previous && rows.every((row) => previous.callIds.has(row.call_id))) return run(previous);
-  const batch = { callIds: new Set(rows.map((row) => row.call_id)), sources: new Map(), childSources: new Map(), owners: new Map() };
+  const batch = { callIds: new Set(rows.map((row) => row.call_id)), sources: new Map(), childSources: new Map(), owners: new Map(), coldBatch };
   SENDER_READS.set(db, batch);
   try { return run(batch); }
   finally { if (previous) SENDER_READS.set(db, previous); else SENDER_READS.delete(db); }
@@ -63,7 +63,7 @@ function senderSource(db, path, row, deadline) {
       if (!calls.has(item.call_id)) calls.set(item.call_id, []);
       calls.get(item.call_id).push({ item, line, turn,
         ...(item.type === "function_call_output" ? { prefixDigest: prefix.copy().digest("hex") } : {}) });
-    }, { deadline, allowCompactedMetadata: true });
+    }, { deadline, allowCompactedMetadata: true, ...(batch?.coldBatch ? { maxBytes: COLD_ROLLOUT_FILE_LIMIT } : {}) });
     if (identity !== rolloutIdentity(path)) fail("sender_source_changed");
     const source = { identity, meta, calls, activities }; batch?.sources.set(path, source); return source;
   } catch (error) { batch?.sources.set(path, { error }); throw error; }
@@ -282,9 +282,9 @@ export function pendingNativeMessageResponsibilities(db, context, child, deadlin
 }
 
 // Explicit cold installation walks a finite captured child inventory, giving
-// each child the same bounded read budget as a normal operation. The sender
-// index belongs only to this batch. Normal task/Hook callers retain one shared
-// five-second budget, and neither path reads a transcript under a writer lock.
+// each child a finite offline budget for long-lived native parent logs. The
+// sender index belongs only to this batch. Normal task/Hook callers retain one
+// shared five-second / 512 MiB budget. Neither path reads under a writer lock.
 export function pendingNativeMessageBatch(db, children, { coldBatch = false } = {}) {
   const rows = children.flatMap((child) => acceptedRows(db, child));
   if (!rows.length) return [];
@@ -296,7 +296,7 @@ export function pendingNativeMessageBatch(db, children, { coldBatch = false } = 
     for (const child of children) {
       batch.currentChild = child.route_id;
       pending.set(child.route_id, pendingNativeMessageResponsibilities(db,
-        { projectId: child.project_id, contextKey: child.context_key }, child, coldBatch ? Date.now() + 5000 : deadline));
+        { projectId: child.project_id, contextKey: child.context_key }, child, coldBatch ? Date.now() + 30_000 : deadline));
     }
     batch.currentChild = null;
     for (const child of children) {
@@ -312,7 +312,7 @@ export function pendingNativeMessageBatch(db, children, { coldBatch = false } = 
     return children.flatMap((child) => changed.has(child.route_id)
       ? rows.filter((row) => row.route_id === child.route_id).map((row) => messageSummary(row, "native_message_source_unverified"))
       : pending.get(child.route_id));
-  });
+  }, { coldBatch });
 }
 
 export function prepareMessageCheckpoint(store, context, input) {

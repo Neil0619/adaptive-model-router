@@ -61,13 +61,12 @@ function assertPreparedSources(db, record) {
   if (sourceSnapshot(db, record.candidate) !== record.sourceSnapshot) blocked("cold_source_registry_changed");
   if (canonicalJson(publishedDefault(db)) !== canonicalJson(record.defaults)) blocked("cold_default_changed");
 }
-function installation(db, id) {
+function checkedInstallation(db, id) {
   const row = db.prepare("SELECT * FROM runtime_epoch_installations WHERE id=?").get(id);
   if (!row) blocked("cold_installation_missing");
   const record = JSON.parse(row.record);
   if (record.id !== id || record.verifier !== runtimeSourceDigest()) blocked("cold_installation_source_changed");
-  if (payloadHash(entryRegistry(db)) !== record.entryRegistryDigest || bootstrapRecord(db) !== record.bootstrap)
-    blocked("cold_source_registry_changed");
+  if (bootstrapRecord(db) !== record.bootstrap) blocked("cold_source_registry_changed");
   for (const source of record.sources) {
     verifyRuntimePackage(runtimeGeneration(db, source.generation));
     const proof = db.prepare("SELECT record FROM runtime_epoch_publications WHERE id=? AND source=? AND candidate=?")
@@ -77,6 +76,32 @@ function installation(db, id) {
   }
   verifyRuntimePackage({ ...runtimeGeneration(db, record.candidate), root: record.shellRoot });
   return record;
+}
+function installation(db, id) {
+  const record = checkedInstallation(db, id);
+  if (payloadHash(entryRegistry(db)) !== record.entryRegistryDigest) blocked("cold_source_registry_changed");
+  return record;
+}
+function latestRecoveryRecord(db, id) {
+  const row = db.prepare("SELECT * FROM runtime_epoch_entry_recoveries WHERE installation_id=? ORDER BY rowid DESC LIMIT 1").get(id);
+  return row ? { id: row.id, record: JSON.parse(row.record) } : null;
+}
+function recoveryPhaseMatches(saved, record, phase) {
+  return record.recoveryBaseline && saved?.record.schema === "runtime-epoch-entry-recovery/3"
+    && saved.record.phase === phase && saved.record.verifier === record.verifier
+    && saved.record.preparedRegistryDigest === record.entryRegistryDigest
+    && saved.record.baselineRegistryDigest === payloadHash(record.recoveryBaseline.entryRegistry)
+    && canonicalJson(saved.record.restoredDefaults) === canonicalJson(record.defaults);
+}
+// Only restoration can recognize its own completed registry preimage. Normal
+// installation and retirement always require the complete prepared registry.
+function recoveryInstallation(db, id) {
+  const record = checkedInstallation(db, id), latest = latestRecoveryRecord(db, id);
+  const registry = payloadHash(entryRegistry(db));
+  if (recoveryPhaseMatches(latest, record, "completed") && registry === latest.record.baselineRegistryDigest)
+    return { record, latest, completed: true };
+  if (registry !== record.entryRegistryDigest) blocked("cold_source_registry_changed");
+  return { record, latest, completed: false };
 }
 function absentEntries(record) {
   for (const entry of record.entries) {
@@ -96,10 +121,23 @@ export function assertColdMessageCheckpoint(db, context = null) {
   if (coldPendingMessageResponsibilities(db, context).length) blocked("cold_accepted_input_checkpoint_required");
 }
 
-export function prepareColdHostEpochInstallation(store, { source, candidate, shellRoot }) {
+function assertRepeatedPreparationCold(db, inventory) {
+  // A frozen installed epoch validates the complete entry registry. Adding a
+  // next shell while it is running would revoke its existing retirement proof
+  // before native installation. Repeated installation preparation therefore
+  // belongs inside the cold window too; a source snapshot is not a host proof.
+  const repeated = Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_epoch_retirements'").get()
+    && db.prepare("SELECT 1 FROM runtime_epoch_retirements LIMIT 1").get());
+  if (repeated) assertColdProcessInventory(inventory());
+  return repeated;
+}
+
+export function prepareColdHostEpochInstallation(store, { source, candidate, shellRoot, inventory = nativeProcessInventory }) {
   shellRoot = realpathSync(shellRoot);
   verifyRuntimePackage({ ...candidate, root: shellRoot });
+  const repeated = assertRepeatedPreparationCold(store.db, inventory);
   schema(store.db);
+  const previousEntryRegistry = entryRegistry(store.db), presentPaths = [];
   const dataRoot = dirname(store.path);
   const before = sourceSnapshot(store.db, candidate.digest), originalDefaults = publishedDefault(store.db);
   const entries = store.db.prepare("SELECT path,generation FROM runtime_host_entries WHERE state='referenced' ORDER BY path").all();
@@ -123,7 +161,15 @@ export function prepareColdHostEpochInstallation(store, { source, candidate, she
     if (!original) blocked("cold_old_entry_source_uncovered");
     if (["published", "archive"].some((area) => entry.path === managedRuntimeDestination(dataRoot, area, original.digest)))
       blocked("cold_retained_package_registered_as_native_entry");
-    verifyRuntimePackage({ ...original, root: entry.path });
+    // Prior cold installations retain registry ownership after native pruning
+    // or archival. Missing enrolled paths need no recreation: every retained
+    // package was verified above, and retirement must freshly prove both the
+    // cold process inventory and absence of every old launch path. A dangling
+    // symlink, changed present package, or unregistered missing path still fails.
+    let present = true;
+    try { lstatSync(entry.path); }
+    catch (error) { if (error.code !== "ENOENT" || !enrolled.has(entry.path)) throw error; present = false; }
+    if (present) { verifyRuntimePackage({ ...original, root: entry.path }); presentPaths.push(entry.path); }
   }
   const nativeCache = resolve(process.env.CODEX_HOME, "plugins/cache");
   const inCache = (path) => { const tail = relative(nativeCache, path); return tail && !isAbsolute(tail) && tail !== ".." && !tail.startsWith(`..${sep}`); };
@@ -131,9 +177,12 @@ export function prepareColdHostEpochInstallation(store, { source, candidate, she
     shellRoot, entries: entries.filter((entry) => entry.path !== shellRoot).map((entry) => ({ ...entry,
       ownership: enrolled.has(entry.path) ? "enrolled_native_entry" : inCache(entry.path) ? "native_plugin_cache" : "reference_only",
       archivePath: managedRuntimeDestination(dataRoot, "native-entry-archive", payloadHash([entry.path, entry.generation])) })), verifier: runtimeSourceDigest(),
-    recovery: "restore exact retained package to its original path only in a cold recovery window; this revokes retirement" };
+    recovery: "restore exact retained package to its original path only in a cold recovery window; this revokes retirement",
+    ...(repeated ? { recoveryBaseline: { entryRegistry: previousEntryRegistry, presentPaths: presentPaths.sort() } } : {}) };
   if (!record.entries.length) blocked("cold_old_entry_inventory_empty");
+  let publications;
   store.transaction(() => {
+    if (assertRepeatedPreparationCold(store.db, inventory) !== repeated) blocked("cold_installation_history_changed");
     if (sourceSnapshot(store.db, candidate.digest) !== before || canonicalJson(publishedDefault(store.db)) !== canonicalJson(originalDefaults))
       blocked("cold_source_registry_changed");
     for (const copy of retained.values()) {
@@ -167,12 +216,20 @@ export function prepareColdHostEpochInstallation(store, { source, candidate, she
     record.bootstrap = bootstrapRecord(store.db);
     record.entryRegistryDigest = payloadHash(entryRegistry(store.db));
     record.sourceSnapshot = sourceSnapshot(store.db, candidate.digest);
-  });
-  const publications = tokens.map((token) => publishHostEpoch(store, token));
-  record.sources = publications.map((publication) => ({ generation: publication.source, publicationId: publication.id }))
-    .sort((a, b) => a.generation.localeCompare(b.generation));
-  record.id = payloadHash(record);
-  store.transaction(() => {
+    // Registry changes revoke a frozen installed epoch's retirement authority.
+    // Commit its recovery record and every source-owned publication atomically
+    // with that change. A process loss may leave verified package copies, but
+    // must never leave a changed registry without a recoverable installation.
+    // This adapter is confined to this transaction; RouterStore nesting stays
+    // forbidden elsewhere. All package copies already exist before the lock.
+    const publicationStore = { db: store.db, path: store.path, transaction(commit) {
+      if (!store.db.isTransaction) blocked("cold_preparation_transaction_missing");
+      return commit();
+    } };
+    publications = tokens.map((token) => publishHostEpoch(publicationStore, token));
+    record.sources = publications.map((publication) => ({ generation: publication.source, publicationId: publication.id }))
+      .sort((a, b) => a.generation.localeCompare(b.generation));
+    record.id = payloadHash(record);
     assertPreparedSources(store.db, record);
     if (canonicalJson(publishedDefault(store.db)) !== canonicalJson(record.defaults)) blocked("cold_default_changed");
     store.db.prepare("INSERT OR IGNORE INTO runtime_epoch_installations VALUES(?,?,?,?)")
@@ -320,9 +377,24 @@ export async function installColdHostEpoch(store, id, { marketplacePath, client 
   }
 }
 
+function repeatedRecoveryPaths(db, record, { restored = false } = {}) {
+  const present = new Set(record.recoveryBaseline.presentPaths);
+  for (const entry of record.entries) {
+    const original = runtimeGeneration(db, entry.generation);
+    let exists = true;
+    try { lstatSync(entry.path); } catch (error) { if (error.code !== "ENOENT") throw error; exists = false; }
+    if (!present.has(entry.path)) {
+      if (exists) blocked("cold_previously_absent_entry_restored");
+    } else if (exists || restored) verifyRuntimePackage({ ...original, root: entry.path });
+    let archiveExists = true;
+    try { lstatSync(entry.archivePath); } catch (error) { if (error.code !== "ENOENT") throw error; archiveExists = false; }
+    if (archiveExists) verifyRuntimePackage({ ...original, root: entry.archivePath });
+  }
+}
+
 export function restoreColdHostEpochEntries(store, id, { inventory = nativeProcessInventory } = {}) {
   assertColdProcessInventory(inventory());
-  const record = installation(store.db, id);
+  const recovery = recoveryInstallation(store.db, id), { record } = recovery;
   const assertUnused = () => {
     if (store.db.prepare("SELECT 1 FROM runtime_tasks WHERE generation=? OR candidate=?").get(record.candidate, record.candidate)
       || store.db.prepare("SELECT 1 FROM runtime_stages WHERE generation=?").get(record.candidate)
@@ -330,32 +402,46 @@ export function restoreColdHostEpochEntries(store, id, { inventory = nativeProce
       blocked("cold_recovery_requires_task_rollback_first");
   };
   assertUnused();
+  if (recovery.completed) {
+    if (canonicalJson(publishedDefault(store.db)) !== canonicalJson(record.defaults)) blocked("cold_default_changed");
+    repeatedRecoveryPaths(store.db, record, { restored: true });
+    return { id, restored: record.recoveryBaseline.presentPaths, state: "recovery_entries_restored", idempotent: true,
+      installationComplete: false, nextAction: "verify_original_native_plugin_registration_and_trust" };
+  }
   const active = activeRetirement(store.db, id), before = history(store.db);
   const expectedDefaults = active?.record.appliedDefaults || record.defaults;
   if (canonicalJson(publishedDefault(store.db)) !== canonicalJson(expectedDefaults)) blocked("cold_default_changed");
   // A later cold cutover owns the default even if its digest happens to match.
   if (active && store.db.prepare("SELECT id FROM runtime_epoch_retirements ORDER BY rowid DESC LIMIT 1").get()?.id !== active.id)
     blocked("cold_default_changed");
-  for (const entry of record.entries) {
-    const original = runtimeGeneration(store.db, entry.generation);
-    for (const path of [entry.path, entry.archivePath]) if (existsSync(path)) verifyRuntimePackage({ ...original, root: path });
-  }
+  if (record.recoveryBaseline) repeatedRecoveryPaths(store.db, record);
+  else for (const entry of record.entries) {
+      const original = runtimeGeneration(store.db, entry.generation);
+      for (const path of [entry.path, entry.archivePath]) if (existsSync(path)) verifyRuntimePackage({ ...original, root: path });
+    }
   assertColdProcessInventory(inventory());
   // Revoke before restoring even the first path. An interrupted restoration
   // must not leave a still-valid retirement row after the path disappears again.
-  store.transaction(() => {
+  const startedId = store.transaction(() => {
     installation(store.db, id); assertUnused();
     if (history(store.db) !== before) blocked("cold_history_changed");
     if (canonicalJson(publishedDefault(store.db)) !== canonicalJson(expectedDefaults)) blocked("cold_default_changed");
+    const prior = latestRecoveryRecord(store.db, id);
+    if (recoveryPhaseMatches(prior, record, "started")) return prior.id;
+    const recoveryId = randomUUID();
     store.db.prepare("INSERT INTO runtime_epoch_entry_recoveries VALUES(?,?,?)")
-      .run(randomUUID(), id, canonicalJson({ schema: "runtime-epoch-entry-recovery/2", verifier: runtimeSourceDigest(), startedAt: Date.now(),
+      .run(recoveryId, id, canonicalJson({ schema: record.recoveryBaseline ? "runtime-epoch-entry-recovery/3" : "runtime-epoch-entry-recovery/2",
+        ...(record.recoveryBaseline ? { phase: "started", preparedRegistryDigest: record.entryRegistryDigest,
+          baselineRegistryDigest: payloadHash(record.recoveryBaseline.entryRegistry) } : {}), verifier: runtimeSourceDigest(), startedAt: Date.now(),
         retirementId: active?.id || null, previousDefaults: expectedDefaults, restoredDefaults: record.defaults,
         scope: "revoke this cold cutover and restore its exact prior default; retain original bootstrap and all task history" }));
     store.db.prepare("UPDATE runtime_defaults SET current_digest=?,rollback_digest=? WHERE singleton=1")
       .run(record.defaults.current_digest, record.defaults.rollback_digest);
+    return recoveryId;
   });
   const restored = [];
   for (const entry of record.entries) {
+    if (record.recoveryBaseline && !record.recoveryBaseline.presentPaths.includes(entry.path)) continue;
     const original = runtimeGeneration(store.db, entry.generation);
     if (!existsSync(entry.path) && existsSync(entry.archivePath)) {
       verifyRuntimePackage({ ...original, root: entry.archivePath });
@@ -363,6 +449,32 @@ export function restoreColdHostEpochEntries(store, id, { inventory = nativeProce
       verifyRuntimePackage({ ...original, root: entry.path }); restored.push(entry.path);
     } else restored.push(copyRuntimePackage(original, entry.path).root);
   }
+  if (record.recoveryBaseline) {
+    const beforeCompletion = history(store.db);
+    assertColdProcessInventory(inventory());
+    store.transaction(() => {
+      installation(store.db, id); assertUnused();
+      if (history(store.db) !== beforeCompletion || latestRecovery(store.db, id) !== startedId) blocked("cold_history_changed");
+      if (canonicalJson(publishedDefault(store.db)) !== canonicalJson(record.defaults)) blocked("cold_default_changed");
+      repeatedRecoveryPaths(store.db, record, { restored: true });
+      // Delete only this preparation's unused candidate registration. Retain
+      // all publication/generation/retirement evidence and every prior row.
+      const priorPaths = new Set(record.recoveryBaseline.entryRegistry.map(entry => entry.path));
+      for (const entry of entryRegistry(store.db).filter(entry => !priorPaths.has(entry.path))) {
+        if (entry.path !== record.shellRoot || entry.generation !== record.candidate || entry.state !== "referenced")
+          blocked("cold_recovery_registry_changed");
+        store.db.prepare("DELETE FROM runtime_host_entries WHERE path=? AND generation=? AND state='referenced'")
+          .run(entry.path, entry.generation);
+      }
+      const baselineRegistryDigest = payloadHash(record.recoveryBaseline.entryRegistry);
+      if (payloadHash(entryRegistry(store.db)) !== baselineRegistryDigest) blocked("cold_recovery_registry_changed");
+      store.db.prepare("INSERT INTO runtime_epoch_entry_recoveries VALUES(?,?,?)")
+        .run(randomUUID(), id, canonicalJson({ schema: "runtime-epoch-entry-recovery/3", phase: "completed", recoveryStartId: startedId,
+          verifier: record.verifier, completedAt: Date.now(), preparedRegistryDigest: record.entryRegistryDigest, baselineRegistryDigest,
+          restoredDefaults: record.defaults, scope: "restore exact pre-upgrade paths and registry; native plugin registration remains separate" }));
+    });
+  }
   return { id, restored, state: "recovery_entries_restored", installationComplete: false,
-    nextAction: "cold_retirement_is_revoked_until_original_paths_are_retired_again" };
+    nextAction: record.recoveryBaseline ? "verify_original_native_plugin_registration_and_trust"
+      : "cold_retirement_is_revoked_until_original_paths_are_retired_again" };
 }

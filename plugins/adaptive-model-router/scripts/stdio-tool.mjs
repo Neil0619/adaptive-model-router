@@ -6,6 +6,11 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { sanitizedError } from "./lib/io.mjs";
 import { environmentWithPluginData } from "./lib/plugin-data.mjs";
+import { stateRoot } from "./lib/context.mjs";
+import { beginObservation, observationIdentity } from "./lib/observability.mjs";
+import { requestError } from "./lib/request-errors.mjs";
+import { parseRequestJson } from "./lib/request-json.mjs";
+import { join } from "node:path";
 
 const MAX_INPUT_BYTES = 1_048_576;
 const TIMEOUT_MS = 15_000;
@@ -15,6 +20,8 @@ const INPUT_TIMEOUT_MS = Number.isInteger(requestedInputTimeout) &&
   ? requestedInputTimeout
   : 5_000;
 const pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const mainPath = join(stateRoot(environmentWithPluginData(import.meta.url)), "router.sqlite3");
+const observation = beginObservation({ component: "bridge", transport: "stdio-bridge" }, { mainPath });
 
 function readRequest() {
   return new Promise((resolveRequest, reject) => {
@@ -31,7 +38,7 @@ function readRequest() {
       finish(() => {
         process.stdin.destroy();
         try {
-          const parsed = JSON.parse(value);
+          const parsed = parseRequestJson(value);
           if (
             !parsed ||
             typeof parsed !== "object" ||
@@ -41,7 +48,7 @@ function readRequest() {
             typeof parsed.arguments !== "object" ||
             Array.isArray(parsed.arguments)
           ) {
-            throw new Error("stdio bridge request must contain name and arguments");
+            throw requestError("INVALID_INPUT", "stdio bridge request must contain name and arguments");
           }
           resolveRequest(parsed);
         } catch (error) {
@@ -63,7 +70,7 @@ function readRequest() {
       body += chunk;
       if (Buffer.byteLength(body, "utf8") > MAX_INPUT_BYTES) {
         finish(() => {
-          reject(new Error("stdio bridge input is too large"));
+          reject(requestError("INVALID_INPUT", "stdio bridge input is too large"));
           process.stdin.destroy();
         });
         return;
@@ -123,8 +130,8 @@ function callTool(server) {
     });
     child.once("error", (error) => finish(() => reject(error)));
     child.once("exit", (code) => {
-      if (!settled && code !== 0) {
-        finish(() => reject(new Error(stderr.trim() || `stdio bridge child exited ${code}`)));
+      if (!settled) {
+        finish(() => reject(requestError("TRANSPORT_FAILURE", "stdio bridge child exited without a tool response.")));
       }
     });
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
@@ -150,7 +157,8 @@ function callTool(server) {
       jsonrpc: "2.0",
       id: 2,
       method: "tools/call",
-      params: { name: request.name, arguments: request.arguments },
+      params: { name: request.name, arguments: request.arguments,
+        _meta: { "adaptive-model-router/observation-call-id": observation.callId } },
     })}\n`);
   });
 }
@@ -158,7 +166,9 @@ function callTool(server) {
 let request;
 try {
   request = await readRequest();
+  observation.bind({ tool: request.name, ...observationIdentity({ contextId: request.arguments.contextId, mainPath }) });
   const result = await callTool(mcpConfig());
+  observation.finish({ operation: result?.isError ? "rejected" : "succeeded" });
   process.stdout.write(`${JSON.stringify({
     schemaVersion: 1,
     transport: "stdio-bridge",
@@ -167,6 +177,7 @@ try {
   })}\n`);
   process.exitCode = result?.isError ? 1 : 0;
 } catch (error) {
+  observation.finish({ error: error?.code === "INVALID_INPUT" ? error : requestError("TRANSPORT_FAILURE", "stdio bridge failed.") });
   process.stderr.write(`adaptive-model-router stdio bridge: ${sanitizedError(error)}\n`);
   process.exitCode = 1;
 }

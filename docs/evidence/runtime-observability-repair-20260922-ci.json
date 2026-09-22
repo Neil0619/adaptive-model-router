@@ -1,0 +1,240 @@
+{
+  "schemaVersion": 1,
+  "kind": "source-ci-repair-validation",
+  "generatedAt": "2026-09-22T10:18:14.633089+00:00",
+  "basisCommit": "5a86041b6cadeb3f13465fa1827387fa12278789",
+  "scope": "CI test-contract and checkout-byte repair; no product module, install, trust, or runtime data changed.",
+  "sourcePackage": {
+    "descriptor": {
+      "schemaVersion": 1,
+      "runtimeVersion": "0.4.0+codex.20260922043940",
+      "shellProtocolVersion": 2,
+      "toolContractVersion": 7,
+      "storageContractVersion": 3,
+      "databaseVersion": 10,
+      "entrypoints": {
+        "hook": "scripts/hook.mjs",
+        "service": "scripts/lib/service.mjs",
+        "probe": "scripts/runtime-probe.mjs"
+      }
+    },
+    "digest": "512149dad7964b284368704b15a88ea2e68f2ea186756ac1df7bc193d0ad6dcc",
+    "writerDigest": "3a4ed74cc37bc817fc49779c1b831d04409dfd840611942d0ba5d42301c03d78",
+    "shellDigest": "48b71a4749e50774a3baf6412a4f7d300e6c9b8b209cd70b827ea7091c8abf0b",
+    "lifecycleDigest": "3a4ed74cc37bc817fc49779c1b831d04409dfd840611942d0ba5d42301c03d78"
+  },
+  "changesFromInitialPackageSnapshot": [
+    {
+      "path": "test/observability.test.mjs",
+      "before": "5a3df9d898d921d1f13354327db4707dc58632200cd202c65ea46b10a458cc66",
+      "after": "6c72be71f7b4a56348d114c8fa3c15a39d49b5ed20da9ebd00a82e8bd910eb0a"
+    }
+  ],
+  "checkoutRule": {
+    "path": ".gitattributes",
+    "sha256": "074c1316813e7994e21ca2a8a5222df49d7afd25e74dba56578c1b334a36cdcc",
+    "rule": "*.mjs text eol=lf",
+    "originalTrackedJavaScriptFilesAllLf": 215
+  },
+  "firstHostedCI": {
+    "url": "https://github.com/Neil0619/adaptive-model-router/actions/runs/35710730827",
+    "conclusion": "failure",
+    "jobs": [
+      {
+        "name": "Installer syntax",
+        "conclusion": "success"
+      },
+      {
+        "name": "ubuntu-latest / Node 24.x",
+        "conclusion": "failure"
+      },
+      {
+        "name": "Plugin and skill validation",
+        "conclusion": "success"
+      },
+      {
+        "name": "macos-latest / Node 24.15.0",
+        "conclusion": "success"
+      },
+      {
+        "name": "windows-latest / Node 24.x",
+        "conclusion": "failure"
+      },
+      {
+        "name": "windows-latest / Node 24.15.0",
+        "conclusion": "failure"
+      },
+      {
+        "name": "macos-latest / Node 24.x",
+        "conclusion": "success"
+      },
+      {
+        "name": "ubuntu-latest / Node 24.15.0",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "diagnosis": {
+    "concurrency": "The original unconditional all-success assertion exceeded the bounded best-effort journal contract. A separate disk-backed Linux/amd64 Node 24.21 reproduction exhausted BEGIN IMMEDIATE waits at 160.743 and 307.918 ms; the original CI SQL phase is unknown.",
+    "windows": "CRLF conversion exactly reproduces the frozen server digest failure. Real core.autocrlf=true checkout of nine reviewed files preserves original bytes with the LF rule; the allowlist is unchanged."
+  },
+  "verification": {
+    "platform": "macOS arm64",
+    "node": "24.18.0",
+    "fullSuite": {
+      "tests": 682,
+      "pass": 672,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 10,
+      "todo": 0,
+      "durationMs": 290241.969583,
+      "skipReasons": [
+        "\ufe63 Windows discovery prefers a native host over an earlier npm shim and retains shim fallback (0.02375ms) # Windows-only discovery; process.platform is darwin, not win32",
+        "\ufe63 exact Windows hook commands run through cmd.exe and Windows PowerShell (0.293166ms) # Windows shell integration test",
+        "\ufe63 native CLI first registration replaces the isolated marketplace and restores every legacy cache path (0.124041ms) # Requires explicit native CLI and exact isolated v1 fixture",
+        "\ufe63 actual native cold resume resolves the new MCP configuration for the same persisted task (0.311959ms) # Requires an explicit native CLI; this test does not run Hooks or model inference",
+        "\ufe63 actual native parent and original child Hook cold recovery (0.081959ms) # Opt in with approved native execution materials or captured owned parent/child evidence",
+        "\ufe63 real captured native inputs support encrypted checkpoint and same-child continuation parsing (0.02225ms) # Requires captured approved native queue and explicit recovery evidence",
+        "\ufe63 exact installed B, C1 and C2 qualify through real A/B writers; altered packages stay rejected (0.070083ms) # Set ADAPTIVE_ROUTER_INSTALLED_EPOCH_FIXTURES to isolated copies of the three exact retained packages",
+        "\ufe63 exact approved observability entry qualifies while changed entry or package bytes stay rejected (0.048167ms) # Requires an isolated copy of the exact approved observability package",
+        "\ufe63 exact installed diagnostics patch qualifies for receipt prevention; modified package cannot inherit admission (0.051ms) # Requires an isolated copy of the exact installed diagnostics patch",
+        "\ufe63 Windows smoke recognizes completed legacy and native MCP trace events only (0.051583ms) # native PowerShell gate adapter"
+      ]
+    },
+    "observabilityMacOS": {
+      "passed": 21,
+      "failed": 0
+    },
+    "observabilityLinuxAmd64DiskVolumeNode2421": {
+      "passed": 21,
+      "failed": 0
+    },
+    "historicalRecoveryRegressions": {
+      "passed": 23,
+      "failed": 0
+    },
+    "validate": "passed",
+    "offlineEvaluation": {
+      "cases": 232,
+      "mismatches": 0,
+      "scope": "deterministic routing contract; not model output quality"
+    },
+    "independentReview": {
+      "result": "approved",
+      "baselineRealProcessCases": 25,
+      "concurrentSuccessfulAppends": 1600,
+      "newTestsPassed": 21,
+      "zeroTimeoutMutation": {
+        "expectedFailures": 3,
+        "detected": true
+      },
+      "removedWalRetryMutation": {
+        "expectedFailures": 1,
+        "detected": true
+      },
+      "reviewedLfFileHashes": 9,
+      "unreviewedDependencyRejection": "passed"
+    },
+    "repairedHostedCI": "not_yet_dispatched_at_snapshot"
+  },
+  "acceptanceBoundaries": {
+    "installedPackageDigest": "08a717303357af962c0c55171ab292312944ef8d135488f12d808204e016db25",
+    "installedSourceEqualsCache": true,
+    "newClassificationFixInstalled": false,
+    "nativeWindowsLoggedIn": "not_run_host_unavailable",
+    "historicalLimitations": "Unchanged; see the original delivery snapshot."
+  },
+  "artifactDigests": [
+    {
+      "kind": "ci-first-run-final.json",
+      "sha256": "653210a1fec328f53f6775db3bfc1d77389aa96b073b88aa0fe16c4d88df6eca",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-ubuntu-node24x-job-raw.log",
+      "sha256": "e220b41e49cbb7707c28a42683be9b3245ece625e0d20f2d0163b9f1da332a5c",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-windows-node2415-job-raw.log",
+      "sha256": "426a5fe94a27690eecbc424f70b174826e8e35cf5747fef9a580d600e5bf0bdd",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-windows-node24x-job-raw.log",
+      "sha256": "7ec281fecea5e138f2005ae4a715decbe5c478accb9dcd16b9c642c5cf2dbb51",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-observation-linux-disk-before.log",
+      "sha256": "812b3bf4a46261eb4780d6e68174412c728ce84e74181d12ceda691140997fb7",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-observability-candidate-test-1.log",
+      "sha256": "97d536e79594cb19cdd646375b6fc19919ee355b4e79605563802d84b9eac87c",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-observability-candidate-linux-1.log",
+      "sha256": "d6d86a8b8ece58c9336c7f9c076277a76911bbe3048d9851ab1a0cfa8cce8ed2",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-repaired-reconciliation-tests.log",
+      "sha256": "d5fa67fbac7af47898346a0bdf3cb918600567bea4b581b532e8f2df62061839",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-repaired-source-validate.log",
+      "sha256": "e305ec71b46bc6ffccb8296276e606238b63c2f21505097f5c614c7193277c9f",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-repaired-source-eval.log",
+      "sha256": "4bee6e63f199f906e87e7b9b1a11600dee0728e86b5ff2751657f0e0e575dcaa",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-git-line-endings-verification.json",
+      "sha256": "1ff5decfaeb9c0d501ea8b5eea2fd379fa294c7edb8da59941600a1d0e43b028",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-repaired-package-provenance.json",
+      "sha256": "88d4b3a46cbd0c9b55a1b119fb9e3356092f8d153c6c805baa955fb3c7491525",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "final-review-20260922-1.md",
+      "sha256": "6cd3624a49174db50c140f0a3db0bc6f2754a252258ae3b63d3e1fbadd60abd1",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "independent-real-process-baseline-report",
+      "sha256": "739c24eb6782d6d8021979dd04e71cba78c3072188db797dd98eaa3f32247557",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "independent-mutation-report",
+      "sha256": "5695437fc24b87f86e4f83869373fb5e09ec805624ed3e33ba2ced1cb8218f1f",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "lf-byte-allowlist-independent-20260922-1.json",
+      "sha256": "f15c47d8517a75c0a5f3516016794ba065fb46a0b9854a52fe0033f51f9f4841",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-repaired-source-full-tests.log",
+      "sha256": "b30986474099a80c88123b886680bedc2c168479896d3c527b3487f5fb724d59",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-repaired-source-full-tests-result.json",
+      "sha256": "9ca7182c06f2be7188aa69868696291e74e1e6f9ca9bd72c4ad81abb2afe5b0e",
+      "availability": "retained privately; raw host paths and identities omitted"
+    }
+  ]
+}

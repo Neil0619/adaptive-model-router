@@ -1,0 +1,309 @@
+{
+  "schemaVersion": 1,
+  "kind": "source-lock-lifetime-test-ci-repair-validation",
+  "generatedAt": "2026-09-22T11:22:48.787484+00:00",
+  "basisCommit": "5fad65a141c0115458aa65a734b92c28b0b93b99",
+  "scope": "Test lock lifetime and bounded writer-process cleanup only. Product source, wait/retry budgets, installed state and historical outcomes are unchanged.",
+  "sourcePackage": {
+    "descriptor": {
+      "schemaVersion": 1,
+      "runtimeVersion": "0.4.0+codex.20260922043940",
+      "shellProtocolVersion": 2,
+      "toolContractVersion": 7,
+      "storageContractVersion": 3,
+      "databaseVersion": 10,
+      "entrypoints": {
+        "hook": "scripts/hook.mjs",
+        "service": "scripts/lib/service.mjs",
+        "probe": "scripts/runtime-probe.mjs"
+      }
+    },
+    "digest": "29e7364a1f7f8c32c13a39027c86a0fd4742ae4c506ba050f8648a4bc6306a97",
+    "writerDigest": "3a4ed74cc37bc817fc49779c1b831d04409dfd840611942d0ba5d42301c03d78",
+    "shellDigest": "48b71a4749e50774a3baf6412a4f7d300e6c9b8b209cd70b827ea7091c8abf0b",
+    "lifecycleDigest": "3a4ed74cc37bc817fc49779c1b831d04409dfd840611942d0ba5d42301c03d78"
+  },
+  "testFile": {
+    "path": "test/observability.test.mjs",
+    "sha256": "5533be051e084acd6fda17e218714893c03ed0b0ed2975a216fc32e48c382ddf"
+  },
+  "previousHostedCI": {
+    "url": "https://github.com/Neil0619/adaptive-model-router/actions/runs/35719267734",
+    "headCommit": "5fad65a141c0115458aa65a734b92c28b0b93b99",
+    "actualSyntheticMergeCheckout": "d3bffbbf61ec3e270f667705cc7dc40c24ecb773",
+    "headAndMergeHaveIdenticalTree": "9656930bcab3915dfb04e2cade53d4d3cd0b865c",
+    "failedMacOSJobs": [
+      {
+        "node": "24.15.0",
+        "test": "warm sustained lock",
+        "accepted": true,
+        "elapsedMs": 581.23575
+      },
+      {
+        "node": "24.21.0",
+        "test": "cold sustained lock",
+        "accepted": true,
+        "elapsedMs": 671.354833
+      },
+      {
+        "node": "24.21.0",
+        "test": "warm sustained lock",
+        "accepted": true,
+        "elapsedMs": 621.361
+      }
+    ]
+  },
+  "diagnosis": {
+    "originalEvidenceLimit": "No original SQL-entry or rollback timestamp exists. The original suspended phase and exact lock holder are unknown.",
+    "reproduced": "Real child writers delayed 650ms at their SQLite phase outlived the old 550ms rollback and successfully wrote. Holding the parent transaction through child close makes delayed writes fail with the real lock still held, a fixed diagnostic and durable gap.",
+    "shortLockBoundary": "A 55ms short-lock success alone cannot prove contention on every scheduled run. Sustained-lock and separate policy-mutation checks supply complementary coverage.",
+    "coldFixture": "A reserved rollback-journal lock yields immediate real SQLITE_BUSY during WAL enrollment on the verified host; an EXCLUSIVE lock could instead be handled by native busy_timeout and miss the explicit-retry defect."
+  },
+  "verification": {
+    "platform": "macOS arm64",
+    "node": "24.18.0",
+    "fullSuite": {
+      "tests": 682,
+      "pass": 672,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 10,
+      "todo": 0,
+      "durationMs": 269452.669625,
+      "skipReasons": [
+        "﹣ Windows discovery prefers a native host over an earlier npm shim and retains shim fallback (0.018917ms) # SKIP",
+        "﹣ exact Windows hook commands run through cmd.exe and Windows PowerShell (0.249583ms) # Windows shell integration test",
+        "﹣ native CLI first registration replaces the isolated marketplace and restores every legacy cache path (0.083042ms) # Requires explicit native CLI and exact isolated v1 fixture",
+        "﹣ actual native cold resume resolves the new MCP configuration for the same persisted task (0.312084ms) # Requires an explicit native CLI; this test does not run Hooks or model inference",
+        "﹣ actual native parent and original child Hook cold recovery (0.053333ms) # Opt in with approved native execution materials or captured owned parent/child evidence",
+        "﹣ real captured native inputs support encrypted checkpoint and same-child continuation parsing (0.018625ms) # Requires captured approved native queue and explicit recovery evidence",
+        "﹣ exact installed B, C1 and C2 qualify through real A/B writers; altered packages stay rejected (0.070042ms) # Set ADAPTIVE_ROUTER_INSTALLED_EPOCH_FIXTURES to isolated copies of the three exact retained packages",
+        "﹣ exact approved observability entry qualifies while changed entry or package bytes stay rejected (0.0455ms) # Requires an isolated copy of the exact approved observability package",
+        "﹣ exact installed diagnostics patch qualifies for receipt prevention; modified package cannot inherit admission (0.048625ms) # Requires an isolated copy of the exact installed diagnostics patch",
+        "﹣ Windows smoke recognizes completed legacy and native MCP trace events only (0.047167ms) # native PowerShell gate adapter"
+      ]
+    },
+    "linuxAmd64Node2421ObservationSuite": {
+      "passed": 21,
+      "failed": 0,
+      "skipped": 0,
+      "storage": "disk-backed isolated Docker volume"
+    },
+    "validate": "passed",
+    "offlineEvaluation": {
+      "cases": 232,
+      "mismatches": 0,
+      "scope": "deterministic routing contract; not model output quality"
+    },
+    "independentReview": {
+      "result": "approved",
+      "baselineRealChildCases": 16,
+      "candidateChecks": [
+        {
+          "name": "exact",
+          "observedExitCode": 0,
+          "elapsedSeconds": 1.4757142919697799,
+          "expectedOutcomeMatched": true
+        },
+        {
+          "name": "delayed-cold",
+          "observedExitCode": 0,
+          "elapsedSeconds": 1.5179864169913344,
+          "expectedOutcomeMatched": true
+        },
+        {
+          "name": "delayed-warm",
+          "observedExitCode": 0,
+          "elapsedSeconds": 2.4073853329755366,
+          "expectedOutcomeMatched": true
+        },
+        {
+          "name": "noWait",
+          "observedExitCode": 1,
+          "elapsedSeconds": 1.074838667002041,
+          "expectedOutcomeMatched": true
+        },
+        {
+          "name": "noRetry",
+          "observedExitCode": 1,
+          "elapsedSeconds": 1.1398465420352295,
+          "expectedOutcomeMatched": true
+        },
+        {
+          "name": "hang",
+          "observedExitCode": 1,
+          "elapsedSeconds": 20.13656600000104,
+          "expectedOutcomeMatched": true
+        }
+      ],
+      "originalDelayedTests": "failed as expected; accepted writes after premature release",
+      "cleanSuite": "21/21 passed",
+      "noWaitAndNoRetryMutants": "both rejected by the full candidate suite",
+      "infiniteWaitMutant": "owned child closed with SIGKILL after actual 20-second watchdog; PID and fixture absent afterward",
+      "earlierIncorrectProbeExpectation": "retained separately; not counted as a passing run",
+      "platformLimit": "independent execution was macOS arm64 Node24.18; hosted matrix remains a separate gate"
+    },
+    "repairedHostedCI": "not_yet_dispatched_at_snapshot"
+  },
+  "unchangedContracts": [
+    {
+      "path": "plugins/adaptive-model-router/scripts/lib/observability.mjs",
+      "sha256": "e16585a31894e63fc5877124d42fde0b44c03c9b4750cfd21b57341a58b8fc0c",
+      "unchanged": true
+    },
+    {
+      "path": "plugins/adaptive-model-router/scripts/stdio-tool.mjs",
+      "sha256": "b6dc3e1348c65a3e716798e6f57cdc07b2db86a5ba8acca18c15d6037d82b1d2",
+      "unchanged": true
+    },
+    {
+      "path": "plugins/adaptive-model-router/test/stdio-tool.test.mjs",
+      "sha256": "08f5d89e8e512e42a4ac36d225777182b63dde25d6cdfde156bf66f5270aebca",
+      "unchanged": true
+    },
+    {
+      "path": ".gitattributes",
+      "sha256": "074c1316813e7994e21ca2a8a5222df49d7afd25e74dba56578c1b334a36cdcc",
+      "unchanged": true
+    }
+  ],
+  "acceptanceBoundaries": {
+    "installedPackageDigest": "08a717303357af962c0c55171ab292312944ef8d135488f12d808204e016db25",
+    "installedSourceEqualsCache": true,
+    "newClassificationFixInstalled": false,
+    "nativeWindowsLoggedIn": "not_run_host_unavailable",
+    "historicalLimitations": "Unchanged; see the original delivery snapshot."
+  },
+  "artifactDigests": [
+    {
+      "kind": "ci-stdio-macos-node2415-job.log",
+      "sha256": "b1dd08a7ff408351dac5341c23c5531986f1e529003ee8695480a5ce0d797d22",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-stdio-macos-node24x-job.log",
+      "sha256": "d622b87702116dc24137cb731f886fae37796ef951f2dc29fd0caaf7d491c389",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-third-run-merge-tree.json",
+      "sha256": "01d05cc886b9aac7b7ded554ff7475dab6900f09a8a80acf0e74c794e3fe183b",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-source-boundary.json",
+      "sha256": "2b5aebe24bcd0d48a4c12138f5f6a496d7a8a513420db89491663d4914f5d592",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-macos-candidate-1.log",
+      "sha256": "f5df928a8caa445303e95d9270480fd5424aaff10d65b9b943ae494a841ad426",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-linux-candidate-1.log",
+      "sha256": "2de7ee95e4eea2b86d9dabdc4abfaa654643da495c5e4cacc7b887079ab8a942",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-validate.log",
+      "sha256": "e305ec71b46bc6ffccb8296276e606238b63c2f21505097f5c614c7193277c9f",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-eval.log",
+      "sha256": "4bee6e63f199f906e87e7b9b1a11600dee0728e86b5ff2751657f0e0e575dcaa",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-package-provenance.json",
+      "sha256": "d2fa356c21027311d4caf7908608e97af613d225d4c4d74dacc14696fbd8c673",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/independent-review.md",
+      "sha256": "64fc14b13b9db662e32b40930d792a677df80cbc76ca96ed000720fe294caf20",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/probe-results.json",
+      "sha256": "4027020ef6900ea991261c5e9b67b6f6ab2eb0f4a42bc3405539879a9d56f677",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/probe.log",
+      "sha256": "ddb797317bb52a2716d3e9c3ee5543e0739ed1b83d7332e57bbb0a941b905feb",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/probe-first-failed.log",
+      "sha256": "2ee3933ad7d1e4338eb8ceba34e259fe3b3e04467de7b31cd548edbd1217e6d1",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/candidate-results.json",
+      "sha256": "1a9b6d0fe7dcf6594bb2c5c22786f23ce27df22618f2e3d5ff62b8f2b95edb6a",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/candidate-check.log",
+      "sha256": "48a7e92a3efce8414ef12e87931c25cec6504500ae016b35d5d0f4a16c9ad434",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/candidate-exact.log",
+      "sha256": "817b4089804055667b5b672e5dca40a6a246af356d50fda354a6af143369f091",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/candidate-delayed-cold.log",
+      "sha256": "af7fe676601870c7f0bd6a517c404deabef242b19e89bfc447825c9c31fe01bd",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/candidate-delayed-warm.log",
+      "sha256": "f0c195bfb18c3d970dca6e02e3f5b1b1203a9e7752534fbfc2aa82ef5bba000a",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/candidate-noWait.log",
+      "sha256": "fa36a534307ae8a6d7acd2e64397952ed3089375046e072d7fe0e7fad77632df",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/candidate-noRetry.log",
+      "sha256": "40539d9a9557f337223205c78550fe4fc30a5ee6eecf133bc42ea2fc7d02d23c",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/candidate-hang.log",
+      "sha256": "23a1316dfebe7004cbeb45966edd50a9d06da4144963a9ad6a155486197e3109",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/baseline-delayed-cold.log",
+      "sha256": "48545415ea7b1a53cb844242c0b13eb85849df04a54d41fdff7fc1a406154bec",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent/baseline-delayed-warm.log",
+      "sha256": "e8a5ad826d093f85eaea6f35e9ec700666dacf46d7a57b9332cded9f126fa135",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-full-tests.log",
+      "sha256": "067fb25d562f83ba4782a5e9acbf62a50894f438ba30981901110840da540057",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-full-tests-result.json",
+      "sha256": "217fffd208a9cff48b18775ee5a07797cc066bacc23b52f2b79b368f8099d163",
+      "availability": "retained privately; raw host paths and identities omitted"
+    },
+    {
+      "kind": "ci-lock-lifetime-independent-root-check.json",
+      "sha256": "e30186fe94ea17cee9eb53fddedf2e7d3e6c593914e9af47cff10ef400587703",
+      "availability": "retained privately; raw host paths and identities omitted"
+    }
+  ]
+}

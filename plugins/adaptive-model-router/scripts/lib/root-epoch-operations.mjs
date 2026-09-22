@@ -11,12 +11,31 @@ export class RootEpochOperations {
   constructor(contextId) {
     this.contextId = contextId;
     this.returned = new Map(); this.cells = new Map(); this.starts = []; this.ends = [];
+    this.external = new Map(); this.externalTerminals = new Map(); this.externalConflicts = new Set();
   }
 
   observe(entry, operations) {
     const p = entry.payload;
+    if (entry.type === "response_item" && ["function_call", "custom_tool_call"].includes(p?.type)
+      && p.namespace === "mcp__cua_repl" && p.name === "js") {
+      this.external.set(p.call_id, operations.calls.get(p.call_id));
+      operations.active.set(`root-external:${p.call_id}`, { callId: p.call_id, kind: "external", state: "native_terminal_unproven" });
+    }
     if (entry.type === "event_msg" && p?.type === "item_completed") {
       const item = p.item, command = item?.command;
+      const external = this.external.get(item?.id);
+      let args; try { args = JSON.parse(external?.arguments); } catch { /* No guessed arguments. */ }
+      if (external && args && p.thread_id === this.contextId && p.turn_id === external.observedTurnId
+        && item.type === "McpToolCall" && item.server === "cua_repl" && item.tool === "js"
+        && payloadHash(args) === payloadHash(item.arguments) && ["completed", "failed"].includes(item.status)
+        && item.result?.isError === (item.status === "failed") && Array.isArray(item.result?.content)
+        && Number.isFinite(item.result?._meta?.["codex/nodeReplExecutionDurationMs"])
+        && item.result._meta["codex/nodeReplExecutionDurationMs"] >= 0) {
+        const terminal = { callId: item.id, turnId: p.turn_id, nativeTerminalDigest: payloadHash(item),
+          interpreterState: "native_cua_call_returned", businessState: "unverified_preserved" };
+        if (this.externalTerminals.has(item.id) && payloadHash(this.externalTerminals.get(item.id)) !== payloadHash(terminal)) this.externalConflicts.add(item.id);
+        this.externalTerminals.set(item.id, terminal);
+      }
       if (p.thread_id === this.contextId && p.turn_id && item?.type === "CommandExecution"
         && item.source === "unified_exec_startup" && ["completed", "failed"].includes(item.status)
         && Number.isSafeInteger(item.exit_code) && typeof item.id === "string"
@@ -57,6 +76,11 @@ export class RootEpochOperations {
 
   reconcile(operations) {
     const retained = [];
+    for (const [callId, receipt] of this.externalTerminals) {
+      if (operations.unanswered.has(callId) || this.externalConflicts.has(callId)) continue;
+      operations.active.delete(`root-external:${callId}`);
+      retained.push(receipt);
+    }
     for (const [key, op] of operations.active) {
       if (op.transport === "legacy_code_mode" && op.state === "execution_coverage_unknown"
         && this.returned.has(op.callId) && !operations.unanswered.has(op.callId)) {

@@ -1,3 +1,5 @@
+import { recordPrunedEvidence } from "./audit-records.mjs";
+import { requestError } from "./request-errors.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { statfsSync } from "node:fs";
 import { canonicalJson, payloadHash } from "./io.mjs";
@@ -141,21 +143,21 @@ export function unresolvedAttempt(db, context) {
     ORDER BY created_at
     LIMIT 2
   `).all(context.projectId, context.contextKey);
-  if (rows.length > 1) throw new Error("delegation gate contains multiple unresolved attempts");
+  if (rows.length > 1) throw requestError("STAGE_PRECONDITION", "delegation gate contains multiple unresolved attempts");
   const row = rows[0] || null;
   if (!row) return null;
   if (!row.route_id || !row.ticket_hash || !row.model || !row.effort || !row.context_package) {
-    throw new Error("delegation gate contains an untrusted unresolved attempt");
+    throw requestError("STAGE_PRECONDITION", "delegation gate contains an untrusted unresolved attempt");
   }
   let opened;
   try {
     opened = openContextPackage(db, row.context_package);
   } catch {
-    throw new Error("delegation gate context package is untrusted");
+    throw requestError("STAGE_PRECONDITION", "delegation gate context package is untrusted");
   }
   if (Number(row.context_package_bytes) !== Buffer.byteLength(opened, "utf8")
       || Number(row.context_package_bytes) > CONTEXT_PACKAGE_BYTE_LIMIT) {
-    throw new Error("delegation gate context package is untrusted");
+    throw requestError("STAGE_PRECONDITION", "delegation gate context package is untrusted");
   }
   return row;
 }
@@ -223,7 +225,7 @@ function finalizeIfSafe(db, row) {
       total_transcript_bytes = total_transcript_bytes + excluded.total_transcript_bytes,
       updated_at = excluded.updated_at
   `).run(row.project_id, row.context_key, Number(row.transcript_bytes || 0), timestamp);
-  db.prepare(`
+  const pruned = db.prepare(`
     DELETE FROM delegation_attempts
     WHERE project_id = ? AND context_key = ? AND finalized_at IS NOT NULL
       AND route_id NOT IN (
@@ -238,6 +240,7 @@ function finalizeIfSafe(db, row) {
     row.context_key,
     TERMINAL_ATTEMPT_HISTORY_LIMIT,
   );
+  recordPrunedEvidence(db, { projectId: row.project_id, contextKey: row.context_key }, "finalized_attempt", Number(pruned.changes), timestamp);
   return true;
 }
 

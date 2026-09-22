@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import { temporaryProject } from "./fixtures.mjs";
 import { enrollRuntimeFixture } from "./runtime-fixtures.mjs";
 
@@ -51,6 +52,9 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
           },
         },
       } } }),
+      JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/call", params: { name: "configure_router", arguments: {
+        contextId: "mcp", scope: "project", autoActivate: true,
+      } } }),
     ];
     const result = spawnSync(process.execPath, [serverPath], {
       input: `${messages.join("\n")}\n`,
@@ -61,7 +65,7 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
     });
     assert.equal(result.status, 0, result.stderr);
     const responses = result.stdout.trim().split(/\r?\n/).map(JSON.parse);
-    assert.equal(responses.length, 9);
+    assert.equal(responses.length, 10);
     assert.equal(responses[0].error.code, -32700);
     assert.equal(responses[1].result.serverInfo.version, runtimeVersion);
     const tools = responses[2].result.tools;
@@ -110,6 +114,20 @@ test("MCP implements parse errors, discovery, strict validation, and unknown met
       "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN",
     ].includes(reasonCode)));
     assert.equal(responses[8].result.structuredContent.target, undefined);
+    assert.equal(responses[9].result.isError, true);
+    const journal = new DatabaseSync(join(project.home, "observations.sqlite3"), { readOnly: true });
+    const main = new DatabaseSync(join(project.home, "router.sqlite3"), { readOnly: true });
+    try {
+      const observed = journal.prepare("SELECT payload_json FROM events WHERE component='mcp' AND event='finished' ORDER BY seq").all().map((row) => JSON.parse(row.payload_json));
+      assert.equal(observed.length, 6);
+      assert.deepEqual(observed.map((e) => e.operation), ["rejected", "succeeded", "succeeded", "rejected", "degraded", "rejected"]);
+      const failed = observed.at(-1);
+      assert.equal(failed.lifecycle, "completed");
+      assert.equal(failed.identitySource, "native_dispatch");
+      assert.equal(main.prepare("SELECT state FROM runtime_invocations WHERE id=?").get(failed.invocationId).state, "completed");
+      assert.equal(failed.runtimeState, "entered");
+      assert.match(failed.runtimeDigest, /^[a-f0-9]{64}$/u);
+    } finally { main.close(); journal.close(); }
   } finally {
     await project.cleanup();
   }

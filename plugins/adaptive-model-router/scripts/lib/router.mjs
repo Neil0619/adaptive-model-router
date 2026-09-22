@@ -1,5 +1,6 @@
 import { capacityAdmissionDecision } from "./host-capacity-recovery.mjs";
 import { randomUUID } from "node:crypto";
+import { isStorageFailure, requestError } from "./request-errors.mjs";
 import { getModelCatalog, selectDelegateCatalog } from "./catalog.mjs";
 import { classifyBorderline } from "./classifier.mjs";
 import { MAX_ESCALATIONS, SCHEMA_VERSION } from "./constants.mjs";
@@ -139,8 +140,8 @@ function validateRouteInput(input) {
     input = { ...input, override: { ...input.override, model: normalized } };
   }
   if (input.evidence.verificationFailed === true) {
-    if (!input.previousRouteId) throw new Error("previousRouteId is required after verification failure");
-    if (!input.evidence.failureType) throw new Error("failureType is required after verification failure");
+    if (!input.previousRouteId) throw requestError("RETRY_PREDECESSOR_REQUIRED", "previousRouteId is required after verification failure.");
+    if (!input.evidence.failureType) throw requestError("RETRY_FAILURE_TYPE_REQUIRED", "failureType is required after verification failure.");
   }
   const delegation = input.hostCapabilities?.delegation;
   if (delegation) {
@@ -194,10 +195,10 @@ async function routeWithStore(input, options, store) {
   let previous = null;
   if (input.previousRouteId) {
     previous = store.findRoute(context, input.previousRouteId);
-    if (!previous) throw new Error("previousRouteId does not belong to the current project and context");
+    if (!previous) throw requestError("RETRY_PREDECESSOR_INVALID", "previousRouteId does not belong to the current project and context.");
     const rootLocalRetry = previous.action === "continue" && input.evidence.verificationFailed === true;
     if (previous.action !== "delegate" && !rootLocalRetry) {
-      throw new Error("previousRouteId must reference a delegated route or a failed root-local continue route");
+      throw requestError("RETRY_PREDECESSOR_INVALID", "previousRouteId must reference a delegated route or a failed root-local continue route.");
     }
   }
 
@@ -221,6 +222,13 @@ async function routeWithStore(input, options, store) {
   }
   const activeRouteId = store.activeDelegationRouteId(context);
   if (activeRouteId) return busyRoute(store, context, activeRouteId);
+  const commitIdleRoute = (route) => {
+    const committed = store.commitRoute(context, route, null, { requireIdle: true });
+    if (committed.busy) return busyRoute(store, context, committed.activeRouteId, {
+      category: route.category, classifier: route.classifier.state, escalation: route.escalation,
+    });
+    return publicRoute(route);
+  };
   const delegationCapabilities = input.hostCapabilities?.delegation || null;
   const claimsDelegationUnavailable = !delegationCapabilities?.available || delegationCapabilities.invocation !== "direct";
   if (claimsDelegationUnavailable && store.hasProvenDirectDelegation(context)
@@ -234,15 +242,12 @@ async function routeWithStore(input, options, store) {
     const rejected = explicit ? resolveModelTarget({ policy: modelPolicy, catalog: [], override: explicit,
       demand: decideWorkLevel(scoreTask({ goal: input.goal, phase: input.phase, evidence: input.evidence }), input.evidence, modelPolicy) }).reason : null;
     const route = contextualRoute(store, context, { action: explicit ? "ask_user" : "continue", codes: [rejected || "HOST_DELEGATION_UNAVAILABLE"] });
-    store.commitRoute(context, route, null);
-    return publicRoute(route);
+    return commitIdleRoute(route);
   }
   let stageKey = opaqueId(store.salt, "stage", `${context.contextKey}\0${input.stageId || input.phase}`);
   if (previous?.stage_key) {
     if (input.stageId && previous.stage_key !== stageKey) {
-      const error = new Error("previousRouteId must reference the same stageId");
-      error.code = "INVALID_INPUT";
-      throw error;
+      throw requestError("RETRY_STAGE_MISMATCH", "previousRouteId must reference the same stageId.");
     }
     stageKey = previous.stage_key;
   }
@@ -250,8 +255,7 @@ async function routeWithStore(input, options, store) {
   if (!capacity.allowed) {
     const route = contextualRoute(store, context, { action: "continue", codes: [capacity.reasonCode] });
     route.stageKey = stageKey;
-    store.commitRoute(context, route, null);
-    return publicRoute(route);
+    return commitIdleRoute(route);
   }
   let evidence = input.evidence;
   const prior = store.db.prepare(`SELECT r.*, o.status AS final_status, o.failure_type AS final_failure
@@ -260,9 +264,7 @@ async function routeWithStore(input, options, store) {
     ORDER BY r.rowid DESC LIMIT 1`).get(context.projectId, context.contextKey, stageKey);
   if (previous && prior && previous.route_id !== prior.route_id
     && (previous.action === "delegate" || prior.final_status !== "passed")) {
-    const error = new Error("previousRouteId must reference the latest delegated attempt of this stage");
-    error.code = "INVALID_INPUT";
-    throw error;
+    throw requestError("RETRY_PREDECESSOR_INVALID", "previousRouteId must reference the latest delegated attempt of this stage.");
   }
   if (!previous) {
     if (prior && prior.final_status !== "passed") {
@@ -272,8 +274,7 @@ async function routeWithStore(input, options, store) {
   }
   if (!initialOverride.override && !previous && isTrivialTask(input.goal, evidence)) {
     const route = contextualRoute(store, context, { action: "continue", codes: [evidence.workProduct === false ? "NO_WORK_PRODUCT" : "TRIVIAL_CONTINUE"] });
-    store.commitRoute(context, route, null);
-    return publicRoute(route);
+    return commitIdleRoute(route);
   }
   let scored = scoreTask({ goal: input.goal, phase: input.phase, evidence, policy: {},
     profile: { ...scoringProfile.definition, profileVersion: scoringProfile.profileVersion } });
@@ -291,8 +292,7 @@ async function routeWithStore(input, options, store) {
     && Number(evidence.batchSize || 0) <= 1) {
     const route = contextualRoute(store, context, { action: "continue", category: scored.category,
       codes: ["LOW_COMPLEXITY_CONTINUE"], classifier: classifier.state });
-    store.commitRoute(context, route, null);
-    return publicRoute(route);
+    return commitIdleRoute(route);
   }
   const catalogResult = await getModelCatalog({ provided: options.catalog || null, store });
   const delegateCatalog = selectDelegateCatalog(catalogResult.models, delegationCapabilities);
@@ -310,9 +310,7 @@ async function routeWithStore(input, options, store) {
     else if (evidence.verificationFailed === true) {
       const outcome = store.db.prepare("SELECT status,failure_type FROM outcomes WHERE route_id=?").get(previous.route_id);
       if (outcome?.status !== "failed" || outcome.failure_type !== evidence.failureType) {
-        const error = new Error("verificationFailed requires the matching recorded failed outcome");
-        error.code = "INVALID_INPUT";
-        throw error;
+        throw requestError("RETRY_OUTCOME_REQUIRED", "verificationFailed requires the matching recorded failed outcome.");
       }
       if (initialOverride.source === "request") {
         // A current explicit user choice is not an automatic enhancement and
@@ -358,8 +356,7 @@ async function routeWithStore(input, options, store) {
     route.previousRouteId = previous?.route_id || null;
     route.stageKey = stageKey;
     route.decision = decision(desired.workLevel, rule);
-    store.commitRoute(context, route, null);
-    return publicRoute(route);
+    return commitIdleRoute(route);
   };
   if (failureCode) {
     escalation.state = failureCode === "ESCALATION_LIMIT_REACHED" ? "exhausted" : "unavailable";
@@ -407,8 +404,7 @@ async function routeWithStore(input, options, store) {
         classifier: classifier.state,
         escalation,
       });
-      store.commitRoute(context, fallback, null);
-      return publicRoute(fallback);
+      return commitIdleRoute(fallback);
     }
     const activeRouteIdAfterScoring = store.activeDelegationRouteId(context);
     if (activeRouteIdAfterScoring) {
@@ -461,8 +457,7 @@ async function routeWithStore(input, options, store) {
           classifier: classifier.state,
           escalation,
         });
-        store.commitRoute(context, fallback, null);
-        return publicRoute(fallback);
+        return commitIdleRoute(fallback);
       }
     }
     const ticket = createDelegationTicket();
@@ -497,8 +492,7 @@ async function routeWithStore(input, options, store) {
         classifier: classifier.state,
         escalation,
       });
-      store.commitRoute(context, fallback, null);
-      return publicRoute(fallback);
+      return commitIdleRoute(fallback);
     }
   }
   return failOpen("STORAGE_UNAVAILABLE");
@@ -510,10 +504,9 @@ export async function routeStage(input, options = {}) {
     const store = options.store || (ownedStore = new RouterStore(options.database ? { path: options.database } : {}));
     return await routeWithStore(input, options, store);
   } catch (error) {
-    if (String(error?.message).startsWith("Host compatibility epoch blocked:")) throw error;
     if (error?.code === "RUNTIME_CANDIDATE_QUALIFICATION_PENDING") return failOpen(error.code);
-    if (error?.code === "INVALID_INPUT" || /required|not allowed|does not belong|must reference|override must/i.test(String(error?.message))) throw error;
-    return failOpen("STORAGE_UNAVAILABLE");
+    if (isStorageFailure(error)) return failOpen("STORAGE_UNAVAILABLE");
+    throw error;
   } finally {
     ownedStore?.close();
   }

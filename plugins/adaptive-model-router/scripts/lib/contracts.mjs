@@ -1,3 +1,4 @@
+import { VERIFICATION_EVIDENCE_SCHEMA } from "./audit-records.mjs";
 import {
   CATEGORIES,
   EFFORT_ORDER,
@@ -182,6 +183,7 @@ export const OUTCOME_INPUT_SCHEMA = {
   additionalProperties: false,
   required: ["routeId", "contextId", "status", "gate", "failureType", "retries", "retryBreakdown", "escalations", "userCorrection"],
   properties: {
+    verificationEvidence: VERIFICATION_EVIDENCE_SCHEMA,
     routeId: { type: "string", minLength: 1, maxLength: 128 },
     closureToken: { type: "string", pattern: "^[a-f0-9]{64}$" },
     contextId: { type: "string", minLength: 1, maxLength: 256 },

@@ -1,3 +1,4 @@
+import { recordPrunedEvidence } from "./audit-records.mjs";
 import { validColdRuntimeTransition } from "./runtime-cold-transition.mjs";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, renameSync, realpathSync } from "node:fs";
@@ -292,12 +293,15 @@ export function acquireRuntimeInvocation(db, context, { kind, stageId = null, ge
 export function finishRuntimeInvocation(db, invocation, { completed = true } = {}) {
   db.prepare("UPDATE runtime_invocations SET state=? WHERE id=? AND state='active'")
     .run(completed ? "completed" : "unknown", invocation.id);
-  db.prepare(`DELETE FROM runtime_invocations WHERE project_id=? AND context_key=? AND state='completed'
+  const invocations = db.prepare(`DELETE FROM runtime_invocations WHERE project_id=? AND context_key=? AND state='completed'
     AND rowid NOT IN (SELECT rowid FROM runtime_invocations WHERE project_id=? AND context_key=? AND state='completed' ORDER BY rowid DESC LIMIT 128)`)
     .run(invocation.projectId, invocation.contextKey, invocation.projectId, invocation.contextKey);
-  db.prepare(`DELETE FROM runtime_call_receipts WHERE project_id=? AND context_key=? AND state!='pending'
+  const receipts = db.prepare(`DELETE FROM runtime_call_receipts WHERE project_id=? AND context_key=? AND state!='pending'
     AND rowid NOT IN (SELECT rowid FROM runtime_call_receipts WHERE project_id=? AND context_key=? AND state!='pending' ORDER BY rowid DESC LIMIT 128)`)
     .run(invocation.projectId, invocation.contextKey, invocation.projectId, invocation.contextKey);
+  const timestamp = new Date().toISOString();
+  recordPrunedEvidence(db, invocation, "completed_invocation", Number(invocations.changes), timestamp);
+  recordPrunedEvidence(db, invocation, "settled_receipt", Number(receipts.changes), timestamp);
 }
 
 // Called inside the existing route/ticket transaction. The lease prevents the

@@ -232,7 +232,18 @@ selected model happens to match the root model. Map the router's `target.effort`
 
 ## Failures and escalation
 
-On a verification failure, route the next attempt with the prior `routeId`, `verificationFailed: true`, and an enumerated `failureType`. Reasoning failures escalate monotonically at most twice in the exact effort order `low/medium → high → xhigh → max → ultra`. Default routing uses only GPT-6, normally medium/high/xhigh, and defaults to high.
+For a retry of the same logical stage after its verification failed, first record
+the matching failed outcome, then pass its latest retryable `routeId` as
+`previousRouteId`, retain the original `stageId`, and set
+`evidence.verificationFailed: true` with the matching enumerated `failureType`.
+An independent newly discovered product issue is a new stage: describe that
+issue with a new `stageId` and ordinary evidence, without `previousRouteId` or
+`verificationFailed`. The existence of a product bug is not a failed Router
+verification. A rejected tool request or `busy` response creates no new failed
+outcome; inspect the full error and fix the contract without field-by-field
+guessing. Never change stage IDs to escape the same stage's failure history.
+
+Reasoning failures escalate monotonically at most twice in the exact effort order `low/medium → high → xhigh → max → ultra`. Default routing uses only GPT-6, normally medium/high/xhigh, and defaults to high.
 Check higher conditions before considering a downgrade. Low needs settled,
 mechanical, low-risk work with strong verification and an exact output check;
 medium needs settled, strongly verified work without review, risk, ambiguity,

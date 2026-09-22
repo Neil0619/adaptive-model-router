@@ -1,12 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendFileSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, renameSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import { readStableRollout } from "../scripts/lib/native-rollout-reader.mjs";
+import { readStableRollout, COLD_ROLLOUT_FILE_LIMIT } from "../scripts/lib/native-rollout-reader.mjs";
 
 function fixture(run) {
   const root = mkdtempSync(join(tmpdir(), "router-rollout-snapshot-"));
@@ -14,6 +14,34 @@ function fixture(run) {
   writeFileSync(path, bytes);
   try { run({ path, bytes }); } finally { rmSync(root, { recursive: true, force: true }); }
 }
+
+test("expanded cold byte budget remains finite and preserves complete hashing, record and source checks", () => fixture(({ path, bytes }) => {
+  const options = { maxBytes: COLD_ROLLOUT_FILE_LIMIT, deadline: Date.now() + 5000 };
+  for (const maxBytes of [0, -1, NaN, Infinity, 1.5, COLD_ROLLOUT_FILE_LIMIT + 1])
+    assert.throws(() => readStableRollout(path, () => {}, { ...options, maxBytes }), /byte budget is invalid/);
+  assert.throws(() => readStableRollout(path, () => {}, { maxBytes: COLD_ROLLOUT_FILE_LIMIT }), /requires a finite deadline/);
+  assert.throws(() => readStableRollout(path, () => {}, { maxBytes: Buffer.byteLength(bytes) - 1 }), /exceeds evidence bounds/);
+  const seen = [];
+  const result = readStableRollout(path, entry => seen.push(entry.value), options);
+  assert.deepEqual(seen, [1, 2]);
+  assert.equal(result.transcriptDigest, createHash("sha256").update(bytes).digest("hex"));
+  assert.throws(() => readStableRollout(path, () => {}, { ...options, deadline: Date.now() - 1 }), /budget exhausted/);
+  assert.throws(() => readStableRollout(path, (_entry, line) => {
+    if (line === 1) appendFileSync(path, '{"value":3}\n');
+  }, options), /changed during evidence read/);
+  writeFileSync(path, '{"value":1}');
+  assert.throws(() => readStableRollout(path, () => {}, options), /incomplete records/);
+  writeFileSync(path, JSON.stringify({ value: "x".repeat(16 * 1024 * 1024) }) + "\n");
+  assert.throws(() => readStableRollout(path, () => assert.fail("oversized business record admitted"), options), /line exceeds evidence bounds/);
+}));
+
+test("ordinary reads keep 512 MiB while cold reads reject files beyond their 1 GiB cap before parsing", () => fixture(({ path }) => {
+  truncateSync(path, 512 * 1024 * 1024 + 1);
+  assert.throws(() => readStableRollout(path, () => assert.fail("oversized ordinary file parsed")), /exceeds evidence bounds/);
+  truncateSync(path, COLD_ROLLOUT_FILE_LIMIT + 1);
+  assert.throws(() => readStableRollout(path, () => assert.fail("oversized cold file parsed"),
+    { maxBytes: COLD_ROLLOUT_FILE_LIMIT, deadline: Date.now() + 5000 }), /exceeds evidence bounds/);
+}));
 
 test("parent reconciliation reads a fixed complete prefix while native events append", () => fixture(({ path, bytes }) => {
   const seen = [];

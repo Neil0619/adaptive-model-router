@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, wri
 import { dirname, join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { defaultPluginData } from "./plugin-data.mjs";
+import { appendObservation } from "./observability.mjs";
 
 function root(env) {
   return env.ADAPTIVE_ROUTER_HOME || env.PLUGIN_DATA || env.CLAUDE_PLUGIN_DATA || defaultPluginData(env);
@@ -53,6 +54,7 @@ function writeScoped(path, value) {
       try { return { file, time: statSync(file).mtimeMs }; } catch { return null; }
     }).filter(Boolean).sort((a, b) => b.time - a.time).slice(256);
     for (const entry of oldest) rmSync(entry.file, { force: true });
+    appendObservation({ component: "retention", event: "pruned", evidenceKind: "hook_task_receipt", count: oldest.length }, { mainPath: join(dirname(dirname(path)), "..", "router.sqlite3") });
   }
 }
 

@@ -1,3 +1,4 @@
+import { ensureAuditSchema, insertOutcomeEvidence, verifyOutcomeEvidenceReplay } from "./audit-records.mjs";
 import { ensureRuntimeIsolationSchema, bindRuntimeStage } from "./runtime-isolation.mjs";
 import { capacityAdmissionDecision, createCapacitySchema } from "./host-capacity-recovery.mjs";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -193,6 +194,7 @@ export class RouterStore {
       this.db.exec("PRAGMA trusted_schema = OFF");
       this.migrate();
       this.transaction(() => ensureRuntimeIsolationSchema(this.db));
+      this.transaction(() => ensureAuditSchema(this.db));
       this.runtimeInvocation = runtimeInvocation || (process.env.ADAPTIVE_ROUTER_INVOCATION_ID
         ? this.db.prepare("SELECT id,generation,project_id AS projectId,context_key AS contextKey FROM runtime_invocations WHERE id=? AND state='active'")
           .get(process.env.ADAPTIVE_ROUTER_INVOCATION_ID) : null);
@@ -1038,6 +1040,14 @@ export class RouterStore {
 
   commitRoute(context, route, onceId = null, admission = null) {
     return this.transaction(() => {
+      // Automatic non-delegate decisions can race a winner after their first
+      // idle read (or an awaited classifier/Hook probe). Check ownership under
+      // this same write lock, before recording fallback history or consuming
+      // overrides. Explicit manual-root/disabled decisions do not opt in.
+      if (admission?.requireIdle === true) {
+        const activeRouteId = this.activeDelegationRouteId(context);
+        if (activeRouteId) return { committed: false, retry: false, busy: true, activeRouteId };
+      }
       if (route.action === "delegate") {
         const capacity = capacityAdmissionDecision(this.db, context, route.stageKey);
         if (!capacity.allowed) return { committed: false, retry: false, fallback: capacity.reasonCode };
@@ -1361,6 +1371,7 @@ export class RouterStore {
           error.code = "OUTCOME_CONFLICT";
           throw error;
         }
+        verifyOutcomeEvidenceReplay(this.db, route.route_id, outcome.verificationEvidence);
         return { recorded: false, idempotent: true, status: normalized.status };
       }
       const attempt = this.db.prepare(`
@@ -1405,6 +1416,7 @@ export class RouterStore {
         hash,
         nowIso(),
       );
+      insertOutcomeEvidence(this.db, context, route.route_id, outcome.verificationEvidence);
       markDelegationOutcome(this.db, context, route.route_id, normalized.status);
       return { recorded: true, idempotent: false, status: normalized.status, seq: Number(result.lastInsertRowid) };
     });
@@ -2032,6 +2044,8 @@ export class RouterStore {
   clearProject(context) {
     return this.transaction(() => {
       const projectId = context.projectId;
+      this.db.prepare("DELETE FROM outcome_verification_evidence WHERE project_id=?").run(projectId);
+      this.db.prepare("DELETE FROM retention_coverage WHERE project_id=?").run(projectId);
       this.db.prepare("DELETE FROM meta WHERE key LIKE ?").run(`native_qualification:${projectId}:%`);
       this.db.prepare("DELETE FROM meta WHERE key LIKE ?")
         .run(`${INSPECTION_GUARD_PREFIX}${projectId}:%`);

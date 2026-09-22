@@ -48,6 +48,24 @@ export function readNativeRootBirth(input) {
 }
 export const isNativeRootBirth = (proof) => rootBirths.has(proof);
 
+// Descriptive metadata only. This result never grants lifecycle/admission
+// authority and unknown host source shapes remain explicitly unknown.
+export function readNativeTaskOrigin(input) {
+  const unknown = { taskOrigin: "unknown", originSource: "unavailable" };
+  try {
+    if (input.agent_id || input.agent_type) return readThreadSpawnIdentity(input, {
+      pathField: input.hook_event_name === "SubagentStop" ? "agent_transcript_path" : "transcript_path",
+    }) ? { taskOrigin: "bounded_child", originSource: "native_metadata" } : unknown;
+    const entry = JSON.parse(readFirstLine(input.transcript_path));
+    const meta = entry.type === "session_meta" ? entry.payload : null;
+    if (meta?.id !== input.session_id || meta.parent_thread_id || meta.source?.subagent
+      || !meta.cwd || !input.cwd || directoryIdentity(meta.cwd) !== directoryIdentity(input.cwd)) return unknown;
+    if (meta.thread_source === "background_suggestion") return { taskOrigin: "background_suggestion", originSource: "native_metadata" };
+    if (meta.thread_source === "user" && ["cli", "vscode", "codex_desktop"].includes(meta.source)) return { taskOrigin: "interactive_root", originSource: "native_metadata" };
+    return unknown;
+  } catch { return unknown; }
+}
+
 /**
  * Read and validate the immutable thread-spawn identity written by Codex before
  * SubagentStart. This is the sole adapter for host rollout metadata; callers

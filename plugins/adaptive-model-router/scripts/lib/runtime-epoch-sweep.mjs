@@ -5,6 +5,7 @@ import { readTaskQualification, prepareHistoricalQualificationAdoption } from ".
 import { prepareHostEpochHandover, commitHostEpochHandover, epochAdmissionState, qualifyHostEpochPublication, publishHostEpoch } from "./runtime-epoch.mjs";
 import { ensureHostEpochSchema } from "./host-epoch-storage.mjs";
 import { payloadHash } from "./io.mjs";
+import { recoverHistoricalQualification } from "./historical-qualification-recovery.mjs";
 
 // Frozen v1 writers stored a task-scoped qualification without a generation
 // suffix. Absence of the newer key must not discard that original proof (or a
@@ -57,13 +58,21 @@ export async function sweepHostCompatibilityEpoch({ store, candidate, shellRoot,
           if (!readiness.binding) throw new Error(readiness.reasonCode || "current_Hook_binding_missing");
           const turnId = parent.turns.at(-1)?.id;
           const { qualification: prior, sourceGeneration } = sourceTaskQualification(store.db, context, task.generation);
-          let adoptionToken = null;
+          let adoptionToken = null, recoveryAudit = null;
           if (prior?.state === "passed") adoptionToken = await prepareHistoricalQualificationAdoption({
             contextId: parent.id, routeId: prior.routeId, turnId, generation: target.digest,
           }, { store, cwd: parent.cwd, sourceGeneration, binding: readiness.binding, inspectBinding });
-          else if (prior) throw new Error("historical_qualification_requires_its_existing_reconciliation");
+          else if (prior) {
+            // This only audits an existing explicit repair receipt. Preview
+            // cannot close a gate, fabricate success or approve a new child.
+            recoveryAudit = await recoverHistoricalQualification({ contextId: parent.id, routeId: prior.routeId },
+              { store, cwd: parent.cwd, sourceGeneration, verifyRetainedNative: true,
+                readThread: async (id) => (await client.request("thread/read", { threadId: id, includeTurns: true })).thread });
+            if (recoveryAudit.status !== "reconciled_failure" || !recoveryAudit.rawAuditDigest)
+              throw new Error("historical_qualification_requires_its_existing_reconciliation");
+          }
           const token = await prepareHostEpochHandover(store, { contextId: parent.id, cwd: parent.cwd, turnId,
-            transcriptPath: parent.path }, { candidate, adoptionToken, shellRoot, inspect });
+            transcriptPath: parent.path }, { candidate, adoptionToken, recoveryAudit, shellRoot, inspect });
           Object.assign(result, commitHostEpochHandover(store, token));
         } catch (error) {
           // Filesystem/RPC exceptions can contain native paths or message text.

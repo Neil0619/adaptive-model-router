@@ -1,3 +1,4 @@
+import { requestError } from "./request-errors.mjs";
 import { parseJson, payloadHash } from "./io.mjs";
 import { openPrivateState, sealPrivateState } from "./private-state.mjs";
 import { readChildTurnEvidence } from "./child-turn-evidence.mjs";
@@ -355,20 +356,20 @@ export function manageStage(db, context, input, cwd) {
   let child = db.prepare("SELECT * FROM delegation_children WHERE project_id=? AND context_key=? AND route_id=?")
     .get(context.projectId, context.contextKey, input.routeId);
   if (!child && ["reconcile_messages", "begin_maintenance"].includes(input.action) && input.childId && input.childTranscriptPath) {
-    if (input.expectedRevision !== 0) throw new Error("Stage revision changed; historical adoption starts at revision zero.");
+    if (input.expectedRevision !== 0) throw requestError("STAGE_PRECONDITION", "Stage revision changed; historical adoption starts at revision zero.");
     const locator = readThreadSpawnIdentity({ cwd, session_id: input.contextId, agent_id: input.childId, transcript_path: input.childTranscriptPath });
     const attempt = db.prepare("SELECT * FROM delegation_attempts WHERE route_id=? AND project_id=? AND context_key=?")
       .get(input.routeId, context.projectId, context.contextKey);
     const agentHash = createHash("sha256").update(input.childId.normalize("NFC")).digest("hex");
     if (!locator || !isRouterChildTarget(locator.taskName) || !attempt || attempt.agent_id !== agentHash
-      || attempt.ambiguous || !attempt.ticket_consumed || !attempt.post_observed) throw new Error("Historical child identity cannot be correlated to this route; preserve the reconciliation item.");
+      || attempt.ambiguous || !attempt.ticket_consumed || !attempt.post_observed) throw requestError("STAGE_PRECONDITION", "Historical child identity cannot be correlated to this route; preserve the reconciliation item.");
     registerManagedChild(db, context, input.routeId, locator);
     if (attempt.finalized_at) markManagedStageSettled(db, input.routeId);
     child = db.prepare("SELECT * FROM delegation_children WHERE route_id=?").get(input.routeId);
   }
-  if (!child) throw new Error("No trusted child is registered for this route. Use reconcile_messages with its exact native identity before inspecting operations.");
+  if (!child) throw requestError("STAGE_PRECONDITION", "No trusted child is registered for this route. Use reconcile_messages with its exact native identity before inspecting operations.");
   if (input.action === "reconcile_operations") return reconcileOperations(db, context, child, input);
-  if (input.expectedRevision !== child.revision) throw new Error("Stage revision changed; inspect the latest state before changing its intent.");
+  if (input.expectedRevision !== child.revision) throw requestError("STAGE_PRECONDITION", "Stage revision changed; inspect the latest state before changing its intent.");
   if (input.action === "read_operations") return readOperations(db, context, child);
   if (["read_disposition", "resolve_requirements"].includes(input.action)) {
     const maintenance = db.prepare("SELECT * FROM delegation_maintenance WHERE route_id=?").get(child.route_id);

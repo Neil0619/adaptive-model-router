@@ -546,14 +546,17 @@ test("refresh reservation cannot replay or cross task context", async () => {
   });
 });
 
-test("storage rejection and admission rollback retain the old proof and unused override", async () => {
+test("storage rejection and constraint rollback retain the old proof and unused override", async () => {
   for (const rollback of [false, true]) await passedQualification(async (f) => {
     f.binding.digest = "d".repeat(64);
     f.store.setOverride(f.context, { scope: "once", model: "gpt-6-astra", effort: "high" });
     if (rollback) f.store.db.exec("CREATE TRIGGER reject_refresh BEFORE INSERT ON delegation_attempts BEGIN SELECT RAISE(ABORT, 'test admission rollback'); END");
-    const blocked = await routeStage(f.input, { ...f.options, ...(rollback ? {} : { routerChildByteLimit: 0 }) });
-    assert.equal(blocked.action, "continue");
-    assert.deepEqual(blocked.reasonCodes, [rollback ? "STORAGE_UNAVAILABLE" : "ROUTER_CHILD_STORAGE_LIMIT"]);
+    if (rollback) await assert.rejects(routeStage(f.input, f.options), (error) => error.errcode === 1811);
+    else {
+      const blocked = await routeStage(f.input, { ...f.options, routerChildByteLimit: 0 });
+      assert.equal(blocked.action, "continue");
+      assert.deepEqual(blocked.reasonCodes, ["ROUTER_CHILD_STORAGE_LIMIT"]);
+    }
     assert.deepEqual(readTaskQualification(f.store.db, f.context), f.original);
     assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM overrides WHERE scope='once'").get().n, 1);
     assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM meta WHERE key LIKE 'native_qualification_archive:%'").get().n, 0);
@@ -615,12 +618,12 @@ test("a trusted upgrade to 0.153.4 refreshes the no-tool proof and preserves the
 });
 
 test("a 0.153.4 upgrade cannot refresh a changed project or an unsettled prior audit", async () => {
-  for (const mutate of [
+  for (const [index, mutate] of [
     ({ binding }) => { binding.taskCwdDigest = "e".repeat(64); },
     ({ store, route }) => { store.db.prepare("UPDATE delegation_attempts SET ambiguous=1 WHERE route_id=?").run(route.routeId); },
     ({ store, route }) => { store.db.prepare("UPDATE delegation_attempts SET finalized_at=NULL WHERE route_id=?").run(route.routeId); },
     ({ store, route }) => { store.db.prepare("DELETE FROM outcomes WHERE route_id=?").run(route.routeId); },
-  ]) await passedQualification(async (f) => {
+  ].entries()) await passedQualification(async (f) => {
     f.binding.digest = "c".repeat(64);
     f.binding.configurationDigest = "d".repeat(64);
     f.binding.cliVersion = "0.153.4";
@@ -628,8 +631,11 @@ test("a 0.153.4 upgrade cannot refresh a changed project or an unsettled prior a
     const readiness = qualificationReadiness(f.store.db, f.context, f.binding);
     assert.equal(readiness.ready, false);
     assert.equal(readiness.qualificationBinding, undefined);
-    const result = await routeStage(f.input, f.options);
-    assert.ok(["continue", "busy"].includes(result.action));
+    if (index === 2) await assert.rejects(routeStage(f.input, f.options), { code: "STAGE_PRECONDITION" });
+    else {
+      const result = await routeStage(f.input, f.options);
+      assert.ok(["continue", "busy"].includes(result.action));
+    }
     assert.deepEqual(readTaskQualification(f.store.db, f.context), f.original);
     assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM delegation_attempts").get().n, 1);
     assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM meta WHERE key LIKE 'native_qualification_archive:%'").get().n, 0);

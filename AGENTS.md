@@ -1,5 +1,21 @@
 # Project instructions
 
+## Visible installation progress
+
+- The user explicitly prohibits silent installation or upgrade workflows with
+  unclear progress. Provide a foreground terminal command or another interface
+  that remains visible throughout the operation, including while Codex exits.
+- Show the current phase, elapsed time, concrete blockers or waiting reason,
+  and the final success, failure, or recovery result. Do not use repeated chat
+  polling or a private log path as the only progress interface.
+- Before asking the user to exit Codex, pause installation-related scheduled
+  follow-ups and explain any required full process exit. Do not make the user
+  guess whether closing a window or leaving the app in the background suffices;
+  display the actual remaining host processes in the visible installer.
+- A user-run command is an acceptable installation handoff. Prepare and verify
+  the command first, retain existing Hook authorization, and never represent
+  package preparation or installation as completed runtime acceptance.
+
 ## Automated logged-in smoke tests
 
 - After the one-time Hook trust bootstrap, the agent owns the complete macOS

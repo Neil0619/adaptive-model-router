@@ -14,7 +14,8 @@ import { bindRuntimeStage, publishRuntime, runtimeTask, runtimeReferences, settl
 import { qualifyRuntimeCompatibility } from "../scripts/lib/runtime-compatibility.mjs";
 import { inspectRuntimeBoundary, isRuntimeBoundaryProof } from "../scripts/lib/runtime-boundary.mjs";
 import { beginHookDispatch, endRuntimeDispatch, beginMcpDispatch } from "../scripts/lib/runtime-dispatch.mjs";
-import { lifecycleBinding, runtimeSourceDigest } from "../scripts/lib/lifecycle-qualification.mjs";
+import { lifecycleBinding, runtimeSourceDigest, readTaskQualification, qualificationReadiness } from "../scripts/lib/lifecycle-qualification.mjs";
+import { recoverHistoricalQualification } from "../scripts/lib/historical-qualification-recovery.mjs";
 import { resolveHookIdentity } from "../scripts/lib/hook-identity.mjs";
 import { recordHookIdentityDiagnostic } from "../scripts/lib/hook-diagnostics.mjs";
 import { qualifyHostEpochPublication, publishHostEpoch, prepareHostEpochHandover, commitHostEpochHandover,
@@ -30,6 +31,7 @@ import { prepareMessageCheckpoint, prepareMessageContinuation, prepareMessageArr
 import { stageClosureStatus, observeManagedMessage, observeManagedStop } from "../scripts/lib/stage-closure.mjs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
 import { CATALOG, routeInput } from "./fixtures.mjs";
+import { historicalQualificationFixture } from "./support/historical-qualification.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = "16c439dd0bf3657ba06707ff15c1465613d49554";
@@ -46,6 +48,9 @@ before(async (t) => {
   assert.equal(spawnSync("tar", ["-xf", "-", "-C", work], { input: archive.stdout }).status, 0);
   a = inspectRuntimePackage(join(work, "plugins/adaptive-model-router"));
   cpSync(root, join(work, "candidate"), { recursive: true });
+  // This private candidate uses the fixture's data home, not the source
+  // installation's absolute stable-shell binding. Hash it only after removal.
+  rmSync(join(work, "candidate", "runtime-host.json"), { force: true });
   b = inspectRuntimePackage(join(work, "candidate"));
   old = Object.fromEntries(await Promise.all(["router", "delegation-gate", "stage-closure", "runtime-dispatch", "database"]
     .map(async (name) => [name, await moduleAt(a.root, name)])));
@@ -216,6 +221,59 @@ test("epoch discovery retains unscoped legacy qualification and never hides inva
     f.store.db.prepare("INSERT INTO meta(key,value) VALUES(?,?)").run(`${key}:runtime:${a.digest}`, "{}");
     assert.deepEqual(sourceTaskQualification(f.store.db, f.context, a.digest), {
       qualification: { state: "invalid" }, sourceGeneration: a.digest });
+  });
+});
+
+test("historical failure handover requires a fresh source-owned repair audit and grants no candidate proof", async () => {
+  for (const mode of ["success", "child-change", "child-change-during-commit"]) await fixture(async (f) => {
+    const dispatch = beginMcpDispatch("route_stage", { contextId: f.reference.contextId },
+      { cwd: f.cwd, env: { CODEX_THREAD_ID: f.reference.contextId }, shellRoot: b.root });
+    f.store.runtimeInvocation = dispatch.invocation;
+    await historicalQualificationFixture("completed", async (h) => {
+      endRuntimeDispatch(dispatch); f.store.runtimeInvocation = null;
+      const reference = { ...f.reference, turnId: "root-next", transcriptPath: h.parent.path };
+      const input = { ...f.input, turn_id: reference.turnId, transcript_path: reference.transcriptPath };
+      endRuntimeDispatch(beginHookDispatch(input, { shellRoot: b.root }));
+      recordHookIdentityDiagnostic(resolveHookIdentity(input).audit, "identity_accepted", process.env,
+        { contextId: reference.contextId, turnId: reference.turnId });
+      const prepare = (recoveryAudit) => prepareHostEpochHandover(f.store, reference, { candidate: b.digest, shellRoot: b.root,
+        recoveryAudit, inspect: async () => ({ ready: false, binding: f.binding }) });
+      await assert.rejects(prepare(null), /historical_qualification_recovery_unproven/);
+      const preview = await recoverHistoricalQualification(h.input, h.options);
+      assert.equal(preview.status, "recoverable");
+      assert.equal((await recoverHistoricalQualification({ ...h.input, apply: true, expectedEvidenceDigest: preview.evidenceDigest }, h.options)).status, "reconciled_failure");
+      const audit = await recoverHistoricalQualification(h.input, { ...h.options, verifyRetainedNative: true });
+      assert.equal(audit.status, "reconciled_failure");
+      await assert.rejects(prepare(JSON.parse(JSON.stringify(audit))), /historical_qualification_recovery_unproven/);
+      const before = business(f.store.db), original = readTaskQualification(f.store.db, h.context);
+      const token = await prepare(audit);
+      const changeChild = () => {
+        h.childRecords.push(event("task_started", { turn_id: "late-work" }));
+        writeFileSync(h.child.path, h.childRecords.map(JSON.stringify).join("\n") + "\n");
+      };
+      if (mode !== "success") {
+        const originalPrepare = f.store.db.prepare;
+        if (mode === "child-change") changeChild();
+        else f.store.db.prepare = function (sql, ...args) {
+          if (sql.startsWith("INSERT INTO runtime_epoch_receipts")) changeChild();
+          return originalPrepare.call(this, sql, ...args);
+        };
+        try { assert.throws(() => commitHostEpochHandover(f.store, token), /historical_qualification_recovery_changed/); }
+        finally { f.store.db.prepare = originalPrepare; }
+        assert.equal(runtimeTask(f.store.db, f.context).generation, a.digest);
+      } else {
+        const result = commitHostEpochHandover(f.store, token);
+        assert.equal(runtimeTask(f.store.db, f.context).generation, b.digest);
+        assert.deepEqual(readTaskQualification(f.store.db, h.context), original);
+        assert.equal(readTaskQualification(f.store.db, { ...f.context, runtimeDigest: b.digest }), null);
+        assert.equal(qualificationReadiness(f.store.db, { ...f.context, runtimeDigest: b.digest }, f.binding).ready, false);
+        const receipt = JSON.parse(f.store.db.prepare("SELECT record FROM runtime_epoch_receipts WHERE id=?").get(result.id).record);
+        assert.equal(receipt.historicalQualificationRecovery.candidateQualification, "required");
+        assert.equal(receipt.historicalQualificationRecovery.preservedState, "failed");
+      }
+      assert.equal(business(f.store.db), before);
+    }, { store: f.store, project: { root: f.cwd, home: f.home }, contextId: f.reference.contextId,
+      parentPrefix: f.records, sourceGeneration: a.digest });
   });
 });
 
@@ -829,6 +887,26 @@ test("one cold batch indexes a shared sender once for all exact accepted message
     } finally { fs.openSync = originalOpen; syncBuiltinESMExports(); }
   }));
 
+test("cold sender scan has a finite offline budget without relaxing the normal shared five seconds", async () =>
+  ordinaryCheckpointFixture(async (f) => {
+    await consumedMessageCase(f, { count: 2 });
+    const originalOpen = fs.openSync, originalNow = Date.now, initial = originalNow(), before = business(f.store.db);
+    let clock = initial, delay = 6000;
+    try {
+      Date.now = () => clock;
+      fs.openSync = function (path, ...args) {
+        if (path === f.reference.transcriptPath) clock += delay;
+        return originalOpen(path, ...args);
+      }; syncBuiltinESMExports();
+      assert.equal(coldPendingMessageResponsibilities(f.store.db, f.context).length, 2, "ordinary task keeps the five-second budget");
+      clock = initial;
+      assert.deepEqual(coldPendingMessageResponsibilities(f.store.db), [], "cold sender and its cached exact matches fit the offline budget");
+      clock = initial; delay = 30_001;
+      assert.equal(coldPendingMessageResponsibilities(f.store.db).length, 2, "expired cold reads preserve every responsibility");
+      assert.equal(business(f.store.db), before, "reading never changes accepted inputs or outcomes");
+    } finally { Date.now = originalNow; fs.openSync = originalOpen; syncBuiltinESMExports(); }
+  }));
+
 test("native SubAgentActivity binds a message inference ID to its exact host turn without rewriting the original row", async () =>
   ordinaryCheckpointFixture(async (f) => {
     const [child] = await consumedMessageCase(f, { count: 1 });
@@ -1146,6 +1224,7 @@ test("entry confirmation needs actual B Hook and completed readonly body; root f
     f.store.runtimeInvocation = hook.invocation;
     observeEpochExecution(f.store, { input: f.input });
     assert.equal(epochAdmissionState(f.store.db, f.context).ready, false);
+    assert.equal(epochAdmissionState(f.store.db, f.context).reasonCode, "HOST_EPOCH_ENTRY_UNCONFIRMED");
     endRuntimeDispatch(hook); f.store.runtimeInvocation = null;
     const read = beginMcpDispatch("get_route_status", { contextId: f.reference.contextId }, { cwd: f.cwd,
       env: { CODEX_THREAD_ID: f.reference.contextId }, shellRoot: a.root });
@@ -1154,6 +1233,12 @@ test("entry confirmation needs actual B Hook and completed readonly body; root f
     assert.throws(() => assertEpochAdmission(f.store, f.context, { kind: "route_stage" }), /ENTRY_UNCONFIRMED/);
     endRuntimeDispatch(read); f.store.runtimeInvocation = null;
     assert.equal(epochAdmissionState(f.store.db, f.context).ready, true);
+    assert.equal(epochAdmissionState(f.store.db, f.context).reasonCode, null);
+    const pendingChild = epochAdmissionState(f.store.db, f.context, child.route.routeId);
+    assert.equal(pendingChild.ready, false);
+    assert.equal(pendingChild.rootReady, true);
+    assert.equal(pendingChild.childReady, false);
+    assert.equal(pendingChild.reasonCode, "HOST_EPOCH_CHILD_ENTRY_UNCONFIRMED");
     const followup = beginMcpDispatch("manage_stage", { contextId: f.reference.contextId, routeId: child.route.routeId },
       { cwd: f.cwd, env: { CODEX_THREAD_ID: f.reference.contextId }, shellRoot: a.root });
     f.store.runtimeInvocation = followup.invocation;
@@ -1165,7 +1250,11 @@ test("entry confirmation needs actual B Hook and completed readonly body; root f
     observeEpochExecution(f.store, { input: preInput });
     assert.equal(assertEpochAdmission(f.store, f.context, { kind: "child_business", stageId: child.route.routeId }).currentNativeEntry, true);
     endRuntimeDispatch(pre); f.store.runtimeInvocation = null;
-    assert.equal(epochAdmissionState(f.store.db, f.context, child.route.routeId).ready, true);
+    const confirmedChild = epochAdmissionState(f.store.db, f.context, child.route.routeId);
+    assert.equal(confirmedChild.ready, true);
+    assert.equal(confirmedChild.rootReady, true);
+    assert.equal(confirmedChild.childReady, true);
+    assert.equal(confirmedChild.reasonCode, null);
   });
 });
 

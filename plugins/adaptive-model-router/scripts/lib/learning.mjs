@@ -1,3 +1,4 @@
+import { requestError } from "./request-errors.mjs";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_OFFSETS } from "./constants.mjs";
 import { OUTCOME_INPUT_SCHEMA } from "./contracts.mjs";
@@ -10,13 +11,13 @@ function nowIso() {
 }
 
 function validateOutcomeSemantics(input, route) {
-  if (route.action !== "delegate") throw new Error("record_outcome only accepts delegated routes");
-  if (input.gate !== route.verification_gate) throw new Error("gate must match the route verification gate");
-  if (input.escalations !== Number(route.escalation_count)) throw new Error("escalations must match the route");
-  if (input.status === "failed" && !input.failureType) throw new Error("failed outcomes require failureType");
-  if (input.status !== "failed" && input.failureType !== null) throw new Error(`${input.status} outcomes require failureType null`);
+  if (route.action !== "delegate") throw requestError("INVALID_INPUT", "record_outcome only accepts delegated routes.");
+  if (input.gate !== route.verification_gate) throw requestError("OUTCOME_GATE_MISMATCH", "gate must match the route verification gate.");
+  if (input.escalations !== Number(route.escalation_count)) throw requestError("INVALID_INPUT", "escalations must match the route.");
+  if (input.status === "failed" && !input.failureType) throw requestError("INVALID_INPUT", "failed outcomes require failureType.");
+  if (input.status !== "failed" && input.failureType !== null) throw requestError("INVALID_INPUT", "Non-failed outcomes require failureType null.");
   const retryTotal = Object.values(input.retryBreakdown).reduce((sum, value) => sum + value, 0);
-  if (retryTotal !== input.retries) throw new Error("retryBreakdown must sum to retries");
+  if (retryTotal !== input.retries) throw requestError("INVALID_INPUT", "retryBreakdown must sum to retries.");
 }
 
 export function maybeGenerateProposal(store, context, category) {
@@ -122,7 +123,7 @@ export function recordOutcome(input, options = {}) {
     const store = options.store || (ownedStore = new RouterStore(options.database ? { path: options.database } : {}));
     const context = store.context({ cwd: options.cwd || process.cwd(), contextId: input.contextId });
     const route = store.findRoute(context, input.routeId);
-    if (!route) throw new Error("routeId does not belong to the current project and context");
+    if (!route) throw requestError("INVALID_INPUT", "routeId does not belong to the current project and context.");
     validateOutcomeSemantics(input, route);
     const result = store.insertOutcome(context, route, input, options.qualificationProof);
     const qualification = parseJson(route.reason_codes_json, []).includes("HOST_LIFECYCLE_QUALIFICATION");
