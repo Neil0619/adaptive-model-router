@@ -70,6 +70,14 @@ const REVIEWED_INSTALLED_EPOCH_ENTRY = { ...Object.fromEntries([
     "scripts/node-launcher.mjs": "25d0b9eda72404e564e65771b097f097bce3c1a4b2afab4797d4e85c26dfb2ab",
     "scripts/mcp-server.mjs": "bfe38a1cd4f83ee2580d3c0b84fb68f17b608178553733162822c3582bdb0c08",
   },
+  // Exact installed validation patch, before request-JSON error classification.
+  // Preserve whole-package admission and the executable A/B verification gate.
+  "08a717303357af962c0c55171ab292312944ef8d135488f12d808204e016db25": {
+    "scripts/lib/runtime-dispatch.mjs": "d3b1088865056609540366bc7964931a36a3302d6ea12eb87d7a859914817f72",
+    "scripts/lib/runtime-isolation.mjs": "899b5a71515a91ab8940c6ac47d61280bd86ccc52efd323af70766920069851d",
+    "scripts/node-launcher.mjs": "25d0b9eda72404e564e65771b097f097bce3c1a4b2afab4797d4e85c26dfb2ab",
+    "scripts/mcp-server.mjs": "152c99883f326ef329b979a49c296b1129fcf1b41eeedeee5035ac713cfc3a7f",
+  },
 };
 
 function reviewedEntry(record, { cold = false } = {}) {
