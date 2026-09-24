@@ -56,6 +56,8 @@ test("the Windows admission rejects changed bytes and cannot authorize a hot v1 
 
 test("Windows cold enrollment, retirement and recovery preserve pending v1 business and its salt", async () => {
   const project = await temporaryProject("router-windows-cold-");
+  // Keep CODEX_HOME cache ownership aligned with canonical package paths.
+  project.root = realpathSync(project.root); project.home = join(project.root, "state");
   try { await withRouterEnvironment(project, async () => {
     const entry = join(process.env.CODEX_HOME, "plugins/cache/adaptive-model-router/adaptive-model-router", legacy.descriptor.runtimeVersion);
     cpSync(legacy.root, entry, { recursive: true });
@@ -102,6 +104,8 @@ test("Windows cold enrollment, retirement and recovery preserve pending v1 busin
 
 test("a later v2 task handover independently verifies retained Windows v1 retirement and publication", async () => {
   const project = await temporaryProject("router-windows-retained-");
+  // Keep CODEX_HOME cache ownership aligned with canonical package paths.
+  project.root = realpathSync(project.root); project.home = join(project.root, "state");
   try { await withRouterEnvironment(project, async () => {
     const entry = join(process.env.CODEX_HOME, "plugins/cache/adaptive-model-router/adaptive-model-router", legacy.descriptor.runtimeVersion);
     cpSync(legacy.root, entry, { recursive: true });
