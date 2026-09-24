@@ -986,7 +986,9 @@ test("next actual user turn retains its explicit epoch despite the unchanged ord
   });
 });
 
-test("ordinary B to C publication preserves A default and admits only the existing candidate qualification path", async () => {
+for (const expireBoundary of [false, true]) test(expireBoundary
+  ? "ordinary publication defers an expired boundary and migrates at the next verified turn"
+  : "ordinary B to C publication preserves A default and admits only the existing candidate qualification path", async () => {
   await fixture(async (f) => {
     commitHostEpochHandover(f.store, await f.prepare());
     for (const [dispatch, observation] of [
@@ -1011,8 +1013,40 @@ test("ordinary B to C publication preserves A default and admits only the existi
     const oldTask = old["runtime-dispatch"].beginHookDispatch(other, { shellRoot: a.root });
     assert.equal(oldTask.invocation.generation, a.digest); old["runtime-dispatch"].endRuntimeDispatch(oldTask);
     f.records.push({ type: "event_msg", payload: { type: "task_started", turn_id: "ordinary-C-turn" } }); f.writeRoot();
-    const input = { ...f.input, hook_event_name: "UserPromptSubmit", turn_id: "ordinary-C-turn", prompt: "Continue work" };
-    const hook = beginHookDispatch(input, { shellRoot: b.root });
+    let input = { ...f.input, hook_event_name: "UserPromptSubmit", turn_id: "ordinary-C-turn", prompt: "Continue work" };
+    const dispatchAtBoundary = (expire = false) => {
+      // Functional admission must not depend on local disk speed. Exercise
+      // real expiry separately at the stable-shell read, after native scanning.
+      const originalNow = Date.now, originalRead = fs.readFileSync;
+      let clock = originalNow(), expired = false;
+      try {
+        Date.now = () => clock;
+        if (expire) {
+          fs.readFileSync = function(path, ...args) {
+            if (!expired && String(path) === join(b.root, ".codex-plugin/plugin.json")) {
+              clock += 251; expired = true;
+            }
+            return originalRead.call(fs, path, ...args);
+          };
+          syncBuiltinESMExports();
+        }
+        const dispatched = beginHookDispatch(input, { shellRoot: b.root });
+        assert.equal(expired, expire);
+        return dispatched;
+      } finally { Date.now = originalNow; fs.readFileSync = originalRead; syncBuiltinESMExports(); }
+    };
+    let hook = dispatchAtBoundary(expireBoundary);
+    if (expireBoundary) {
+      try {
+        assert.equal(hook.invocation.generation, b.digest);
+        assert.equal(runtimeTask(f.store.db, f.context).candidate, null);
+        assert.equal(f.store.db.prepare("SELECT count(*) n FROM runtime_migrations").get().n, 0);
+      } finally { endRuntimeDispatch(hook); }
+      f.records.push({ type: "event_msg", payload: { type: "task_complete", turn_id: input.turn_id } },
+        { type: "event_msg", payload: { type: "task_started", turn_id: "ordinary-C-next-turn" } }); f.writeRoot();
+      input = { ...input, turn_id: "ordinary-C-next-turn" };
+      hook = dispatchAtBoundary();
+    }
     f.store.runtimeInvocation = hook.invocation;
     try {
       assert.equal(hook.invocation.generation, c.digest);

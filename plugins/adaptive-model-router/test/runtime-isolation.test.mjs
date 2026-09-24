@@ -501,7 +501,7 @@ test("full digests reject tampering, shell/writer changes, self-asserted compati
     const writer = packageAt(join(project.root, "writer-change"), "0.4.0+isolation.writer", { writer: true });
     assert.throws(() => qualifyRuntimeCompatibility(a, writer), /Unproven/);
     const cache = join(project.root, "cache"); mkdirSync(cache);
-    symlinkSync(cache, join(project.root, "innocent-name"), "dir");
+    symlinkSync(cache, join(project.root, "innocent-name"), process.platform === "win32" ? "junction" : "dir");
     assert.throws(() => prepareRuntimeCandidate(b.root, join(project.root, "innocent-name", "candidates")), /discovery/);
     const published = runtimeGeneration(store.db, a.digest);
     writeFileSync(join(published.root, "README.md"), "damaged non-executable content");

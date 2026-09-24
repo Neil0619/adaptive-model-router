@@ -29,6 +29,14 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Support cold migration from the exact reviewed Windows September 9 v1 package,
+  preserving its original four-reservation limit, encrypted history and native
+  retirement evidence. Later v2 handovers recheck each retained v1 entry's cold
+  compatibility proof and retirement state before preparation and commit.
+- Recognize exact native PowerShell command completion receipts during task
+  handover, retaining identity, command, ordering and unique-owner checks.
+  Make Windows directory-redirection tests use junctions and separate ordinary
+  epoch progression from explicit expiration coverage.
 - Classify malformed JSON only at external request boundaries. Report damaged
   internal JSON as a redacted internal failure, preserve explicit input errors
   through the stdio bridge, and keep historical validator dependencies frozen.

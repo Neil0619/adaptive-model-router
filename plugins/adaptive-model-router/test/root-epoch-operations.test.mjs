@@ -67,6 +67,26 @@ test("exact legacy native terminal completes its root process without requiring 
   assert.equal(x.retained[0].exitCode, 2); assert.equal(x.retained[0].businessState, "unverified_preserved");
 });
 
+test("exact native PowerShell terminals settle retained Windows root processes", () => {
+  for (const shell of ["C:\\runtime\\pwsh.exe", "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"])
+    for (const flag of ["-Command", "-c"]) {
+      const ended = terminal({ item: { ...terminal().payload.item, command: [shell, flag, "some command"] } });
+      const x = replay([...started(), ended]);
+      assert.equal(x.native.active.size, 0);
+      assert.equal(x.retained.length, 1);
+      assert.equal(x.retained[0].exitCode, 2);
+      assert.equal(x.retained[0].businessState, "unverified_preserved");
+      for (const patch of [{ thread_id: "other" }, { turn_id: "other" },
+        { item: { ...ended.payload.item, process_id: "28" } },
+        { item: { ...ended.payload.item, command: [shell, flag, "changed command"] } }])
+        assert.ok(replay([...started(), { ...ended, payload: { ...ended.payload, ...patch } }]).native.active.has("process:27"));
+    }
+  for (const command of [["C:\\runtime\\pwsh.exe", "-EncodedCommand", "some command"],
+    ["C:\\runtime\\pwsh.exe", "-File", "some command"], ["C:\\runtime\\pwsh.exe", "-Command", "some command", "extra"],
+    ["C:\\runtime\\fake-pwsh.exe", "-Command", "some command"], ["cmd.exe", "/c", "some command"]])
+    assert.ok(replay([...started(), terminal({ item: { ...terminal().payload.item, command } })]).native.active.has("process:27"));
+});
+
 test("changed identity, handle, command, nonterminal receipt, or reused process ownership cannot close root work", () => {
   for (const patch of [{ thread_id: "other" }, { turn_id: "other" }, { item: { ...terminal().payload.item, process_id: "28" } },
     { item: { ...terminal().payload.item, command: ["/bin/zsh", "-lc", "other command"] } },

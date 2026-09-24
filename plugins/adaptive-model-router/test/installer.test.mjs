@@ -41,7 +41,7 @@ test("cold host retention preserves all historical paths, rejects tampering/redi
     assert.equal(readFileSync(join(versions, "new/untouched"), "utf8"), "new-runtime");
     writeFileSync(join(anchor, "runtime.json"), "changed");
     assert.throws(() => restoreRuntimeHostEntries(archive, versions), /conflicts/);
-    rmSync(versions, { recursive: true }); const redirect = join(project.root, "redirect"); mkdirSync(redirect); symlinkSync(redirect, versions, "dir");
+    rmSync(versions, { recursive: true }); const redirect = join(project.root, "redirect"); mkdirSync(redirect); symlinkSync(redirect, versions, process.platform === "win32" ? "junction" : "dir");
     assert.throws(() => restoreRuntimeHostEntries(archive, versions), /path or full content/);
     assert.deepEqual(readdirSync(redirect), []);
   } finally { await project.cleanup(); }
@@ -141,7 +141,7 @@ test("direct writer verification fails before opening any writer when isolation 
     }
     const other = mkdtempSync(join(tmpdir(), "router-isolation-redirect-"));
     try {
-      symlinkSync(other, join(root, "state"), "dir");
+      symlinkSync(other, join(root, "state"), process.platform === "win32" ? "junction" : "dir");
       const result = spawnSync(process.execPath, [join(source, "scripts/verify-runtime-compatibility.mjs"), "must-not-import", "must-not-import", root], { encoding: "utf8", env: { ...process.env, ...isolated } });
       assert.equal(result.status, 2); assert.deepEqual(readdirSync(other), []);
     } finally { rmSync(other, { recursive: true, force: true }); }
