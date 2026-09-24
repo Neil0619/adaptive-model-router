@@ -5,6 +5,9 @@ import { join, resolve, dirname, basename } from "node:path";
 import { lstatSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { inspectRuntimePackage } from "./lib/runtime-package.mjs";
+import { readRuntimeDescriptor } from "./lib/runtime-loader.mjs";
+import { reviewedLegacyRuntime } from "./lib/reviewed-legacy-runtime.mjs";
 
 const [a, b, home, worker] = process.argv.slice(2);
 // Fail before importing either writer or opening SQLite. The third argument
@@ -25,6 +28,16 @@ try {
 }
 const moduleAt = (root, name) => import(pathToFileURL(join(root, "scripts/lib", `${name}.mjs`)).href);
 const catalog = [{ slug: "gpt-6-astra", visibility: "list", priority: 0, supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"] }];
+const limits = new Map();
+for (const root of new Set([a, b])) {
+  const legacy = readRuntimeDescriptor(root).shellProtocolVersion === 1;
+  const record = inspectRuntimePackage(root, { legacy });
+  const limit = legacy ? reviewedLegacyRuntime(record)
+    : { pendingLimit: 10, capacityReason: "ROUTER_GLOBAL_PENDING_LIMIT" };
+  assert.ok(limit, "An unreviewed legacy writer cannot choose the verification contract");
+  assert.equal((await moduleAt(root, "delegation-gate")).ROUTER_GLOBAL_PENDING_LIMIT, limit.pendingLimit);
+  limits.set(root, limit);
+}
 
 async function stage(root, id, { hold = false, existing = null, limited = false } = {}) {
   const [{ RouterStore }, { routeStage }, gate, { recordOutcome }, { openPrivateState }] = await Promise.all([
@@ -36,7 +49,7 @@ async function stage(root, id, { hold = false, existing = null, limited = false 
       evidence: { workProduct: true, requirementsSettled: true, strongVerification: true },
       hostCapabilities: { delegation: { available: true, invocation: "direct", targets: [{ model: "gpt-6-astra", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] }] } } },
     { store, cwd: home, catalog, enforceLifecycleHooks: false, diskProbe: () => 20n * 1024n ** 3n });
-    if (limited) { assert.equal(route.action, "continue"); assert.deepEqual(route.reasonCodes, ["ROUTER_GLOBAL_PENDING_LIMIT"]); return; }
+    if (limited) { assert.equal(route.action, "continue"); assert.deepEqual(route.reasonCodes, [limits.get(root).capacityReason]); return; }
     assert.equal(route.action, "delegate");
     const attempt = store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=?").get(route.routeId);
     assert.ok(openPrivateState(store.db, attempt.context_package).includes("数据"));
@@ -68,11 +81,24 @@ try {
     const results = await Promise.allSettled([run(a, "concurrent-a"), run(b, "concurrent-b")]);
     for (const result of results) if (result.status === "rejected") throw result.reason;
     const held = [];
-    for (let i = 0; i < 10; i++) held.push(await stage(i % 2 ? b : a, `held-${i}`, { hold: true }));
+    const owners = [];
+    const sharedLimit = Math.min(limits.get(a).pendingLimit, limits.get(b).pendingLimit);
+    for (let i = 0; i < 10; i++) {
+      const preferred = i % 2 ? b : a;
+      const owner = i < limits.get(preferred).pendingLimit ? preferred
+        : [a, b].find(root => i < limits.get(root).pendingLimit);
+      assert.ok(owner, "The current writer must admit ten unresolved reservations");
+      owners.push(owner);
+      held.push(await stage(owner, `held-${i}`, { hold: true }));
+      if (i + 1 === sharedLimit && sharedLimit < 10) {
+        for (const root of [a, b].filter(root => limits.get(root).pendingLimit === sharedLimit))
+          await stage(root, `legacy-cap-${root === a ? "a" : "b"}`, { limited: true });
+      }
+    }
     for (const root of [a, b]) await stage(root, `over-cap-${root === a ? "a" : "b"}`, { limited: true });
     // Each opposite writer consumes the other's real encrypted ticket and
     // settles its terminal outcome. All ten shared reservations release once.
-    for (let i = 0; i < held.length; i++) await stage(i % 2 ? a : b, `held-${i}`, { existing: held[i] });
+    for (let i = 0; i < held.length; i++) await stage(owners[i] === a ? b : a, `held-${i}`, { existing: held[i] });
     for (const root of [a, b]) {
       const { RouterStore } = await moduleAt(root, "database");
       const store = new RouterStore();
@@ -83,6 +109,6 @@ try {
         assert.deepEqual(store.db.prepare("PRAGMA foreign_key_check").all(), []);
       } finally { store.close(); }
     }
-    process.stdout.write("20 real alternating/concurrent/shared-cap stages; global ten, cross-writer tickets, constraints, encoding, idempotency and outcomes verified\n");
+    process.stdout.write("20 real alternating/concurrent/shared-cap stages; global ten, original legacy caps, cross-writer tickets, constraints, encoding, idempotency and outcomes verified\n");
   }
 } catch (error) { process.stderr.write(`${error.stack}\n`); process.exitCode = 1; }

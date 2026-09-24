@@ -5,6 +5,25 @@ This package uses explicit publication. Its legacy `manage-install.mjs install`,
 The repository runbook is `docs/RUNTIME-UPGRADE-ISOLATION-IMPLEMENTATION.zh-CN.md`.
 First native installation remains a separate cold host operation.
 
+The cold epoch path also admits the exact Windows v1 package
+`0.4.0+codex.20260909060153` (full digest
+`14af4672a694ed4093489ced95a5e72b13063bb000dcf343e6843bef660215eb`).
+Its 136 files are reproducible from commit
+`4165bc15af853e2e6eb04cfbb81db96747cad8a7` with their original CRLF bytes.
+The old writer retains its four-reservation admission limit. Qualification
+checks that boundary, the current writer's ten-reservation ceiling, alternating
+and concurrent writes, and cross-writer ticket completion. It does not patch
+the old package, infer native retirement, or authorize a hot v1 transition.
+Changed bytes still require separate review. Use `prepare-cold-epoch` and
+`install-cold-epoch` for this transition, not the older `bootstrap` bridge.
+
+On an existing Windows checkout, verify that tracked `.mjs` files actually use
+the repository's LF attributes before testing. Adding `.gitattributes` does not
+necessarily rewrite unchanged files left from an older CRLF checkout; those
+bytes correctly fail frozen dependency checks. Preserve local edits when
+refreshing a checkout. Windows directory-redirection tests use junctions; file
+symlink tests explicitly report a skip if the OS denies that privilege.
+
 All admin options use `--name=value`; no default data home is selected.
 
 | Action | Required options | Effect |

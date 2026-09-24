@@ -7,13 +7,18 @@ import { runtimeSourceDigest } from "./lifecycle-qualification.mjs";
 // installation. This is a source contract, never an App version allowlist.
 // Its immutable Hook entry can select a repaired engine without replacing
 // the trusted shell or interrupting other tasks.
-const PREVIOUS_EPOCH_SOURCE = "40189647d64b21537523eb884550db104eba4c173f52bc1a7d0eb2dd9bc2eee2";
+const PREVIOUS_EPOCH_SOURCES = new Set([
+  "40189647d64b21537523eb884550db104eba4c173f52bc1a7d0eb2dd9bc2eee2",
+  // Exact Windows cold shell before PowerShell terminal reconciliation. Its
+  // dispatcher is unchanged; its retained verifier still owns retirement.
+  "99fe61db6fb98666523db63095bc5869c591d7429eb0b2cf176a3fab5edcfdcc",
+]);
 
 export async function installedEpochEntry(db, shellRoot) {
   const shell = inspectRuntimePackage(shellRoot);
   const verifier = runtimeSourceDigest(shell.root);
   if (shell.descriptor.shellProtocolVersion !== 2
-    || ![runtimeSourceDigest(), PREVIOUS_EPOCH_SOURCE].includes(verifier)
+    || (verifier !== runtimeSourceDigest() && !PREVIOUS_EPOCH_SOURCES.has(verifier))
     || !db.prepare("SELECT 1 FROM runtime_host_entries WHERE path=? AND generation=? AND state='referenced'").get(shell.root, shell.digest)) {
     throw new Error("Host compatibility epoch blocked: unreviewed_installed_epoch_entry");
   }

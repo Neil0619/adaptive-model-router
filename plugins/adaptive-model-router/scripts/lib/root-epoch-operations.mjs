@@ -40,7 +40,8 @@ export class RootEpochOperations {
         && item.source === "unified_exec_startup" && ["completed", "failed"].includes(item.status)
         && Number.isSafeInteger(item.exit_code) && typeof item.id === "string"
         && item.process_id != null && Array.isArray(command) && command.length === 3
-        && /(?:^|[\\/])(?:ba|z|da|k)?sh(?:\.exe)?$/u.test(command[0]) && /^-[il]*c$/u.test(command[1])
+        && ((/(?:^|[\\/])(?:ba|z|da|k)?sh(?:\.exe)?$/u.test(command[0]) && /^-[il]*c$/u.test(command[1]))
+          || (/(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/iu.test(command[0]) && /^-(?:Command|c)$/iu.test(command[1])))
         && typeof command[2] === "string") {
         this.ends.push({ callId: item.id, turnId: p.turn_id, id: String(item.process_id),
           commandDigest: payloadHash(command[2]), order: operations.order, status: item.status, exitCode: item.exit_code });

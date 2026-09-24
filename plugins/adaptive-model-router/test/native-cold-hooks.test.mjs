@@ -183,14 +183,24 @@ test("offline permission model never covers another root", (t) => {
   assert.throws(() => loadColdHookFixture(outside), /Fixture root must be private/);
 });
 
-test("offline fixture rejects symlink escapes but permits exact native CLI arg0 aliases", (t) => {
+test("offline fixture rejects directory link escapes", (t) => {
   const f = fixture(t);
-  symlinkSync(tmpdir(), join(f.root, "escape"));
+  symlinkSync(tmpdir(), join(f.root, "escape"), process.platform === "win32" ? "junction" : "dir");
   assert.throws(() => loadColdHookFixture(f.root), /Fixture symlink rejected/);
   rmSync(join(f.root, "escape"));
+});
+
+test("offline fixture permits only exact native CLI arg0 file aliases", (t) => {
+  const f = fixture(t);
   const dir = join(f.codexHome, "tmp/arg0/codex-arg0offline");
   mkdirSync(dir, { recursive: true });
-  symlinkSync(f.cliPath, join(dir, "apply_patch"));
+  try { symlinkSync(f.cliPath, join(dir, "apply_patch")); }
+  catch (error) {
+    if (process.platform === "win32" && ["EPERM", "EACCES"].includes(error.code)) {
+      t.skip("Windows file symlink permission is unavailable"); return;
+    }
+    throw error;
+  }
   assert.equal(loadColdHookFixture(f.root).approvalDigest, f.approvalDigest);
   rmSync(join(dir, "apply_patch"));
   symlinkSync(join(f.root, "trust-request.json"), join(dir, "apply_patch"));

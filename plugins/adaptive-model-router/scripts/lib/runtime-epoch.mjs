@@ -24,6 +24,7 @@ import { knownOperationCall, knownRootOperationCall } from "./runtime-operation-
 import { installedEpochEntry } from "./installed-epoch-entry.mjs";
 import { applyOperationReviews } from "./operation-reconciliation.mjs";
 import { RootEpochOperations } from "./root-epoch-operations.mjs";
+import { reviewedLegacyRuntime } from "./reviewed-legacy-runtime.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -83,7 +84,7 @@ const REVIEWED_INSTALLED_EPOCH_ENTRY = { ...Object.fromEntries([
 function reviewedEntry(record, { cold = false } = {}) {
   verifyRuntimePackage(record);
   if (cold && record.descriptor.shellProtocolVersion === 1) {
-    requireFact(record.digest === "9d23b8ae47f6d9bd6b388a33b75c7f94741546116efa29d3e33d9ebc72a1c9b2", "unreviewed_legacy_source");
+    requireFact(reviewedLegacyRuntime(record), "unreviewed_legacy_source");
     return;
   }
   requireFact(record.descriptor.shellProtocolVersion === 2, "v1_native_entry_retirement_unproven");
@@ -303,7 +304,22 @@ export async function prepareHostEpochHandover(store, reference, { candidate, ad
   }
   requireFact(state.delegation_children.every((child) => stages.some((stage) => stage.routeId === child.route_id)),
     "retained_child_stage_binding_missing");
-  for (const entry of state.entries.filter((entry) => entry.state === "referenced")) reviewedEntry(runtimeGeneration(store.db, entry.generation), { cold });
+  for (const entry of state.entries.filter((entry) => entry.state === "referenced")) {
+    const retained = runtimeGeneration(store.db, entry.generation);
+    const legacy = retained.descriptor.shellProtocolVersion === 1;
+    reviewedEntry(retained, { cold: cold || legacy });
+    // Retirement retains the v1 registry for recovery. A later v2 task does
+    // not inherit its cold proof: verify that entry's own original retirement
+    // and exact source-to-target publication before continuing past it.
+    if (legacy) {
+      stageSources.set(retained.digest, retained);
+      assertRetirement(retained.digest);
+      const proof = store.db.prepare("SELECT record FROM runtime_epoch_publications WHERE source=? AND candidate=?")
+        .get(retained.digest, candidate);
+      requireFact(proof && JSON.parse(proof.record).entryMode === "cold"
+        && JSON.parse(proof.record).verifier === runtimeSourceDigest(), "retained_legacy_epoch_publication_missing");
+    }
+  }
   assertLedgerQuiescence(state);
   requireFact(binding?.schema === 2 && binding.taskCwdDigest === payloadHash(realpathSync(reference.cwd)), "current_hook_binding_missing");
   const hook = readHookIdentityDiagnostic(process.env, { contextId: reference.contextId, turnId: reference.turnId });
@@ -433,7 +449,8 @@ export function commitHostEpochHandover(store, token) {
   return store.transaction(() => {
     const { context, record, state } = saved;
     saved.nativeEntry.verify();
-    if (saved.cold) for (const original of saved.stageSources.values()) saved.assertRetirement(original.digest);
+    for (const original of saved.stageSources.values())
+      if (saved.cold || original.descriptor.shellProtocolVersion === 1) saved.assertRetirement(original.digest);
     const previous = store.db.prepare("SELECT id FROM runtime_epoch_receipts WHERE id=?").get(record.id);
     if (previous) {
       requireFact(runtimeTask(store.db, context)?.generation === record.candidate, "receipt_superseded");

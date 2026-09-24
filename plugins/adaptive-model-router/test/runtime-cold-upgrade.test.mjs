@@ -102,7 +102,7 @@ for (const mode of ["missing-retained", "changed-present", "dangling-old-entry"]
     const before = state(store.db);
     if (mode === "missing-retained") rmSync(runtimeGeneration(store.db, a.digest).root, { recursive: true });
     if (mode === "changed-present") writeFileSync(join(b.root, "changed-entry.txt"), "Unexpected package change.\n");
-    if (mode === "dangling-old-entry") symlinkSync(join(cwd, "missing-target"), a.root);
+    if (mode === "dangling-old-entry") symlinkSync(join(cwd, "missing-target"), a.root, process.platform === "win32" ? "junction" : "dir");
     assert.throws(() => prepareColdHostEpochInstallation(store, { source: runtimeGeneration(store.db, b.digest), candidate: c,
       shellRoot: c.root, inventory: () => [] }));
     assert.equal(state(store.db), before);
