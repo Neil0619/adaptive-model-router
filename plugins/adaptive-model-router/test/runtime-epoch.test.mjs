@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { archiveHistoricalRuntime } from "./support/historical-runtime.mjs";
 import { RouterStore } from "../scripts/lib/database.mjs";
 import { inspectRuntimePackage } from "../scripts/lib/runtime-package.mjs";
-import { bindRuntimeStage, publishRuntime, runtimeTask, runtimeReferences, settleRuntimeMigration, beginRuntimeMigration, pendingRuntimeResponsibilities } from "../scripts/lib/runtime-isolation.mjs";
+import { bindRuntimeStage, publishRuntime, runtimeTask, runtimeReferences, settleRuntimeMigration, beginRuntimeMigration, pendingRuntimeResponsibilities, acquireRuntimeInvocation, finishRuntimeInvocation } from "../scripts/lib/runtime-isolation.mjs";
 import { qualifyRuntimeCompatibility } from "../scripts/lib/runtime-compatibility.mjs";
 import { inspectRuntimeBoundary, isRuntimeBoundaryProof } from "../scripts/lib/runtime-boundary.mjs";
 import { beginHookDispatch, endRuntimeDispatch, beginMcpDispatch } from "../scripts/lib/runtime-dispatch.mjs";
@@ -32,6 +32,9 @@ import { stageClosureStatus, observeManagedMessage, observeManagedStop } from ".
 import { callRouterTool } from "../scripts/lib/service.mjs";
 import { CATALOG, routeInput } from "./fixtures.mjs";
 import { historicalQualificationFixture } from "./support/historical-qualification.mjs";
+import { ECONOMY_MODEL_POLICY } from "../scripts/lib/model-policy.mjs";
+import { activateModelPolicy, rollbackModelPolicy, readModelPolicy, previewModelPolicy } from "../scripts/lib/model-policy-store.mjs";
+import { prepareModelPolicyScope } from "../scripts/lib/model-policy-isolation.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BASELINE = "16c439dd0bf3657ba06707ff15c1465613d49554";
@@ -108,6 +111,87 @@ async function fixture(run) {
 const business = (db) => JSON.stringify(Object.fromEntries(["routes", "outcomes", "delegation_attempts", "delegation_children",
   "delegation_messages", "delegation_child_stops", "delegation_stage_journal", "delegation_maintenance"]
   .map((table) => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])));
+
+test("observed legacy reader isolation preserves unfinished work while only the selected v2 service activates its own namespace", async (t) => fixture(async (f) => {
+  const child = await retainedChild({ ...f, pendingInput: false });
+  const legacyKey = `legacy_delegation_block:${f.context.projectId}:${f.context.contextKey}`;
+  f.store.db.prepare("INSERT INTO meta(key,value) VALUES(?,?)").run(legacyKey, child.route.routeId);
+  const original = business(f.store.db), beforeMeta = () => f.store.db.prepare("SELECT * FROM meta WHERE key LIKE 'legacy_delegation_block:%' OR key IN ('model_policy:active','model_policy:activation-lineage') ORDER BY key").all();
+  const legacyBefore = beforeMeta(), originalPolicy = readModelPolicy(f.store.db);
+  const definition = ECONOMY_MODEL_POLICY.definition;
+  const invoke = (name, run) => {
+    const { invocation } = f.store.transaction(() => acquireRuntimeInvocation(f.store.db, f.context, { kind: `mcp:${name}`, generation: b.digest }));
+    f.store.runtimeInvocation = invocation;
+    try { return run(invocation); }
+    finally { finishRuntimeInvocation(f.store.db, invocation); f.store.runtimeInvocation = null; }
+  };
+  const preview = () => previewModelPolicy(f.store.db, definition, prepareModelPolicyScope(f.store, "preview_model_policy"));
+  assert.equal(preview().canActivate, false, "no actual selected service means no exception");
+  invoke("preview_model_policy", (invocation) => {
+    const snapshot = f.store.db.prepare("SELECT * FROM runtime_generations ORDER BY digest").all();
+    const result = preview(); assert.equal(result.totalResponsibilities, 2); assert.equal(result.isolatedLegacyResponsibilities, 2);
+    assert.equal(result.canActivate, true); assert.deepEqual(f.store.db.prepare("SELECT * FROM runtime_generations ORDER BY digest").all(), snapshot);
+    assert.equal(previewModelPolicy(f.store.db, originalPolicy.definition, prepareModelPolicyScope(f.store, "preview_model_policy")).canActivate, false,
+      "a write to the legacy namespace still counts every unfinished responsibility");
+    assert.equal(previewModelPolicy(f.store.db, definition, { passed: true, generation: b.digest }).canActivate, false);
+    const nativePrepare = f.store.db.prepare.bind(f.store.db);
+    const publicationRows = nativePrepare("SELECT * FROM runtime_epoch_publications WHERE candidate=?").all(b.digest);
+    for (const mutate of [
+      record => { delete record.modelPolicyIsolation; },
+      record => { record.modelPolicyIsolation.sourceReader = "v2"; },
+      record => { record.modelPolicyIsolation.candidateReader = "legacy"; },
+      record => { record.modelPolicyIsolation.verifierScriptDigest = "0".repeat(64); },
+      record => { record.verifier = "0".repeat(64); },
+      record => { record.source = b.digest; },
+    ]) {
+      const rows = publicationRows.map(row => { const record = JSON.parse(row.record); mutate(record); return { ...row, record: JSON.stringify(record) }; });
+      t.mock.method(f.store.db, "prepare", sql => sql === "SELECT * FROM runtime_epoch_publications WHERE candidate=?"
+        ? { all: () => rows } : nativePrepare(sql));
+      try { assert.equal(preview().canActivate, false, "missing, stale, changed or reversed evidence grants nothing"); }
+      finally { t.mock.restoreAll(); }
+    }
+    const retained = JSON.parse(snapshot.find(row => row.digest === a.digest).record);
+    fs.renameSync(retained.root, retained.root + ".held");
+    try {
+      assert.equal(preview().canActivate, false);
+      assert.deepEqual(f.store.db.prepare("SELECT * FROM runtime_generations ORDER BY digest").all(), snapshot, "preview never repairs a moved generation record");
+    } finally { fs.renameSync(retained.root + ".held", retained.root); }
+    const nativeContext = invocation.contextKey; invocation.contextKey = "wrong-context";
+    assert.equal(preview().canActivate, false); invocation.contextKey = nativeContext;
+    f.store.db.prepare("UPDATE runtime_invocations SET pid=pid+1 WHERE id=?").run(invocation.id);
+    assert.equal(preview().canActivate, false); f.store.db.prepare("UPDATE runtime_invocations SET pid=? WHERE id=?").run(process.pid, invocation.id);
+    f.store.db.prepare("UPDATE runtime_stages SET generation=? WHERE route_id=?").run(b.digest, child.route.routeId);
+    assert.equal(preview().isolatedLegacyResponsibilities, 0, "new reader stage and contradictory aggregate remain blocking");
+    f.store.db.prepare("UPDATE runtime_stages SET generation=? WHERE route_id=?").run(a.digest, child.route.routeId);
+    f.store.db.prepare("UPDATE runtime_tasks SET candidate=? WHERE project_id=? AND context_key=?").run(b.digest, f.context.projectId, f.context.contextKey);
+    assert.equal(preview().isolatedLegacyResponsibilities, 1, "pending task migration cannot exempt a legacy context aggregate");
+    f.store.db.prepare("UPDATE runtime_tasks SET candidate=NULL WHERE project_id=? AND context_key=?").run(f.context.projectId, f.context.contextKey);
+    f.store.db.prepare("UPDATE runtime_invocations SET state='completed' WHERE id=?").run(invocation.id);
+    assert.equal(preview().canActivate, false); f.store.db.prepare("UPDATE runtime_invocations SET state='active' WHERE id=?").run(invocation.id);
+    assert.equal(activateModelPolicy(f.store, { definition, expectedDigest: originalPolicy.digest }).reasonCode, "MODEL_POLICY_BUSY", "a preview invocation cannot grant activation authority");
+  });
+  invoke("activate_model_policy", () => {
+    const intervening = "legacy_delegation_block:unowned:new-after-preview";
+    f.store.db.prepare("INSERT INTO meta(key,value) VALUES(?,'pending')").run(intervening);
+    assert.equal(activateModelPolicy(f.store, { definition, expectedDigest: originalPolicy.digest }).reasonCode, "MODEL_POLICY_BUSY",
+      "new blocking responsibility is reclassified inside the activation transaction");
+    f.store.db.prepare("DELETE FROM meta WHERE key=?").run(intervening);
+    f.store.db.prepare("INSERT INTO meta(key,value) VALUES('model_policy:inference:unknown','{}')").run();
+    assert.equal(activateModelPolicy(f.store, { definition, expectedDigest: originalPolicy.digest }).reasonCode, "MODEL_POLICY_BUSY");
+    f.store.db.prepare("DELETE FROM meta WHERE key='model_policy:inference:unknown'").run();
+    f.store.db.exec("CREATE TEMP TRIGGER reject_scoped_policy BEFORE INSERT ON meta WHEN NEW.key='model_policy:v2:active' BEGIN SELECT RAISE(ABORT,'scoped atomic failure'); END");
+    assert.throws(() => activateModelPolicy(f.store, { definition, expectedDigest: originalPolicy.digest }), /scoped atomic failure/);
+    assert.equal(readModelPolicy(f.store.db).digest, originalPolicy.digest); assert.deepEqual(beforeMeta(), legacyBefore);
+    f.store.db.exec("DROP TRIGGER reject_scoped_policy");
+    assert.equal(activateModelPolicy(f.store, { definition, expectedDigest: '0'.repeat(64) }).reasonCode, "MODEL_POLICY_CONFLICT");
+    assert.equal(activateModelPolicy(f.store, { definition, expectedDigest: originalPolicy.digest }).activated, true);
+  });
+  const oldApi = await moduleAt(a.root, "model-policy-store"), oldStore = new old.database.RouterStore();
+  try { assert.equal(oldApi.readModelPolicy(oldStore.db).digest, originalPolicy.digest); } finally { oldStore.close(); }
+  invoke("rollback_model_policy", () => assert.equal(rollbackModelPolicy(f.store, { expectedDigest: ECONOMY_MODEL_POLICY.digest }).digest, originalPolicy.digest));
+  assert.equal(business(f.store.db), original); assert.deepEqual(beforeMeta(), legacyBefore);
+  assert.equal(f.store.db.prepare("SELECT finalized_at FROM delegation_attempts WHERE route_id=?").get(child.route.routeId).finalized_at, null);
+}));
 
 async function retainedChild(f) {
   const modules = f.legacyModules || old;
@@ -418,7 +502,7 @@ test("cold handover rejects a restored old path and an interrupted history snaps
   });
 });
 
-async function ordinaryCheckpointFixture(run) {
+async function ordinaryCheckpointFixture(run, { contextId = "ordinary-native-owner" } = {}) {
   const cwd = realpathSync(mkdtempSync(join(work, "ordinary-restart-"))), home = join(cwd, "state");
   const values = { ADAPTIVE_ROUTER_HOME: home, PLUGIN_DATA: home, CODEX_HOME: join(cwd, "codex"),
     ADAPTIVE_ROUTER_LOCAL_ONLY: "1", ADAPTIVE_ROUTER_INVOCATION_ID: "", CODEX_THREAD_ID: "" };
@@ -427,7 +511,7 @@ async function ordinaryCheckpointFixture(run) {
   const store = new RouterStore();
   try {
     store.transaction(() => publishRuntime(store.db, b, home, { bootstrap: true, shellRoot: b.root }));
-    const contextId = "ordinary-native-owner", turnId = "ordinary-completed-turn", context = store.context({ cwd, contextId });
+    const turnId = "ordinary-completed-turn", context = store.context({ cwd, contextId });
     store.configure(context, { autoActivate: true }, "global");
     store.db.prepare("INSERT INTO host_model_state(project_id,context_key,current_model,task_mode,updated_at) VALUES(?,?,'gpt-6-astra','automatic',?)")
       .run(context.projectId, context.contextKey, new Date().toISOString());
@@ -851,6 +935,57 @@ async function consumedMessageCase(f, { count = 25, childCount = 1, unknownOpera
   }
   f.writeRoot(); return children;
 }
+
+test("cold message verification recovers rotated native roots without rebinding explicit sources or accepting ambiguity", async () =>
+  ordinaryCheckpointFixture(async (f) => {
+    const [child] = await consumedMessageCase(f, { count: 2 });
+    const sessions = join(process.env.CODEX_HOME, "sessions", "2026", "09", "24"), archive = join(process.env.CODEX_HOME, "archived_sessions");
+    mkdirSync(sessions, { recursive: true }); mkdirSync(archive, { recursive: true });
+    const name = `rollout-2026-09-24T10-00-00-${f.reference.contextId}.jsonl`;
+    const original = join(sessions, name), rotated = join(sessions, `rollout-2026-09-24T11-00-00-${f.reference.contextId}_22222222-2222-2222-2222-222222222222.jsonl`);
+    const bytes = readFileSync(f.reference.transcriptPath);
+    writeFileSync(original, bytes); writeFileSync(rotated, JSON.stringify(f.records[0]) + "\n");
+    rememberRootTranscript(f.store.db, f.context, rotated);
+    const before = business(f.store.db), pending = () => coldPendingMessageResponsibilities(f.store.db);
+    assert.deepEqual(pending(), [], "the native original source survives a new segment pointer");
+    const args = { routeId: child.route.routeId, expectedRevision: 2, parentTranscriptPath: rotated };
+    assert.throws(() => prepareMessageCheckpoint(f.store, f.context, args), /original_accepted_call_source_missing/,
+      "an explicitly pinned incomplete source cannot silently rebind");
+    fs.renameSync(original, join(archive, name));
+    assert.deepEqual(pending(), [], "archiving the exact original keeps its native identity");
+    writeFileSync(rotated, bytes);
+    assert.equal(pending().length, 2, "duplicate complete calls across segments are ambiguous");
+    const changed = structuredClone(f.records); changed[0].payload.cwd = dirname(f.cwd);
+    writeFileSync(rotated, changed.map(JSON.stringify).join("\n") + "\n");
+    assert.equal(pending().length, 2, "a matching filename cannot attest the project");
+    writeFileSync(rotated, JSON.stringify(f.records[0]) + "\n");
+    const saved = join(archive, name);
+    const callIndex = f.records.findIndex((row) => row.payload?.call_id === "consumed-0-0");
+    const split = structuredClone(f.records); split.splice(callIndex + 1, 1);
+    writeFileSync(saved, split.map(JSON.stringify).join("\n") + "\n");
+    writeFileSync(rotated, [f.records[0], f.records[callIndex + 1]].map(JSON.stringify).join("\n") + "\n");
+    assert.equal(pending().length, 2, "call and result from different segments cannot be spliced");
+    writeFileSync(saved, bytes); writeFileSync(rotated, JSON.stringify(f.records[0]) + "\n");
+    const nativeOpen = fs.openSync;
+    const extra = join(sessions, `rollout-2026-09-24T12-00-00-${f.reference.contextId}_33333333-3333-3333-3333-333333333333.jsonl`);
+    try {
+      fs.openSync = function (path, ...values) {
+        if (path === join(archive, name)) writeFileSync(extra, bytes);
+        return nativeOpen(path, ...values);
+      }; syncBuiltinESMExports();
+      assert.equal(pending().length, 2, "a new segment invalidates the captured source inventory");
+    } finally { fs.openSync = nativeOpen; syncBuiltinESMExports(); }
+    rmSync(extra); assert.deepEqual(pending(), []);
+    const nativeDirectory = fs.readdirSync; let scans = 0;
+    try {
+      fs.readdirSync = function (path, ...values) {
+        if (path === archive && ++scans === 2) fs.appendFileSync(saved, JSON.stringify({ type: "event_msg", payload: { type: "diagnostic" } }) + "\n");
+        return nativeDirectory(path, ...values);
+      }; syncBuiltinESMExports();
+      assert.equal(pending().length, 2, "source changes during the final inventory walk invalidate prior content proofs");
+    } finally { fs.readdirSync = nativeDirectory; syncBuiltinESMExports(); }
+    assert.equal(business(f.store.db), before, "source recovery never rewrites messages, ownership or outcomes");
+  }, { contextId: "11111111-1111-1111-1111-111111111111" }));
 
 test("native input consumption is independent of unknown old operations while new checkpoints still require quiescence", async () =>
   ordinaryCheckpointFixture(async (f) => {

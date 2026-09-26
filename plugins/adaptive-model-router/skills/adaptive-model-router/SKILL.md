@@ -243,7 +243,15 @@ verification. A rejected tool request or `busy` response creates no new failed
 outcome; inspect the full error and fix the contract without field-by-field
 guessing. Never change stage IDs to escape the same stage's failure history.
 
-Reasoning failures escalate monotonically at most twice in the exact effort order `low/medium → high → xhigh → max → ultra`. Default routing uses only GPT-6, normally medium/high/xhigh, and defaults to high.
+Reasoning failures escalate at most twice according to the active model policy.
+The legacy quality-first policy uses Astra with `low/medium → high → xhigh → max → ultra`.
+The opt-in schema-2 economy policy maps work levels to Luna/low, Luna/medium,
+Sol/high, Sol/xhigh, Astra/high and Astra/max. Work level is not reasoning effort:
+max work means Astra/high and ultra work means Astra/max; Astra/ultra is out of scope.
+Its reasoning upgrades are Luna → Sol/high → Astra/high and Sol → Astra/high → Astra/max.
+Critical high-failure-cost or irreversible work has an Astra/high model floor.
+Use the returned exact target and never reconstruct effort from the work-level name.
+The default work level remains high; the installed active policy determines its model.
 Check higher conditions before considering a downgrade. Low needs settled,
 mechanical, low-risk work with strong verification and an exact output check;
 medium needs settled, strongly verified work without review, risk, ambiguity,

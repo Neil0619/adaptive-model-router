@@ -377,6 +377,7 @@ async function routeWithStore(input, options, store) {
       }
       return finish(resolved.override || previousTarget ? "ask_user" : "continue", selection.reason);
     }
+    if (selection.workLevel === "ultra" && evidence.parallelWriteRisk === true) return finish("ask_user", "ULTRA_PARALLEL_WRITE_RISK");
     const route = contextualRoute(store, context, {
       action: "delegate", category: scored.category,
       codes: [sourceCode(resolved.source), escalationCode, desired.rule, selection.reason,

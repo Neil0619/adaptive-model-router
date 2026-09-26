@@ -15,7 +15,7 @@ const target = { type: "object", additionalProperties: false, required: ["model"
   properties: { model: string, effort: { type: "string", enum: EFFORT_ORDER } } };
 const object = (properties) => ({ type: "object", additionalProperties: false,
   required: Object.keys(properties), properties });
-export const MODEL_POLICY_SCHEMA = object({
+export const MODEL_POLICY_V1_SCHEMA = object({
   schemaVersion: { type: "integer", enum: [1] },
   id: { ...string, pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]*$" },
   allowedModels: { type: "array", minItems: 1, maxItems: 32, items: object({
@@ -34,6 +34,14 @@ export const MODEL_POLICY_SCHEMA = object({
   escalation: object({ limit: { type: "integer", enum: [2] },
     next: object(Object.fromEntries(WORK_LEVELS.slice(0, -1).map((name) => [name, level]))) }),
   purposes: object({ classifier: level, qualification: level, smoke: level }),
+});
+// Keep v1 definitions byte-for-byte readable. The two v2 fields are required by
+// the compiler only for v2; old policies must not acquire new digest material.
+export const MODEL_POLICY_SCHEMA = structuredClone(MODEL_POLICY_V1_SCHEMA);
+MODEL_POLICY_SCHEMA.properties.schemaVersion.enum = [1, 2];
+Object.assign(MODEL_POLICY_SCHEMA.properties, {
+  modelOrder: { type: "array", minItems: 1, maxItems: 32, items: string },
+  criticalRisk: object({ signals: signalList, minimumLevel: level }),
 });
 
 function invalid(message) {
@@ -55,6 +63,12 @@ export function targetAllowed(policy, value) {
     entry.model === value.model && entry.efforts.includes(value.effort)));
 }
 
+function compareTargets(policy, left, right) {
+  const order = policy.definition.modelOrder;
+  if (order && left.model !== right.model) return order.indexOf(left.model) - order.indexOf(right.model);
+  return EFFORT_ORDER.indexOf(left.effort) - EFFORT_ORDER.indexOf(right.effort);
+}
+
 export function compileModelPolicy(input) {
   assertSchema(MODEL_POLICY_SCHEMA, input, "model policy");
   const definition = JSON.parse(canonicalJson(input));
@@ -65,17 +79,37 @@ export function compileModelPolicy(input) {
     models.add(entry.model);
   }
   const policy = { definition, digest: payloadHash(definition) };
+  if (definition.schemaVersion === 1) {
+    if (definition.modelOrder || definition.criticalRisk) invalid("v1 model policy cannot contain v2 fields");
+  } else {
+    const order = definition.modelOrder;
+    if (!order || order.length !== models.size || new Set(order).size !== order.length
+      || order.some((model) => !models.has(model))) invalid("v2 modelOrder must name each allowed model exactly once");
+    const critical = definition.criticalRisk;
+    if (!critical || !critical.signals.includes("highFailureCost") || !critical.signals.includes("irreversible")
+      || new Set(critical.signals).size !== critical.signals.length
+      || WORK_LEVELS.indexOf(critical.minimumLevel) < WORK_LEVELS.indexOf("high")
+      || critical.minimumLevel === "ultra") invalid("v2 criticalRisk requires a bounded floor for high failure cost and irreversibility");
+    if (definition.targets[critical.minimumLevel].model !== order.at(-1)) invalid("v2 criticalRisk floor must use the highest configured model");
+    if (new Set(Object.values(definition.targets).map(canonicalJson)).size !== WORK_LEVELS.length) invalid("v2 targets require distinct upgrade anchors");
+    // Every permitted explicit target has an unambiguous upgrade anchor.
+    for (const entry of definition.allowedModels) for (const effort of entry.efforts) {
+      if (!levelForTarget(policy, { model: entry.model, effort })) invalid("v2 allowed target must have a work-level binding");
+    }
+  }
   for (const [index, name] of WORK_LEVELS.entries()) {
     const value = definition.targets[name];
     for (const later of WORK_LEVELS.slice(index + 1)) {
       const other = definition.targets[later];
+      if (definition.schemaVersion === 2 && compareTargets(policy, value, other) > 0) invalid("v2 bindings must not decrease the configured model and effort order");
       if (value.model === other.model && EFFORT_ORDER.indexOf(value.effort) > EFFORT_ORDER.indexOf(other.effort)) invalid("model policy bindings must not decrease effort within one model");
     }
   }
   for (const [name, value] of Object.entries(definition.targets)) {
     if (!targetAllowed(policy, value)) invalid(`model policy target ${name} is outside allowedModels`);
     // Work levels describe a minimum effort within a model; merged levels may strengthen it.
-    if (EFFORT_ORDER.indexOf(value.effort) < EFFORT_ORDER.indexOf(name)) invalid(`model policy target ${name} lowers its effort floor`);
+    if (definition.schemaVersion === 1 && EFFORT_ORDER.indexOf(value.effort) < EFFORT_ORDER.indexOf(name)) invalid(`model policy target ${name} lowers its effort floor`);
+    if (definition.schemaVersion === 2 && EFFORT_ORDER.indexOf(value.effort) < EFFORT_ORDER.indexOf(minimumEffortForLevel(name))) invalid(`model policy target ${name} lowers its effort floor`);
     const fallbacks = definition.fallbacks[name];
     if (new Set(fallbacks).size !== fallbacks.length || fallbacks.some((next) => WORK_LEVELS.indexOf(next) <= WORK_LEVELS.indexOf(name))) invalid("model policy fallbacks must move forward without duplicates");
     const next = definition.escalation.next[name];
@@ -101,8 +135,15 @@ export function compileModelPolicy(input) {
   return freeze(policy);
 }
 
+function minimumEffortForLevel(name) {
+  return ["low", "medium"].includes(name) ? name : "high";
+}
+
 export const DEFAULT_MODEL_POLICY = compileModelPolicy(JSON.parse(
   readFileSync(new URL("../../model-policy.json", import.meta.url), "utf8"),
+));
+export const ECONOMY_MODEL_POLICY = compileModelPolicy(JSON.parse(
+  readFileSync(new URL("../../model-policy.economy.json", import.meta.url), "utf8"),
 ));
 
 export function decideWorkLevel(scored, evidence, policy = DEFAULT_MODEL_POLICY) {
@@ -127,7 +168,14 @@ export function decideWorkLevel(scored, evidence, policy = DEFAULT_MODEL_POLICY)
       [workLevel, rule] = ["low", "EXACT_MECHANICAL"];
     }
   }
-  const minimumLevel = conditions.riskFloorSignals.some((signal) => facts[signal]) ? "high" : "low";
+  let minimumLevel = conditions.riskFloorSignals.some((signal) => facts[signal]) ? "high" : "low";
+  const critical = policy.definition.criticalRisk;
+  if (critical?.signals.some((signal) => facts[signal])) {
+    minimumLevel = critical.minimumLevel;
+    if (WORK_LEVELS.indexOf(workLevel) < WORK_LEVELS.indexOf(minimumLevel)) {
+      [workLevel, rule] = [minimumLevel, "CRITICAL_RISK_FLOOR"];
+    }
+  }
   const verificationGate = risk ? "full-checks" : s.implementation ? "targeted-tests"
     : !evidence.workProduct && scored.category === "general" ? "task-specific" : "structured-check";
   return { workLevel, rule, minimumLevel, maxEligible: Boolean(maxEligible), verificationGate };
@@ -155,6 +203,14 @@ export function resolveModelTarget({ policy = DEFAULT_MODEL_POLICY, catalog, dem
   const minimum = demand?.minimumLevel || "low";
   const denied = (reason) => ({ target: null, reason });
   const satisfiesGate = (value) => {
+    if (policy.definition.schemaVersion === 2) {
+      if (compareTargets(policy, value, policy.definition.targets[minimum]) < 0) return false;
+      if (previous && compareTargets(policy, value, previous) < (escalation ? 1 : 0)) return false;
+      // The top WORK level is exceptional even when its actual effort is max.
+      const top = canonicalJson(value) === canonicalJson(policy.definition.targets.ultra);
+      if (top && !override && !(escalation && levelForTarget(policy, previous) === "max")) return false;
+      return true;
+    }
     if (EFFORT_ORDER.indexOf(value.effort) < EFFORT_ORDER.indexOf(minimum)) return false;
     if (previous && value.model === previous.model && EFFORT_ORDER.indexOf(value.effort)
       < EFFORT_ORDER.indexOf(previous.effort) + (escalation ? 1 : 0)) return false;
@@ -163,6 +219,17 @@ export function resolveModelTarget({ policy = DEFAULT_MODEL_POLICY, catalog, dem
     return true;
   };
   if (override) {
+    if (policy.definition.schemaVersion === 2 && !override.model && override.effort) {
+      const matches = WORK_LEVELS.map((name) => policy.definition.targets[name])
+        .filter((value) => value.effort === override.effort);
+      if (!matches.length) return denied("MODEL_SCOPE_DENIED");
+      const eligible = matches.filter(satisfiesGate);
+      if (!eligible.length) return denied(escalation ? "MONOTONIC_ESCALATION_UNAVAILABLE" : "RISK_TARGET_CONFLICT");
+      const preferred = policy.definition.targets[requestedLevel];
+      const value = [preferred, ...eligible].find((entry) => eligible.includes(entry) && available(catalog, entry));
+      if (!value) return denied("EXPLICIT_TARGET_UNAVAILABLE");
+      return { target: value, workLevel: levelForTarget(policy, value), reason: null };
+    }
     const model = override.model || policy.definition.targets[requestedLevel].model;
     const defaultTarget = [policy.definition.targets.high, ...Object.values(policy.definition.targets)]
       .find((entry) => entry.model === model);
@@ -177,7 +244,7 @@ export function resolveModelTarget({ policy = DEFAULT_MODEL_POLICY, catalog, dem
     const value = policy.definition.targets[name];
     if (excludeModels.includes(value.model) || !satisfiesGate(value)) continue;
     if (available(catalog, value)) return { target: value, workLevel: name,
-      reason: name === requestedLevel ? null : "EFFORT_CAPABILITY_FALLBACK" };
+      reason: name === requestedLevel ? null : policy.definition.schemaVersion === 2 ? "MODEL_CAPABILITY_FALLBACK" : "EFFORT_CAPABILITY_FALLBACK" };
   }
   return denied(escalation ? "MONOTONIC_ESCALATION_UNAVAILABLE" : "NO_ALLOWED_TARGET");
 }

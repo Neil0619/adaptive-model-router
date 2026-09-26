@@ -83,9 +83,13 @@ once override，也不进入学习；新证明通过服务端核验后，再对�
 只在 `functions.exec` 内可见的 spawn 工具一律视为不可委派。`list_agents` 只列出
 已经存在的 Agent，空列表不代表 direct `spawn_agent` 不可用。同一任务一旦完成过
 可信 direct child 派发，后续 unavailable 声明若没有绑定“直接工具实际拒绝且明确
-未创建 child”的证据，就会被拒绝。缺少当前直接调用接口的能力信息时，不允许新委派。当前仅允许 GPT‑6 六档，
+未创建 child”的证据，就会被拒绝。缺少当前直接调用接口的能力信息时，不允许新委派。旧质量优先策略使用 GPT‑6 Astra 六档，
 默认 high；常规选择集中在 medium/high/xhigh。允许范围、任务条件和目标绑定
 分别配置，详见 [GPT‑6 规范](docs/MODEL-POLICY-GPT6.zh-CN.md)。
+
+可选的[经济策略](docs/MODEL-POLICY-ECONOMY.zh-CN.md)将 low/medium 交给 Luna，
+high/xhigh 交给 Sol，max/ultra 分别对应 Astra/high 与 Astra/max。需新解释器和
+显式策略激活；工作级别与实际思考档位分开，旧解释器保持原策略。
 
 每个委派都有 verification gate，并且最多记录一个严格最终 outcome。只有匹配的
 `PreToolUse` 派发握手消费 ticket 后，首次 outcome 写入才会被接受；只有 route 决定、

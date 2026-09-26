@@ -118,17 +118,31 @@ export function qualifyHostEpochPublication(source, candidate, { cold = false } 
     : payloadHash(source.descriptor.entrypoints) === payloadHash(candidate.descriptor.entrypoints), "legacy_entrypoint_shape_changed");
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "router-writer-qualification-")));
   try {
+    let modelPolicyIsolation = null;
+    const policyVerifier = join(ROOT, "scripts/verify-runtime-compatibility.mjs"), policyVerifierDigest = sha(readFileSync(policyVerifier));
+    requireFact(sha(readFileSync(join(candidate.root, "scripts/verify-runtime-compatibility.mjs"))) === policyVerifierDigest, "candidate_policy_verifier_differs");
     const env = { ...process.env, ADAPTIVE_ROUTER_HOME: join(directory, "state"), PLUGIN_DATA: join(directory, "state"),
       CODEX_HOME: join(directory, "codex"), ADAPTIVE_ROUTER_LOCAL_ONLY: "1", ADAPTIVE_ROUTER_INVOCATION_ID: "" };
     for (const script of ["verify-runtime-compatibility.mjs", cold ? "verify-cold-epoch-compatibility.mjs" : "verify-host-epoch-compatibility.mjs"]) {
       const result = spawnSync(process.execPath, [join(ROOT, "scripts", script), source.root, candidate.root, directory],
         { env, encoding: "utf8", timeout: 45_000, windowsHide: true });
       requireFact(result.status === 0 && !result.error, `A_B_constructor_dispatch_verification_failed:${String(result.stderr || result.error?.message).slice(-1200)}`);
+      if (script === "verify-runtime-compatibility.mjs") {
+        const reports = result.stdout.split("\n").filter((line) => line.startsWith("MODEL_POLICY_READER_ISOLATION="));
+        requireFact(reports.length <= 1, "ambiguous_model_policy_reader_report");
+        if (reports.length) {
+          const report = JSON.parse(reports[0].slice("MODEL_POLICY_READER_ISOLATION=".length));
+          requireFact(report.schema === "model-policy-reader-isolation/1" && [report.sourceReader, report.candidateReader]
+            .every((reader) => ["legacy", "v2"].includes(reader)), "invalid_model_policy_reader_report");
+          modelPolicyIsolation = { ...report, verifierScriptDigest: policyVerifierDigest };
+        }
+      }
     }
     verifyRuntimePackage(source); verifyRuntimePackage(candidate);
+    requireFact(sha(readFileSync(policyVerifier)) === policyVerifierDigest, "model_policy_verifier_changed");
     const record = { schema: "runtime-epoch-publication/1", source: source.digest, candidate: candidate.digest,
       verifier: runtimeSourceDigest(), suite: cold ? "real-A-B-writers-and-isolated-cold-entry/2" : "real-A-B-writers-and-isolated-v2-entry/2",
-      ...(cold ? { entryMode: "cold" } : {}) };
+      ...(cold ? { entryMode: "cold" } : {}), ...(modelPolicyIsolation ? { modelPolicyIsolation } : {}) };
     record.id = payloadHash(record);
     const token = Object.freeze({}); PUBLICATIONS.set(token, { source, candidate, record }); return token;
   } finally { rmSync(directory, { recursive: true, force: true }); }

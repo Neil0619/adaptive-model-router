@@ -32,6 +32,15 @@ async function fixture(run, { legacyErrors = true } = {}) {
     const oldErrors = readFileSync(join(source, "test/support/legacy-request-errors.mjs"));
     assert.equal(createHash("sha256").update(oldErrors).digest("hex"), "d865446d2d13ef68c79bec11235471e45187a45bf6d6d8a204a4de9f8bcae970");
     if (legacyErrors) writeFileSync(join(root, "scripts/lib/request-errors.mjs"), oldErrors);
+    for (const [name, digest] of [
+      ["service", "59993287ae93a90d764c73f2ba68985c92b630b15d3ad4925a2fb86269dacd2a"],
+      ["contracts", "d280956ef7e7663af48010294ce3496e494855489bb4667d0542642fa15ee896"],
+      ["constants", "964ddefb1c75976cb53bb15051d667a88898d2db429f316494085d682c165d79"],
+    ]) {
+      const bytes = readFileSync(join(source, `test/support/legacy-validation-${name}.mjs`));
+      assert.equal(createHash("sha256").update(bytes).digest("hex"), digest);
+      writeFileSync(join(root, `scripts/lib/${name}.mjs`), bytes);
+    }
     const generation = inspectRuntimePackage(root), store = new RouterStore();
     try {
       store.transaction(() => publishRuntime(store.db, generation, project.home, { bootstrap: true, shellRoot: root }));

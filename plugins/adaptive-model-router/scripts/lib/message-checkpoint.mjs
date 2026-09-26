@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { canonicalJson, payloadHash } from "./io.mjs";
 import { openPrivateState, sealPrivateState } from "./private-state.mjs";
-import { readStableRollout, rolloutIdentity, COLD_ROLLOUT_FILE_LIMIT } from "./native-rollout-reader.mjs";
+import { readStableRollout, rolloutIdentity, resolveRolloutPath, COLD_ROLLOUT_FILE_LIMIT } from "./native-rollout-reader.mjs";
+import { isNativeSessionSource, nativeSessionSourceIndex } from "./native-session-sources.mjs";
 import { readChildTurnEvidence, readChildInputEvidence } from "./child-turn-evidence.mjs";
 import { readChildCommands } from "./child-command-journal.mjs";
 import { rememberedRootTranscript } from "./stage-reconciliation.mjs";
@@ -21,12 +22,29 @@ const SENDER_READS = new WeakMap();
 const acceptedRows = (db, child) => db.prepare("SELECT * FROM delegation_messages WHERE route_id=? AND status='accepted' AND kind!='interrupt_agent' ORDER BY revision").all(child.route_id);
 const messageSummary = (row, reason) => ({ routeId: row.route_id, callId: row.call_id, revision: row.revision, inputDigest: row.input_digest, reason });
 
-function withSenderReads(db, rows, run, { coldBatch = false } = {}) {
+function withSenderReads(db, rows, run, { coldBatch = false, deadline = Date.now() + 5000 } = {}) {
   const previous = SENDER_READS.get(db);
   if (previous && rows.every((row) => previous.callIds.has(row.call_id))) return run(previous);
-  const batch = { callIds: new Set(rows.map((row) => row.call_id)), sources: new Map(), childSources: new Map(), owners: new Map(), coldBatch };
+  const batch = { callIds: new Set(rows.map((row) => row.call_id)), sources: new Map(), childSources: new Map(), owners: new Map(),
+    sessions: new Set(), sessionIndex: null, coldBatch };
   SENDER_READS.set(db, batch);
-  try { return run(batch); }
+  try {
+    const result = run(batch);
+    if (batch.sessionIndex) {
+      const validationDeadline = coldBatch ? Date.now() + 30_000 : deadline;
+      const current = nativeSessionSourceIndex(validationDeadline);
+      for (const session of batch.sessions) if (canonicalJson(current.get(session) || []) !== canonicalJson(batch.sessionIndex.get(session) || []))
+        fail("sender_segment_inventory_changed");
+      // Discovery itself takes time. Content proofs must still be fresh after
+      // that last walk, not merely before it began.
+      for (const [path, source] of batch.sources) if (!source.error && rolloutIdentity(path) !== source.identity)
+        fail("sender_source_changed");
+      for (const [path, identity] of batch.childSources) if (rolloutIdentity(path) !== identity) fail("child_source_changed");
+      batch.validateRows?.();
+      if (Date.now() > validationDeadline) fail("native_message_read_budget_exhausted");
+    }
+    return result;
+  }
   finally { if (previous) SENDER_READS.set(db, previous); else SENDER_READS.delete(db); }
 }
 function ownMessageSource(batch, path) {
@@ -180,8 +198,19 @@ function operation(db, context, child, row, { parentTranscriptPath = null, sende
   const checkpointSource = present(db) && db.prepare("SELECT record FROM runtime_message_checkpoints WHERE route_id=? AND caller_turn_id=? AND call_id=?")
     .get(child.route_id, row.caller_turn_id, row.call_id);
   const retainedSource = checkpointSource && JSON.parse(openPrivateState(db, checkpointSource.record)).operation.path;
-  const paths = [...new Set([parentTranscriptPath || retainedSource || (rootSender ? rememberedRootTranscript(db, context) : null), ...senderTranscriptPaths,
-    ...knownSenders].filter(Boolean))];
+  const remembered = rootSender ? rememberedRootTranscript(db, context) : null;
+  const batch = SENDER_READS.get(db);
+  let discovered = [];
+  // Explicit and durable checkpoint sources remain pinned. Only an implicit
+  // root lookup may recover prior native segments after SessionStart rotates.
+  if (!parentTranscriptPath && !retainedSource && rootSender && isNativeSessionSource(remembered, locator.parentContextId)) {
+    if (!batch) fail("sender_discovery_batch_missing");
+    batch.sessionIndex ||= nativeSessionSourceIndex(deadline);
+    batch.sessions.add(locator.parentContextId);
+    discovered = batch.sessionIndex.get(locator.parentContextId) || [];
+  }
+  const paths = [...new Set([parentTranscriptPath || retainedSource || remembered, ...senderTranscriptPaths,
+    ...knownSenders, ...discovered].filter(Boolean).map(resolveRolloutPath))];
   let found = null;
   for (const path of paths) {
     const { identity, meta, calls, activities } = senderSource(db, path, row, deadline);
@@ -258,7 +287,7 @@ function acceptedInputEvidence(db, context, child, source, options) {
       && payloadHash(fact.author) === row.author && fact.triggerTurn === (row.kind === "followup_task")
       && source.inputs.some((item) => item.id === fact.id && matches(item, actual.input)));
     return { row, actual, inputs };
-  }));
+  }), { deadline: options.deadline });
   const uses = new Map();
   for (const item of evidence) for (const fact of item.inputs) uses.set(fact.id, (uses.get(fact.id) || 0) + 1);
   return evidence.map((item) => ({ ...item, consumed: item.inputs.length === 1 && uses.get(item.inputs[0].id) === 1,
@@ -291,7 +320,11 @@ export function pendingNativeMessageBatch(db, children, { coldBatch = false } = 
   if (db.isTransaction) return rows.map((row) => messageSummary(row, "native_message_source_unverified"));
   const before = new Map(children.map((child) => [child.route_id, payloadHash([child, rows.filter((row) => row.route_id === child.route_id)])]));
   const deadline = Date.now() + 5000;
-  return withSenderReads(db, rows, (batch) => {
+  try { return withSenderReads(db, rows, (batch) => {
+    batch.validateRows = () => {
+      for (const child of children) if (payloadHash([db.prepare("SELECT * FROM delegation_children WHERE route_id=?").get(child.route_id), acceptedRows(db, child)])
+        !== before.get(child.route_id)) fail("message_rows_changed");
+    };
     const pending = new Map(), changed = new Set();
     for (const child of children) {
       batch.currentChild = child.route_id;
@@ -312,7 +345,8 @@ export function pendingNativeMessageBatch(db, children, { coldBatch = false } = 
     return children.flatMap((child) => changed.has(child.route_id)
       ? rows.filter((row) => row.route_id === child.route_id).map((row) => messageSummary(row, "native_message_source_unverified"))
       : pending.get(child.route_id));
-  }, { coldBatch });
+  }, { coldBatch, deadline }); }
+  catch { return rows.map((row) => messageSummary(row, "native_message_source_unverified")); }
 }
 
 export function prepareMessageCheckpoint(store, context, input) {

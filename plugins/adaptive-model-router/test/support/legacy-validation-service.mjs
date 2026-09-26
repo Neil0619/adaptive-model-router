@@ -29,7 +29,6 @@ import { HOST_LIFECYCLE_CONTRACT, HOOK_DISPATCH_CONTRACT, HOST_PREDISPATCH_CONTR
 
 import { MODEL_POLICY_SCHEMA, decideWorkLevel } from "./model-policy.mjs";
 import { readModelPolicy, modelPolicyStatus, previewModelPolicy, activateModelPolicy, rollbackModelPolicy } from "./model-policy-store.mjs";
-import { prepareModelPolicyScope } from "./model-policy-isolation.mjs";
 
 const CONTEXT = { type: "string", minLength: 1, maxLength: 256 };
 const PROPOSAL = { type: "string", minLength: 1, maxLength: 128 };
@@ -455,7 +454,7 @@ async function executeRouterTool(name, args, { store, cwd = process.cwd(), route
     return store.transaction(() => manageStage(store.db, context, args, taskCwd));
   }
   if (name === "get_model_policy") return { ...modelPolicyStatus(store.db, store.context({ cwd, contextId: args.contextId, create: false })), definition: readModelPolicy(store.db).definition };
-  if (name === "preview_model_policy") return previewModelPolicy(store.db, args.definition, prepareModelPolicyScope(store, name));
+  if (name === "preview_model_policy") return previewModelPolicy(store.db, args.definition);
   if (name === "activate_model_policy") return activateModelPolicy(store, args);
   if (name === "rollback_model_policy") return rollbackModelPolicy(store, args);
   if (name === "route_stage") {

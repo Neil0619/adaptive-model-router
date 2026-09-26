@@ -6,9 +6,13 @@ import { dirname } from "node:path";
 import { parseControlPrompt } from "../scripts/lib/control.mjs";
 import { routeStage } from "../scripts/lib/router.mjs";
 import { desiredRoute } from "../scripts/lib/scorer.mjs";
+import { RouterStore } from "../scripts/lib/database.mjs";
+import { ECONOMY_MODEL_POLICY, DEFAULT_MODEL_POLICY } from "../scripts/lib/model-policy.mjs";
+import { activateModelPolicy } from "../scripts/lib/model-policy-store.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
 const dataset = JSON.parse(await readFile(join(root, "routes.json"), "utf8"));
+const economy = JSON.parse(await readFile(join(root, "economy.json"), "utf8"));
 const temporary = await mkdtemp(join(tmpdir(), "adaptive-router-eval-"));
 const isolatedKeys = ["ADAPTIVE_ROUTER_HOME", "PLUGIN_DATA", "CODEX_HOME", "ADAPTIVE_ROUTER_LOCAL_ONLY", "ADAPTIVE_ROUTER_INVOCATION_ID"];
 const previousEnvironment = Object.fromEntries(isolatedKeys.map((key) => [key, process.env[key]]));
@@ -85,8 +89,23 @@ try {
       scoreBandCases.push({ score, hardSignalCount });
     }
   }
-  const totalCases = dataset.routes.length + scoreBandCases.length;
-  const agreement = (agreements + scoreBandAgreements) / totalCases;
+  let economyAgreements = 0;
+  for (const item of economy) {
+    process.env.ADAPTIVE_ROUTER_HOME = join(temporary, `economy-${item.id}`);
+    process.env.PLUGIN_DATA = process.env.ADAPTIVE_ROUTER_HOME;
+    const store = new RouterStore();
+    try {
+      activateModelPolicy(store, { definition: ECONOMY_MODEL_POLICY.definition, expectedDigest: DEFAULT_MODEL_POLICY.digest });
+      const { target: expected, action, id, ...input } = item;
+      const result = await routeStage({ ...input, contextId: `economy-${id}`, hostCapabilities: { delegation: {
+        available: true, invocation: "direct", targets: ECONOMY_MODEL_POLICY.definition.allowedModels,
+      } } }, { store, cwd: temporary });
+      if (result.action === action && (!expected || result.target?.model === expected.model && result.target?.effort === expected.effort)) economyAgreements++;
+      else mismatches.push({ id, action: result.action, target: result.target });
+    } finally { store.close(); }
+  }
+  const totalCases = dataset.routes.length + scoreBandCases.length + economy.length;
+  const agreement = (agreements + scoreBandAgreements + economyAgreements) / totalCases;
   const riskRecall = riskTotal === 0 ? 1 : riskRecalled / riskTotal;
   const negativeControlMutations = dataset.controls
     .filter((item) => !item.changesState && parseControlPrompt(item.prompt) !== null).length;
@@ -97,6 +116,7 @@ try {
     measuresModelQuality: false,
     cases: totalCases,
     bilingualRouteCases: dataset.routes.length,
+    economyRouteCases: economy.length,
     scoreBandCases: scoreBandCases.length,
     routeAgreement: Number(agreement.toFixed(3)),
     riskFloorRecall: Number(riskRecall.toFixed(3)),

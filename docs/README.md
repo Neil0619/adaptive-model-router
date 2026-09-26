@@ -32,6 +32,9 @@ specification.
   Installed and verified on native macOS; the
   [installation record](evidence/gpt6-installation-validation.zh-CN.md) records
   the evidence and the pending native Windows acceptance.
+- [GPT-6 economy policy（中文规范）](MODEL-POLICY-ECONOMY.zh-CN.md):
+  Luna/Sol defaults, max = Astra/high, ultra = Astra/max, model risk floors,
+  two-step upgrades, and explicit activation with retained-runtime isolation.
 - [Contributing](../CONTRIBUTING.md): development setup, invariants, and checks.
 - [Security policy](../SECURITY.md): vulnerability reporting and trust boundary.
 

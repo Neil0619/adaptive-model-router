@@ -1,13 +1,24 @@
 import { canonicalJson, parseJson } from "./io.mjs";
 import { compileModelPolicy, DEFAULT_MODEL_POLICY, targetAllowed } from "./model-policy.mjs";
 import { randomUUID } from "node:crypto";
+import { modelPolicyResponsibilities, prepareModelPolicyScope } from "./model-policy-isolation.mjs";
 
 const ACTIVE = "model_policy:active";
+const ACTIVE_V2 = "model_policy:v2:active";
 const REVISION = "model_policy:revision:";
 const LINEAGE = "model_policy:activation-lineage";
+const LINEAGE_V2 = "model_policy:v2:activation-lineage";
+
+function activeKey(db) {
+  return db.prepare("SELECT value FROM meta WHERE key=?").get(ACTIVE_V2) ? ACTIVE_V2 : ACTIVE;
+}
+
+function lineageKey(key) {
+  return key === ACTIVE_V2 ? LINEAGE_V2 : LINEAGE;
+}
 
 function activationLineage(db, current) {
-  const row = db.prepare("SELECT value FROM meta WHERE key=?").get(LINEAGE);
+  const row = db.prepare("SELECT value FROM meta WHERE key=?").get(lineageKey(activeKey(db)));
   if (row) {
     const values = JSON.parse(row.value);
     if (!Array.isArray(values) || !values.length || values.at(-1) !== current.digest
@@ -41,7 +52,7 @@ function inferenceLeases(db) {
 }
 
 export function readModelPolicy(db, digest = null) {
-  const selected = digest || db.prepare("SELECT value FROM meta WHERE key=?").get(ACTIVE)?.value;
+  const selected = digest || db.prepare("SELECT value FROM meta WHERE key=?").get(activeKey(db))?.value;
   if (!selected || selected === DEFAULT_MODEL_POLICY.digest) return DEFAULT_MODEL_POLICY;
   const row = db.prepare("SELECT value FROM meta WHERE key=?").get(REVISION + selected);
   if (!row) throw new Error("model policy revision is missing");
@@ -49,6 +60,17 @@ export function readModelPolicy(db, digest = null) {
   const policy = compileModelPolicy(record.definition);
   if (policy.digest !== selected) throw new Error("model policy revision digest mismatch");
   return policy;
+}
+
+export function initializeModelPolicy(db) {
+  // Retained v1 readers unconditionally open this key during startup. Never
+  // seed it from the effective (possibly v2) policy, including on recovery.
+  const legacyDigest = db.prepare("SELECT value FROM meta WHERE key=?").get(ACTIVE)?.value;
+  const legacy = legacyDigest ? readModelPolicy(db, legacyDigest) : DEFAULT_MODEL_POLICY;
+  if (legacy.definition.schemaVersion !== 1) throw new Error("legacy model policy pointer must remain schema 1");
+  retainModelPolicy(db, legacy);
+  db.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES(?,?)").run(ACTIVE, legacy.digest);
+  retainModelPolicy(db, readModelPolicy(db));
 }
 
 export function retainModelPolicy(db, policy, parentDigest = null) {
@@ -72,15 +94,23 @@ export function modelPolicyStatus(db, context = null) {
   return { id: policy.definition.id, schemaVersion: policy.definition.schemaVersion, digest: policy.digest,
     parentDigest: activationLineage(db, policy).at(-2) || null,
     allowedModels: policy.definition.allowedModels, targets: policy.definition.targets,
-    legacyLearning: "observe-only", invalidLocks };
+    legacyLearning: "observe-only", invalidLocks,
+    ...(activeKey(db) === ACTIVE_V2 ? { activationScope: "v2-interpreters", legacyRuntimePolicy: legacyPolicyStatus(db) } : {}) };
 }
 
-export function previewModelPolicy(db, definition) {
+function legacyPolicyStatus(db) {
+  const digest = db.prepare("SELECT value FROM meta WHERE key=?").get(ACTIVE)?.value || DEFAULT_MODEL_POLICY.digest;
+  const policy = readModelPolicy(db, digest);
+  return { id: policy.definition.id, digest: policy.digest, schemaVersion: policy.definition.schemaVersion };
+}
+
+export function previewModelPolicy(db, definition, scopeToken = null) {
   const proposed = compileModelPolicy(definition);
   const current = readModelPolicy(db);
-  const activeDelegations = Number(db.prepare("SELECT count(*) AS count FROM delegation_attempts WHERE finalized_at IS NULL").get().count)
-    + Number(db.prepare("SELECT count(*) AS count FROM meta WHERE key LIKE 'legacy_delegation_block:%'").get().count)
-    + inferenceLeases(db).filter((lease) => !lease.dead).length;
+  const responsibilities = modelPolicyResponsibilities(db, { scopeToken,
+    v2Namespace: proposed.definition.schemaVersion === 2 || activeKey(db) === ACTIVE_V2 });
+  const leases = inferenceLeases(db).filter((lease) => !lease.dead).length;
+  const activeDelegations = responsibilities.blocking + leases;
   const added = proposed.definition.allowedModels.flatMap((entry) => entry.efforts
     .filter((effort) => !targetAllowed(current, { model: entry.model, effort }))
     .map((effort) => ({ model: entry.model, effort })));
@@ -89,7 +119,10 @@ export function previewModelPolicy(db, definition) {
     .map((effort) => ({ model: entry.model, effort })));
   return { readOnly: true, currentDigest: current.digest, candidateDigest: proposed.digest,
     id: proposed.definition.id, added, removed, targets: proposed.definition.targets,
-    activeDelegations, canActivate: activeDelegations === 0 };
+    activeDelegations, canActivate: activeDelegations === 0,
+    totalResponsibilities: responsibilities.total + leases, isolatedLegacyResponsibilities: responsibilities.isolated,
+    ...(proposed.definition.schemaVersion === 2 || activeKey(db) === ACTIVE_V2
+      ? { activationScope: "v2-interpreters", legacyRuntimePolicy: legacyPolicyStatus(db) } : {}) };
 }
 
 export async function withModelPolicyLease(store, policy, operation) {
@@ -104,25 +137,29 @@ export async function withModelPolicyLease(store, policy, operation) {
 
 export function activateModelPolicy(store, { definition, expectedDigest }) {
   const policy = compileModelPolicy(definition);
+  const scopeToken = prepareModelPolicyScope(store, "activate_model_policy");
   return store.transaction(() => {
     const current = readModelPolicy(store.db);
     if (current.digest !== expectedDigest) return { activated: false, reasonCode: "MODEL_POLICY_CONFLICT", currentDigest: current.digest };
-    const preview = previewModelPolicy(store.db, definition);
+    const preview = previewModelPolicy(store.db, definition, scopeToken);
     if (!preview.canActivate) return { activated: false, reasonCode: "MODEL_POLICY_BUSY", activeDelegations: preview.activeDelegations };
     for (const lease of inferenceLeases(store.db).filter((entry) => entry.dead)) store.db.prepare("DELETE FROM meta WHERE key=?").run(lease.key);
     if (current.digest === policy.digest) return { activated: true, digest: policy.digest, unchanged: true };
     const lineage = activationLineage(store.db, current);
     retainModelPolicy(store.db, current);
     retainModelPolicy(store.db, policy, current.digest);
+    const key = policy.definition.schemaVersion === 2 ? ACTIVE_V2 : activeKey(store.db);
     store.db.prepare("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-      .run(LINEAGE, canonicalJson([...lineage, policy.digest]));
+      .run(lineageKey(key), canonicalJson([...lineage, policy.digest]));
     store.db.prepare("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-      .run(ACTIVE, policy.digest);
-    return { activated: true, digest: policy.digest, previousDigest: current.digest };
+      .run(key, policy.digest);
+    return { activated: true, digest: policy.digest, previousDigest: current.digest,
+      ...(key === ACTIVE_V2 ? { activationScope: "v2-interpreters", legacyRuntimePolicy: legacyPolicyStatus(store.db) } : {}) };
   });
 }
 
 export function rollbackModelPolicy(store, { expectedDigest }) {
+  const scopeToken = prepareModelPolicyScope(store, "rollback_model_policy");
   return store.transaction(() => {
     const current = readModelPolicy(store.db);
     if (current.digest !== expectedDigest) return { activated: false, reasonCode: "MODEL_POLICY_CONFLICT", currentDigest: current.digest };
@@ -130,12 +167,14 @@ export function rollbackModelPolicy(store, { expectedDigest }) {
     const parent = lineage.at(-2);
     if (!parent) return { activated: false, reasonCode: "MODEL_POLICY_NO_PREVIOUS" };
     const target = readModelPolicy(store.db, parent);
-    const preview = previewModelPolicy(store.db, target.definition);
+    const preview = previewModelPolicy(store.db, target.definition, scopeToken);
     if (!preview.canActivate) return { activated: false, reasonCode: "MODEL_POLICY_BUSY", activeDelegations: preview.activeDelegations };
     for (const lease of inferenceLeases(store.db).filter((entry) => entry.dead)) store.db.prepare("DELETE FROM meta WHERE key=?").run(lease.key);
+    const key = activeKey(store.db);
     store.db.prepare("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
-      .run(LINEAGE, canonicalJson(lineage.slice(0, -1)));
-    store.db.prepare("UPDATE meta SET value=? WHERE key=?").run(parent, ACTIVE);
-    return { activated: true, digest: parent, previousDigest: current.digest };
+      .run(lineageKey(key), canonicalJson(lineage.slice(0, -1)));
+    store.db.prepare("UPDATE meta SET value=? WHERE key=?").run(parent, key);
+    return { activated: true, digest: parent, previousDigest: current.digest,
+      ...(key === ACTIVE_V2 ? { activationScope: "v2-interpreters", legacyRuntimePolicy: legacyPolicyStatus(store.db) } : {}) };
   });
 }

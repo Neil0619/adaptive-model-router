@@ -135,8 +135,12 @@ evidence that direct `spawn_agent` is unavailable. After this task has completed
 a direct Router child dispatch, a later unavailable claim is rejected unless it
 is tied to an actual direct-tool rejection that proves no child was created.
 Missing direct interface capabilities permit no new delegation. Current routing
-uses only GPT-6 at six allowed efforts, with high as the default. Conditions,
+uses GPT-6 Astra at six allowed efforts, with high as the default. Conditions,
 allowed models and target bindings are defined in [model-policy.json](plugins/adaptive-model-router/model-policy.json).
+The opt-in [economy policy](docs/MODEL-POLICY-ECONOMY.zh-CN.md) uses Luna for low/medium,
+Sol for high/xhigh, and Astra/high and Astra/max for the max and ultra work levels.
+It requires the v2 policy interpreter and explicit activation; retained older
+interpreters keep their original policy. Work levels are not reasoning efforts.
 See [the GPT-6 specification](docs/MODEL-POLICY-GPT6.zh-CN.md) for preview, activation,
 rollback and the evidence needed to select a lower or higher effort.
 

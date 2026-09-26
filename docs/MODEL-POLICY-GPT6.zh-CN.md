@@ -1,5 +1,8 @@
 # GPT‑6 单模型、质量优先的路由规范
 
+经济优先的 schema 2 策略见 [GPT-6 经济优先委派策略](MODEL-POLICY-ECONOMY.zh-CN.md)。
+本文保留 schema 1 的原始策略含义，供旧解释器、历史记录和回滚使用。
+
 状态：已安装 GPT‑6 策略，2026-09-06；本机 macOS 登录态路由验收通过。
 最新安装状态见[安装核验记录](evidence/gpt6-installation-validation.zh-CN.md)，源码实现与首次验证记录另见文末。
 本规范取代先前 Sol/high 加 GPT‑6、按窄评分区间分配目标的设计。
