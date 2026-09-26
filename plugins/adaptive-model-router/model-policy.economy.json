@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 2,
+  "id": "gpt6-economy-v1",
+  "allowedModels": [
+    {
+      "model": "gpt-6-luna",
+      "efforts": [
+        "low",
+        "medium"
+      ]
+    },
+    {
+      "model": "gpt-6-sol",
+      "efforts": [
+        "high",
+        "xhigh"
+      ]
+    },
+    {
+      "model": "gpt-6-astra",
+      "efforts": [
+        "high",
+        "max"
+      ]
+    }
+  ],
+  "targets": {
+    "low": {
+      "model": "gpt-6-luna",
+      "effort": "low"
+    },
+    "medium": {
+      "model": "gpt-6-luna",
+      "effort": "medium"
+    },
+    "high": {
+      "model": "gpt-6-sol",
+      "effort": "high"
+    },
+    "xhigh": {
+      "model": "gpt-6-sol",
+      "effort": "xhigh"
+    },
+    "max": {
+      "model": "gpt-6-astra",
+      "effort": "high"
+    },
+    "ultra": {
+      "model": "gpt-6-astra",
+      "effort": "max"
+    }
+  },
+  "conditions": {
+    "xhighHardSignals": 2,
+    "maxHardSignals": 3,
+    "defaultLevel": "high",
+    "low": {
+      "requires": [
+        "requirementsSettled",
+        "strongVerification",
+        "declaredMechanical",
+        "exactOutputCheck"
+      ],
+      "forbids": [
+        "risk",
+        "security",
+        "migration",
+        "publicContract",
+        "review",
+        "ambiguity",
+        "crossCutting",
+        "architectureTradeoff",
+        "implementation"
+      ]
+    },
+    "medium": {
+      "requires": [
+        "requirementsSettled",
+        "strongVerification"
+      ],
+      "forbids": [
+        "risk",
+        "security",
+        "migration",
+        "publicContract",
+        "review",
+        "ambiguity",
+        "crossCutting",
+        "architectureTradeoff"
+      ]
+    },
+    "xhighCrossCuttingWith": [
+      "ambiguity",
+      "architectureTradeoff"
+    ],
+    "maxRequiresAny": [
+      "highFailureCost",
+      "irreversible"
+    ],
+    "riskFloorSignals": [
+      "risk",
+      "security",
+      "migration",
+      "publicContract",
+      "review",
+      "architectureTradeoff"
+    ]
+  },
+  "fallbacks": {
+    "low": [
+      "medium",
+      "high",
+      "max"
+    ],
+    "medium": [
+      "high",
+      "max"
+    ],
+    "high": [
+      "xhigh",
+      "max"
+    ],
+    "xhigh": [
+      "max"
+    ],
+    "max": [],
+    "ultra": []
+  },
+  "escalation": {
+    "limit": 2,
+    "next": {
+      "low": "high",
+      "medium": "high",
+      "high": "max",
+      "xhigh": "max",
+      "max": "ultra"
+    }
+  },
+  "purposes": {
+    "classifier": "low",
+    "qualification": "low",
+    "smoke": "high"
+  },
+  "modelOrder": [
+    "gpt-6-luna",
+    "gpt-6-sol",
+    "gpt-6-astra"
+  ],
+  "criticalRisk": {
+    "signals": [
+      "highFailureCost",
+      "irreversible"
+    ],
+    "minimumLevel": "max"
+  }
+}

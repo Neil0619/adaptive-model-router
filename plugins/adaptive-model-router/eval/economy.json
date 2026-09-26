@@ -1,0 +1,11 @@
+[
+  {"id":"mechanical-batch","goal":"Sort supplied values","phase":"work","evidence":{"workProduct":true,"requirementsSettled":true,"strongVerification":true,"mechanical":true,"exactOutputCheck":true,"batchSize":4},"action":"delegate","target":{"model":"gpt-6-luna","effort":"low"}},
+  {"id":"settled","goal":"整理已知资料","phase":"work","evidence":{"workProduct":true,"requirementsSettled":true,"strongVerification":true},"action":"delegate","target":{"model":"gpt-6-luna","effort":"medium"}},
+  {"id":"default","goal":"实现指定功能","phase":"implementation","evidence":{"workProduct":true},"action":"delegate","target":{"model":"gpt-6-sol","effort":"high"}},
+  {"id":"complex","goal":"Analyze a bounded task","phase":"work","evidence":{"workProduct":true,"crossCutting":true,"architectureTradeoff":true},"action":"delegate","target":{"model":"gpt-6-sol","effort":"xhigh"}},
+  {"id":"critical","goal":"检查指定变更","phase":"work","evidence":{"workProduct":true,"highFailureCost":true},"action":"delegate","target":{"model":"gpt-6-astra","effort":"high"}},
+  {"id":"irreversible","goal":"Check specified work","phase":"work","evidence":{"workProduct":true,"irreversible":true},"action":"delegate","target":{"model":"gpt-6-astra","effort":"high"}},
+  {"id":"explicit-top","goal":"Analyze specified work","phase":"work","evidence":{"workProduct":true},"override":{"model":"gpt-6-astra","effort":"max"},"action":"delegate","target":{"model":"gpt-6-astra","effort":"max"}},
+  {"id":"no-ultra","goal":"Analyze specified work","phase":"work","evidence":{"workProduct":true},"override":{"model":"gpt-6-astra","effort":"ultra"},"action":"ask_user"},
+  {"id":"no-risk-downgrade","goal":"Analyze specified work","phase":"work","evidence":{"workProduct":true,"irreversible":true},"override":{"model":"gpt-6-sol","effort":"high"},"action":"ask_user"}
+]

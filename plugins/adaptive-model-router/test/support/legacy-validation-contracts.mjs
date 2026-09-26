@@ -144,7 +144,7 @@ export const ROUTE_OUTPUT_SCHEMA = {
     routeId: { type: "string", minLength: 1 },
     blockingRouteId: { type: "string", minLength: 1 },
     decision: { type: "object", additionalProperties: false, required: ["policyId", "policyDigest", "policyVersion", "workLevel", "rule"], properties: {
-      policyId: { type: "string" }, policyDigest: { type: "string" }, policyVersion: { type: "integer", enum: [1, 2] },
+      policyId: { type: "string" }, policyDigest: { type: "string" }, policyVersion: { type: "integer", enum: [1] },
       workLevel: { type: "string", enum: ["low", "medium", "high", "xhigh", "max", "ultra"] }, rule: { type: "string" }
     } },
     action: { type: "string", enum: ["delegate", "continue", "ask_user", "busy"] },

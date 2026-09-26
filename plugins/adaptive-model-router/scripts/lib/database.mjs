@@ -30,7 +30,7 @@ import {
   unresolvedAttempt,
 } from "./delegation-gate.mjs";
 
-import { readModelPolicy, retainModelPolicy, modelPolicyStatus } from "./model-policy-store.mjs";
+import { readModelPolicy, retainModelPolicy, modelPolicyStatus, initializeModelPolicy } from "./model-policy-store.mjs";
 import { targetAllowed } from "./model-policy.mjs";
 import { createStageClosureSchema, createStageMessageSchema, stageClosureStatus, stageResponsibilities, verifyStageClosure } from "./stage-closure.mjs";
 import { reclaimGlobalReservations } from "./global-reservation-reclamation.mjs";
@@ -632,9 +632,7 @@ export class RouterStore {
         this.db.exec("INSERT INTO delegation_messages SELECT * FROM delegation_messages_v9");
         this.db.exec("DROP TABLE delegation_messages_v9");
       }
-      const policy = readModelPolicy(this.db);
-      retainModelPolicy(this.db, policy);
-      this.db.prepare("INSERT OR IGNORE INTO meta(key,value) VALUES(?,?)").run("model_policy:active", policy.digest);
+      initializeModelPolicy(this.db);
       this.db.exec(`PRAGMA user_version = ${DATABASE_VERSION}`);
     });
   }
