@@ -211,6 +211,8 @@ v1 旧 writer 不会自动执行新代际检查，也不会读取新增的接续
 
 `installationComplete:false` 表示只完成安装或退役子步骤，不能解释为所有任务已接入。重复执行退役或中断后继续，通过原始路径、保留包和不可变事件链对账，不重写业务 outcome。以后仅 App 版本变化时不执行这一套插件冷安装。
 
+旧入口与 Router 数据目录位于不同文件系统时，旧入口归档放在其原父目录下的 `runtime-v2/native-entry-archive/`；同一文件系统仍使用数据目录中的受管归档。退役和恢复均在原文件系统内原子重命名，避免 Windows 的跨盘 `EXDEV`，不使用复制后递归删除。归档位置写入安装记录，恢复按该记录核验原包并还原原路径。
+
 ### 9.5 未消费消息的保全与接续
 
 新源码的 `runtime-epoch.mjs checkpoint-inputs` 可在冻结旧工具库存之外，使用明确的 context、route、revision 和原父任务日志引用建立检查点。接入 B 后，`manage_stage` 的 `read_checkpoints` 读取责任，`resolve_checkpoint` 核验它的处置，`resolve_checkpoint_arrival` 审核随后真实到达的原输入；冻结的原生工具 schema 使用已安装新版的单次 stdio bridge，不要求新开任务。
