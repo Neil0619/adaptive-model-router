@@ -29,6 +29,11 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Keep cold-install native entry archives on the original filesystem when the
+  plugin shell and Router data live on different volumes. Retirement and
+  recovery retain atomic renames instead of failing with `EXDEV`. Exercise real
+  cross-volume recovery and keep Windows directory-alias coverage independent
+  of file-symlink permissions.
 - Support cold migration from the exact reviewed Windows September 9 v1 package,
   preserving its original four-reservation limit, encrypted history and native
   retirement evidence. Later v2 handovers recheck each retained v1 entry's cold
