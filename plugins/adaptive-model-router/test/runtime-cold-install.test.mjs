@@ -1,7 +1,7 @@
 import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,7 +48,7 @@ after(() => {
 const preserved = (db) => JSON.stringify(["runtime_tasks", "runtime_stages", "routes", "outcomes", "delegation_attempts",
   "delegation_children", "delegation_messages"].map((table) => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
 
-async function fixture(run, { entryNames = ["legacy", "default", "mcp"] } = {}) {
+async function fixture(run, { entryNames = ["legacy", "default", "mcp"], entryRoot = null } = {}) {
   const cwd = realpathSync(mkdtempSync(join(work, "case-"))), home = join(cwd, "state");
   const environment = { ADAPTIVE_ROUTER_HOME: home, PLUGIN_DATA: home, CODEX_HOME: join(cwd, "codex"),
     ADAPTIVE_ROUTER_LOCAL_ONLY: "1", ADAPTIVE_ROUTER_INVOCATION_ID: "", CODEX_THREAD_ID: "" };
@@ -60,7 +60,7 @@ async function fixture(run, { entryNames = ["legacy", "default", "mcp"] } = {}) 
       sources[name] = copyRuntimePackage(template, managedRuntimeDestination(home, "published", template.digest));
       store.db.prepare("INSERT INTO runtime_generations VALUES(?,?,'published')").run(template.digest, JSON.stringify(sources[name]));
       if (entryNames.includes(name)) {
-        entries[name] = copyRuntimePackage(template, join(cwd, `native-${name}`));
+        entries[name] = copyRuntimePackage(template, join(entryRoot || cwd, `native-${name}`));
         store.db.prepare("INSERT INTO runtime_host_entries VALUES(?,?,'referenced')").run(entries[name].root, template.digest);
       }
     }
@@ -108,6 +108,32 @@ test("one cold installation qualifies all three actual sources and retires only 
     assert.equal(preserved(f.store.db), before);
     assert.equal(f.store.db.prepare("SELECT value FROM meta WHERE key='runtime_legacy_bootstrap'").get().value, f.bootstrap);
   });
+});
+
+test("cold retirement and recovery keep native entry renames on their original volume", async (t) => {
+  if (statSync(root).dev === statSync(work).dev) {
+    t.skip("Repository and OS temporary directory must be on different volumes"); return;
+  }
+  const entryRoot = realpathSync(mkdtempSync(join(root, ".cold-cross-volume-")));
+  try {
+    await fixture(async (f) => {
+      const before = preserved(f.store.db), defaults = publishedDefault(f.store.db), installation = f.prepare();
+      const entry = installation.recoveryEntries.find((entry) => entry.path === f.entries.default.root);
+      assert.notEqual(statSync(dirname(entry.path)).dev, statSync(f.home).dev);
+      // Archival must work even when data lives on C: and the native shell on E:.
+      f.retire(installation);
+      assert.equal(existsSync(entry.path), false);
+      assert.equal(inspectRuntimePackage(entry.archivePath).digest, f.sources.default.digest);
+      assert.equal(statSync(entry.archivePath).dev, statSync(entryRoot).dev);
+      restoreColdHostEpochEntries(f.store, installation.id, { inventory: emptyInventory });
+      assert.equal(inspectRuntimePackage(entry.path).digest, f.sources.default.digest);
+      assert.deepEqual(publishedDefault(f.store.db), defaults);
+      assert.equal(preserved(f.store.db), before);
+    }, { entryNames: ["default"], entryRoot });
+  } finally {
+    assert.ok(entryRoot.startsWith(join(root, ".cold-cross-volume-")));
+    rmSync(entryRoot, { recursive: true, force: true });
+  }
 });
 
 test("all three exact sources qualify a materialized candidate without writing its original bound database", async () => {

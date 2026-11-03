@@ -1,4 +1,4 @@
-import { lstatSync, realpathSync, readFileSync, existsSync, mkdirSync, renameSync } from "node:fs";
+import { lstatSync, realpathSync, readFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { dirname, resolve, relative, isAbsolute, sep } from "node:path";
 import { once } from "node:events";
 import { randomUUID } from "node:crypto";
@@ -132,6 +132,20 @@ function assertRepeatedPreparationCold(db, inventory) {
   return repeated;
 }
 
+function nativeEntryArchive(dataRoot, entry) {
+  // A native shell can live on a different volume from its data. Keep both
+  // retirement and recovery atomic: archive beside that shell rather than
+  // copying it across volumes and recursively deleting its original path.
+  let ancestor = dirname(entry.path);
+  while (!existsSync(ancestor)) {
+    const parent = dirname(ancestor);
+    if (parent === ancestor) blocked("cold_entry_volume_unavailable");
+    ancestor = parent;
+  }
+  const archiveRoot = statSync(ancestor).dev === statSync(dataRoot).dev ? dataRoot : dirname(entry.path);
+  return managedRuntimeDestination(archiveRoot, "native-entry-archive", payloadHash([entry.path, entry.generation]));
+}
+
 export function prepareColdHostEpochInstallation(store, { source, candidate, shellRoot, inventory = nativeProcessInventory }) {
   shellRoot = realpathSync(shellRoot);
   verifyRuntimePackage({ ...candidate, root: shellRoot });
@@ -176,7 +190,7 @@ export function prepareColdHostEpochInstallation(store, { source, candidate, she
   const record = { schema: "runtime-epoch-cold-installation/2", source: source.digest, candidate: candidate.digest,
     shellRoot, entries: entries.filter((entry) => entry.path !== shellRoot).map((entry) => ({ ...entry,
       ownership: enrolled.has(entry.path) ? "enrolled_native_entry" : inCache(entry.path) ? "native_plugin_cache" : "reference_only",
-      archivePath: managedRuntimeDestination(dataRoot, "native-entry-archive", payloadHash([entry.path, entry.generation])) })), verifier: runtimeSourceDigest(),
+      archivePath: nativeEntryArchive(dataRoot, entry) })), verifier: runtimeSourceDigest(),
     recovery: "restore exact retained package to its original path only in a cold recovery window; this revokes retirement",
     ...(repeated ? { recoveryBaseline: { entryRegistry: previousEntryRegistry, presentPaths: presentPaths.sort() } } : {}) };
   if (!record.entries.length) blocked("cold_old_entry_inventory_empty");

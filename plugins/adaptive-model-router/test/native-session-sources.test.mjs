@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isNativeSessionSource, nativeSessionSourceIndex } from "../scripts/lib/native-session-sources.mjs";
 
-test("native segment discovery is bounded to exact owner tokens and regular host directories", () => {
+test("native segment discovery is bounded to exact owner tokens and regular host directories", async (t) => {
   const home = mkdtempSync(join(tmpdir(), "router-native-sources-")), previous = process.env.CODEX_HOME;
   process.env.CODEX_HOME = home;
   try {
@@ -23,10 +23,22 @@ test("native segment discovery is bounded to exact owner tokens and regular host
     assert.deepEqual(nativeSessionSourceIndex(Date.now() + 5000).get(owner), [original, rotated]);
     assert.throws(() => nativeSessionSourceIndex(Infinity), /finite deadline/);
     assert.throws(() => nativeSessionSourceIndex(Date.now() - 1), /budget exhausted/);
-    const alias = join(sessions, name); symlinkSync(original, alias);
-    assert.throws(() => nativeSessionSourceIndex(Date.now() + 5000), /not a regular file/);
-    rmSync(alias); symlinkSync(archive, join(home, "sessions", "2027"));
+    const directoryAlias = join(home, "sessions", "2027");
+    symlinkSync(archive, directoryAlias, process.platform === "win32" ? "junction" : "dir");
     assert.throws(() => nativeSessionSourceIndex(Date.now() + 5000), /not a regular directory/);
+    rmSync(directoryAlias);
+    await t.test("file aliases cannot become native evidence", (fileTest) => {
+      const alias = join(sessions, name);
+      try { symlinkSync(original, alias); }
+      catch (error) {
+        if (process.platform === "win32" && ["EPERM", "EACCES"].includes(error.code)) {
+          fileTest.skip("Windows file symlink permission is unavailable"); return;
+        }
+        throw error;
+      }
+      assert.throws(() => nativeSessionSourceIndex(Date.now() + 5000), /not a regular file/);
+      rmSync(alias);
+    });
   } finally {
     if (previous === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previous;
     rmSync(home, { recursive: true, force: true });
