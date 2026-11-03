@@ -4,7 +4,7 @@ import { resolve, dirname } from "node:path";
 import { existsSync, realpathSync } from "node:fs";
 import { databasePath } from "./context.mjs";
 import { RouterStore } from "./database.mjs";
-import { readThreadSpawnIdentity, readNativeRootBirth } from "./subagent-session.mjs";
+import { readThreadSpawnIdentity, readNativeRootBirth, hookTaskCwd } from "./subagent-session.mjs";
 import { parseCarrierTaskName } from "./delegation-gate.mjs";
 import { targetedChild } from "./stage-closure.mjs";
 import { payloadHash } from "./io.mjs";
@@ -52,16 +52,17 @@ export function beginHookDispatch(input, { env = process.env, shellRoot = null }
   // Native non-Router children keep the original Hook bypass. Do this before
   // opening state: no parent binding, stage, invocation or quota is borrowed.
   if (spawn && !parseCarrierTaskName(spawn.taskName).marked) return { unmanaged: true };
+  const taskCwd = hookTaskCwd(input);
   if (!existsSync(databasePath())) throw new Error("Stable runtime is not enrolled; no database was created");
   const store = new RouterStore();
   try {
-    const context = store.context({ cwd: input.cwd || process.cwd(), contextId: spawn?.parentContextId || input.session_id, authoritative: true });
+    const context = store.context({ cwd: taskCwd, contextId: spawn?.parentContextId || input.session_id, authoritative: true });
     // Native scans run before BEGIN IMMEDIATE. One shared deadline bounds both
     // whole-file proof and the first prospective Hook coverage prefix. Under
     // the write lock only file identity, task/default and receipt state recheck.
     const deadline = Date.now() + 250;
     const previous = runtimeTask(store.db, context);
-    const rootBirth = !spawn && !previous ? readNativeRootBirth(input) : null;
+    const rootBirth = !spawn && !previous ? readNativeRootBirth({ ...input, cwd: taskCwd }) : null;
     const boundary = !spawn ? inspectRuntimeBoundary(input, previous?.turn_id, { db: store.db, context, deadline }) : null;
     const coverage = !spawn ? inspectRootOperationCoverage(store.db, context, input, { deadline }) : null;
     return store.transaction(() => {
@@ -105,7 +106,7 @@ export function beginHookDispatch(input, { env = process.env, shellRoot = null }
         store.db.prepare("UPDATE runtime_call_receipts SET state='rejected' WHERE id=? AND state='pending'")
           .run(payloadHash([input.session_id, input.turn_id, input.tool_use_id]));
       }
-      return { ...admitted, context, shellDigest,
+      return { ...admitted, context, shellDigest, taskCwd,
         stageOwnerDigest: stageId ? store.db.prepare("SELECT generation FROM runtime_stages WHERE route_id=?").get(stageId)?.generation : null,
         receiptKey: input.tool_use_id ? payloadHash([input.session_id, input.turn_id, input.tool_use_id]) : null,
         migration: Boolean(task.candidate) };

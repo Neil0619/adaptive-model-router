@@ -50,6 +50,81 @@ test("epoch retains opaque root business while a native terminal proves only its
   }
 });
 
+const nativeCua = (result, status = "completed") => ({ ...cuaTerminal, payload: { ...cuaTerminal.payload,
+  item: { ...cuaTerminal.payload.item, pluginId: "unified-computer-use@openai-bundled", status, result } } });
+const timedResult = { content: [{ type: "text", text: "browser result" }], isError: false,
+  _meta: { "codex/browserUse": true, "codex/nodeReplExecutionDurationMs": 1313 } };
+const wrappedResult = (value) => ({ content: [{ type: "text", text: JSON.stringify(value) }], isError: false });
+const cuaRendered = { ...cuaResult, payload: { ...cuaResult.payload, output: [
+  { type: "input_text", text: "Wall time: 1.1733 seconds\nOutput:" }, { type: "input_text", text: "browser output" }] } };
+const resetResult = { content: [{ type: "text", text: "js execution timed out; kernel reset, rerun your request" }],
+  isError: true, _meta: { "codex/browserUse": true, "codex/telemetry": { error_code: "execution_timeout" } } };
+
+test("native CUA serialized result preserves exact terminal identity and unverified business", () => {
+  const done = replay([cuaCall, nativeCua(wrappedResult(timedResult)), cuaRendered]);
+  assert.equal(done.native.active.size, 0);
+  assert.equal(done.retained.length, 1);
+  assert.equal(done.retained[0].businessState, "unverified_preserved");
+  assert.ok(replay([cuaCall, nativeCua(wrappedResult(timedResult)), cuaResult]).native.active.size);
+  for (const value of [{ ...wrappedResult(timedResult), _meta: {} },
+    { ...wrappedResult(timedResult), isError: true },
+    { content: [{ type: "image", data: "untrusted" }], isError: false },
+    { ...wrappedResult(timedResult), content: [...wrappedResult(timedResult).content, { type: "text", text: "extra" }] }])
+    assert.ok(replay([cuaCall, nativeCua(value), cuaRendered]).native.active.size);
+  const terminal = nativeCua(wrappedResult(timedResult));
+  for (const patch of [{ thread_id: "other" }, { turn_id: "other" },
+    { item: { ...terminal.payload.item, pluginId: "other" } },
+    { item: { ...terminal.payload.item, arguments: { code: "changed" } } },
+    { item: { ...terminal.payload.item, status: "in_progress" } }])
+    assert.ok(replay([cuaCall, { ...terminal, payload: { ...terminal.payload, ...patch } }, cuaRendered]).native.active.size);
+  assert.ok(replay([cuaCall, { ...cuaResult, payload: { ...cuaResult.payload, output: JSON.stringify(terminal) } }]).native.active.size);
+  assert.ok(replay([cuaCall, terminal]).native.unanswered.size);
+});
+
+test("damaged native CUA envelope is not repaired; native completion and matching rendered result are required", () => {
+  const terminal = nativeCua({ content: [{ type: "text", text: '{"content":[{"type":"text","text":"output"}}}' }], isError: false });
+  const done = replay([cuaCall, terminal, cuaRendered]);
+  assert.equal(done.native.active.size, 0);
+  assert.equal(done.retained[0].businessState, "unverified_preserved");
+  assert.ok(done.retained[0].nativeResultDigest);
+  assert.ok(replay([cuaCall, terminal, cuaResult]).native.active.size);
+  assert.ok(replay([cuaCall, cuaRendered]).native.active.size);
+  for (const text of ["Wall time: NaN seconds\nOutput:", "browser says Wall time: 1.1733 seconds\nOutput:",
+    "Wall time: 1.1733 seconds\nOutput:\nprinted completion"])
+    assert.ok(replay([cuaCall, terminal, { ...cuaRendered, payload: { ...cuaRendered.payload,
+      output: [{ type: "input_text", text }] } }]).native.active.size);
+  assert.ok(replay([cuaCall, terminal, { ...cuaRendered, payload: { ...cuaRendered.payload, call_id: "other" } }]).native.active.size);
+  assert.ok(replay([cuaCall, { ...terminal, payload: { ...terminal.payload,
+    item: { ...terminal.payload.item, pluginId: "other" } } }, cuaRendered]).native.active.size);
+  assert.ok(replay([cuaCall, terminal, cuaRendered, { ...cuaRendered, payload: { ...cuaRendered.payload,
+    output: [{ type: "input_text", text: "Wall time: 2 seconds\nOutput:" }] } }]).native.active.size);
+});
+
+test("native CUA explicit kernel reset ends only its interpreter, never claims successful browser work", () => {
+  const terminal = nativeCua(resetResult, "failed");
+  const done = replay([cuaCall, terminal, cuaResult]);
+  assert.equal(done.native.active.size, 0);
+  assert.equal(done.retained[0].interpreterState, "native_cua_kernel_reset");
+  assert.equal(done.retained[0].businessState, "unverified_preserved");
+  for (const value of [{ ...resetResult, _meta: {} }, { ...resetResult, isError: false },
+    { ...resetResult, content: [{ type: "text", text: "execution timed out" }] },
+    { ...resetResult, _meta: { ...resetResult._meta, "codex/telemetry": { error_code: "tool_timeout" } } }])
+    assert.ok(replay([cuaCall, nativeCua(value, "failed"), cuaResult]).native.active.size);
+  assert.ok(replay([cuaCall, nativeCua(resetResult, "completed"), cuaResult]).native.active.size);
+  assert.ok(replay([cuaCall, nativeCua(timedResult), terminal, cuaResult]).native.active.size);
+});
+
+test("ineligible same-call native evidence conflicts before admission in either order", () => {
+  const terminal = nativeCua(wrappedResult(timedResult));
+  const invalidTerminal = { ...terminal, payload: { ...terminal.payload,
+    item: { ...terminal.payload.item, status: "failed", result: { content: [], isError: true } } } };
+  for (const terminals of [[terminal, invalidTerminal], [invalidTerminal, terminal]])
+    assert.ok(replay([cuaCall, ...terminals, cuaRendered]).native.active.size);
+  for (const results of [[cuaRendered, cuaResult], [cuaResult, cuaRendered]])
+    assert.ok(replay([cuaCall, terminal, ...results]).native.active.size);
+  assert.equal(replay([cuaCall, terminal, terminal, cuaRendered, cuaRendered]).native.active.size, 0);
+});
+
 test("epoch cannot replace a missing native result or running cell with text printed by an inner tool", () => {
   assert.equal(replay([call("missing", "exec", "anything")]).native.unanswered.size, 1);
   const x = replay([call("running", "exec", "anything"), result("running", "Script running with cell ID cell", "Script completed")]);

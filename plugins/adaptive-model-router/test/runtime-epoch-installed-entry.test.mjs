@@ -11,6 +11,22 @@ import { runtimeSourceDigest } from "../scripts/lib/lifecycle-qualification.mjs"
 import { qualifyHostEpochPublication } from "../scripts/lib/runtime-epoch.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+test("exact pre-command-cwd entry qualifies but another package cannot inherit its review", {
+  skip: !process.env.ADAPTIVE_ROUTER_PRE_CWD_FIXTURE && "Requires an isolated copy of the exact hostformat predecessor",
+}, () => {
+  const original = inspectRuntimePackage(process.env.ADAPTIVE_ROUTER_PRE_CWD_FIXTURE);
+  assert.equal(original.digest, "127906fc6f04e99becedc359fac16a6f2992a955357fc9eee3275d0f641915bd");
+  for (const cold of [false, true]) assert.ok(qualifyHostEpochPublication(original, candidate, { cold }));
+  const copy = join(work, "pre-cwd"); cpSync(original.root, copy, { recursive: true });
+  for (const name of ["scripts/lib/runtime-dispatch.mjs", "scripts/lib/runtime-isolation.mjs", "scripts/node-launcher.mjs", "scripts/mcp-server.mjs"]) {
+    const path = join(copy, name), bytes = readFileSync(path);
+    writeFileSync(path, Buffer.concat([bytes, Buffer.from("\n// changed entry\n")]));
+    assert.throws(() => qualifyHostEpochPublication(inspectRuntimePackage(copy), candidate, { cold: true }), /unreviewed_invocation_registration/);
+    writeFileSync(path, bytes);
+  }
+  writeFileSync(join(copy, "unreviewed-note.txt"), "Same entry code is not the same reviewed package.\n");
+  assert.throws(() => qualifyHostEpochPublication(inspectRuntimePackage(copy), candidate, { cold: true }), /unreviewed_invocation_registration/);
+});
 const installed = process.env.ADAPTIVE_ROUTER_INSTALLED_EPOCH_FIXTURES;
 const observability = process.env.ADAPTIVE_ROUTER_INSTALLED_OBSERVABILITY_FIXTURE;
 const observabilityDigest = "168f5886af293a5a5d701fb83949accc813a84c88f16d7ee53e2c334d62d6d1a";

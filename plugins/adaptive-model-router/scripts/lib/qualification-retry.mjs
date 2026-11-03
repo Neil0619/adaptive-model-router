@@ -6,6 +6,7 @@ import { HOST_LIFECYCLE_CONTRACT, HOOK_DISPATCH_CONTRACT } from "./host-compatib
 import { recoveryRecordIntact } from "./native-recovery-receipt.mjs";
 import { isMetadataContractAudit } from "./native-metadata-recovery-audit.mjs";
 import { historicalQualificationRecoveryBasis, historicalQualificationAuditCurrent, recoverHistoricalQualification } from "./historical-qualification-recovery.mjs";
+import { operatorQualificationContext } from "./lifecycle-qualification.mjs";
 
 const DURATION_MS = 60 * 60 * 1000;
 const digest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
@@ -98,7 +99,7 @@ function recoverySchemaValid(receipt, kind) {
     && recoveryRecordIntact(receipt));
 }
 
-function completedFailedBasis(db, context, qualification) {
+export function completedFailedBasis(db, context, qualification) {
   if (![1, 2].includes(qualification?.schema) || qualification.state !== "failed" || qualification.proof !== null
     || !["HOST_HOOK_SET_MISMATCH", "NATIVE_QUALIFICATION_EVIDENCE_UNPROVEN"].includes(qualification.failure)) return null;
   const routeId = qualification.routeId;
@@ -190,7 +191,7 @@ export async function authorizeRequalification(input, { store, cwd, inspectBindi
     || (input.apply !== undefined && typeof input.apply !== "boolean")
     || (input.expectedEvidenceDigest !== undefined && !digest(input.expectedEvidenceDigest))
     || Object.keys(input).some((field) => !["contextId", "routeId", "apply", "expectedEvidenceDigest"].includes(field))) return denied();
-  const context = store.context({ cwd, contextId: input.contextId, create: false });
+  const context = operatorQualificationContext(store.db, store.context({ cwd, contextId: input.contextId, create: false }));
   const existingRaw = store.db.prepare("SELECT value FROM meta WHERE key=?").get(retryKey(input.routeId))?.value;
   const existing = read(store.db, retryKey(input.routeId));
   if ((existingRaw && !existing) || (existing && existing.contextDigest !== payloadHash(input.contextId))) return denied();
@@ -238,6 +239,7 @@ export async function authorizeRequalification(input, { store, cwd, inspectBindi
   if (input.expectedEvidenceDigest !== evidenceDigest
     || payloadHash(fingerprint((await inspect())?.binding)) !== payloadHash(binding)) return denied();
   return store.transaction(() => {
+    if (payloadHash(operatorQualificationContext(store.db, store.context({ cwd, contextId: input.contextId, create: false }))) !== payloadHash(context)) return denied();
     if (store.db.prepare("SELECT value FROM meta WHERE key=?").get(retryKey(input.routeId))?.value !== existingRaw
       || store.activeDelegationRouteId(context)
       || (historicalAudit && !historicalQualificationAuditCurrent(store, historicalAudit))

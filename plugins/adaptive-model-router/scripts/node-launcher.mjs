@@ -87,6 +87,11 @@ try {
     const dispatcher = await import("./lib/runtime-dispatch.mjs"); endRuntimeDispatch = dispatcher.endRuntimeDispatch;
     selectedDispatch = dispatcher.beginHookDispatch(nativeHookInput, { env: launchEnv, shellRoot: currentRoot });
     if (selectedDispatch.unmanaged) { observation?.finish({ operation: "succeeded" }); process.exit(0); }
+    // Retained immutable runtimes expect Hook cwd to identify the task. Only
+    // the verified dispatcher supplies this adapter value; preserve command
+    // arguments, results and every native identity field unchanged.
+    if (selectedDispatch.taskCwd && nativeHookInput.cwd !== selectedDispatch.taskCwd)
+      hookInput = Buffer.from(JSON.stringify({ ...nativeHookInput, cwd: selectedDispatch.taskCwd }));
     observation.bind({ ...observationIdentity({ context: selectedDispatch.context, input: nativeHookInput, trusted: true }),
       runtimeDigest: selectedDispatch.selected.digest, runtimeVersion: selectedDispatch.selected.descriptor.runtimeVersion,
       shellRuntimeDigest: selectedDispatch.shellDigest, stageOwnerRuntimeDigest: selectedDispatch.stageOwnerDigest,

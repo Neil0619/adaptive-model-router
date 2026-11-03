@@ -58,6 +58,113 @@ test("native no-op probe accepts an exact completed marker and its full source s
   assert.match(result.rawAuditDigest, /^[a-f0-9]{64}$/u);
 });
 
+function settingsEvent(input) {
+  return { type: "event_msg", payload: { type: "thread_settings_applied", thread_id: input.child.id,
+    thread_settings: { model: input.target.model, reasoning_effort: input.target.effort,
+      model_provider_id: "codex_local_access", cwd: "/native/project",
+      collaboration_mode: { mode: "default", settings: { model: input.target.model, reasoning_effort: input.target.effort } },
+      permission_profile: { type: "disabled" }, runtime_workspace_roots: ["/native/project"] } } };
+}
+
+function additionalTools() {
+  return { type: "response_item", payload: { type: "additional_tools", id: "at_host-declaration", role: "developer",
+    tools: [{ type: "namespace", name: "functions", description: "Host tool definitions", tools: [
+      { type: "function", name: "read", description: "Read", strict: true,
+        parameters: { type: "object", properties: {}, additionalProperties: false } },
+      { type: "custom", name: "exec", description: "Execute", format: { type: "grammar", syntax: "lark", definition: "start: /.+/" } },
+    ] }] } };
+}
+
+test("current no-work contract accepts host tool declarations without accepting execution", () => {
+  for (const version of ["0.166.0-alpha.5.1", "future-unknown", null]) {
+    const { input, options, records } = fixture(version); delete options.legacyVersion;
+    records.splice(1, 0, additionalTools());
+    assert.equal(auditNativeLifecycleNoop(input, options).passed, true, String(version));
+    records.splice(-1, 0, { type: "response_item", payload: { type: "function_call", name: "exec", call_id: "hidden" } });
+    assert.equal(auditNativeLifecycleNoop(input, options).passed, false);
+  }
+  const { input, options, records } = fixture();
+  records.splice(1, 0, additionalTools());
+  assert.equal(auditNativeLifecycleNoop(input, options).passed, false, "legacy vocabulary stays pinned");
+});
+
+test("malformed or executable additional-tools envelopes fail closed", () => {
+  for (const mutate of [
+    (p) => { p.role = "assistant"; },
+    (p) => { delete p.id; },
+    (p) => { p.id = ""; },
+    (p) => { p.tools = {}; },
+    (p) => { p.call_id = "hidden"; },
+    (p) => { p.tools[0].type = "future_action"; },
+    (p) => { p.tools[0].tools[0].type = "function_call"; },
+    (p) => { p.tools[0].tools[0].arguments = "{}"; },
+    (p) => { p.tools[0].tools[0].parameters = []; },
+    (p) => { p.tools[0].tools[1].format.definition = {}; },
+    (p) => { p.tools[0].tools.push({ type: "custom_tool_call", name: "exec", input: "hidden" }); },
+  ]) {
+    const { input, options, records } = fixture(); delete options.legacyVersion;
+    const record = additionalTools(); mutate(record.payload); records.splice(1, 0, record);
+    assert.equal(auditNativeLifecycleNoop(input, options).passed, false, String(mutate));
+  }
+});
+
+test("contract completed-item envelopes must be matching no-work native items", () => {
+  for (const type of ["CommandExecution", "FileChange", "McpToolCall", "FutureExecution"]) {
+    const { input, options, records } = fixture(); delete options.legacyVersion;
+    records.splice(-1, 0, { type: "event_msg", payload: { type: "item_completed", thread_id: input.child.id,
+      turn_id: "probe-turn", item: { type, id: "hidden-action", command: "hidden work" } } });
+    assert.equal(auditNativeLifecycleNoop(input, options).passed, false, type);
+  }
+  const { input, options, records } = fixture(); delete options.legacyVersion;
+  const event = { type: "event_msg", payload: { type: "item_completed", thread_id: input.child.id,
+    turn_id: "probe-turn", item: { type: "AgentMessage", id: "final", phase: "final_answer",
+      content: [{ type: "Text", text: input.marker }] } } };
+  records.splice(-1, 0, event);
+  assert.equal(auditNativeLifecycleNoop(input, options).passed, true);
+  event.payload.item.content[0].text = "different result";
+  assert.equal(auditNativeLifecycleNoop(input, options).passed, false);
+});
+
+test("contract no-work audit accepts correlated settings snapshots and additive metadata across host versions", () => {
+  for (const version of ["0.163.0-alpha.10.2", "future-unknown", null]) {
+    const { input, options, records } = fixture(version);
+    delete options.legacyVersion;
+    Object.assign(input.child, { cwd: "/native/project", modelProvider: "codex_local_access" });
+    const event = settingsEvent(input);
+    event.payload.thread_settings.future_display_options = { nested: ["new-field"] };
+    records.splice(3, 0, event, structuredClone(event));
+    assert.equal(auditNativeLifecycleNoop(input, options).passed, true, String(version));
+    assert.equal(auditNativeLifecycleNoop(input, { ...options, legacyVersion: "0.153.0" }).passed, false,
+      "historical adapters must not silently acquire the new event vocabulary");
+  }
+});
+
+test("settings metadata cannot hide changed identity, model, effort, or executable records", () => {
+  for (const mutate of [
+    (event) => { event.payload.thread_id = "foreign-child"; },
+    (event) => { delete event.payload.thread_id; },
+    (event) => { event.payload.thread_settings = []; },
+    (event) => { delete event.payload.thread_settings.model; },
+    (event) => { event.payload.thread_settings.model = "other-model"; },
+    (event) => { event.payload.thread_settings.reasoning_effort = "high"; },
+    (event) => { event.payload.thread_settings.model_provider_id = "other-provider"; },
+    (event) => { event.payload.thread_settings.cwd = "/other/project"; },
+    (event) => { event.payload.thread_settings.collaboration_mode.settings.model = "other-model"; },
+    (event) => { event.payload.thread_settings.collaboration_mode.settings.reasoning_effort = "high"; },
+    (event) => { event.payload.type = "future_execution_event"; },
+    (_event, records) => { records.splice(-1, 0, { type: "response_item", payload: { type: "custom_tool_call", name: "exec" } }); },
+    (_event, records) => { records.splice(-1, 0, { type: "response_item", payload: { type: "function_call", name: "exec_command" } }); },
+  ]) {
+    const { input, options, records } = fixture("0.163.0-alpha.10.2");
+    delete options.legacyVersion;
+    Object.assign(input.child, { cwd: "/native/project", modelProvider: "codex_local_access" });
+    const event = settingsEvent(input);
+    records.splice(3, 0, event);
+    mutate(event, records);
+    assert.equal(auditNativeLifecycleNoop(input, options).passed, false, String(mutate));
+  }
+});
+
 test("native no-op probe keeps the separately pinned earlier-build adapter", () => {
   const { input, options } = fixture("0.153.0-alpha.5");
   const result = auditNativeLifecycleNoop(input, options);

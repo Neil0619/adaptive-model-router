@@ -153,6 +153,33 @@ test("modified or disabled Router lifecycle hooks require user trust", async () 
   }
 });
 
+test("reviewed composite host hashes preserve exact definition and trust checks", () => {
+  const cwd = pluginRoot;
+  const single = `sha256:${"a".repeat(64)}`;
+  const composite = `${single}/sha256:${"b".repeat(64)}`;
+  const inventory = () => {
+    const value = fixture(cwd);
+    for (const hook of value.data[0].hooks) hook.currentHash = composite;
+    return value;
+  };
+  assert.deepEqual(evaluateLifecycleHookInventory(inventory(), { cwd, pluginRoot }), { ready: true, reasonCode: null });
+  for (const invalid of [null, {}, [single], "", `${single}/`, `${single}/sha256:bad`,
+    `${composite}/sha256:${"c".repeat(64)}`, `${composite}\n`, composite.toUpperCase()]) {
+    const value = inventory(); value.data[0].hooks[0].currentHash = invalid;
+    assert.equal(evaluateLifecycleHookInventory(value, { cwd, pluginRoot }).reasonCode, "HOST_HOOK_SET_MISMATCH");
+  }
+  for (const [field, changed, reason] of [
+    ["command", "different command", "HOST_HOOK_SET_MISMATCH"],
+    ["matcher", "different matcher", "HOST_HOOK_SET_MISMATCH"],
+    ["timeoutSec", -1, "HOST_HOOK_SET_MISMATCH"],
+    ["trustStatus", "modified", "HOOK_TRUST_REQUIRED"],
+    ["enabled", false, "HOOK_TRUST_REQUIRED"],
+  ]) {
+    const value = inventory(); value.data[0].hooks[0][field] = changed;
+    assert.equal(evaluateLifecycleHookInventory(value, { cwd, pluginRoot }).reasonCode, reason, field);
+  }
+});
+
 test("missing, duplicated, or altered Router hooks fail closed as a set mismatch", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "router-hook-readiness-"));
   try {

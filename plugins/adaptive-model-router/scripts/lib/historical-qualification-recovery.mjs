@@ -4,15 +4,19 @@ import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { AppServerClient } from "./app-server.mjs";
 import { canonicalJson, payloadHash } from "./io.mjs";
-import { readTaskQualification, taskQualificationKey, runtimeSourceDigest } from "./lifecycle-qualification.mjs";
+import { readTaskQualification, taskQualificationKey, runtimeSourceDigest, operatorQualificationContext } from "./lifecycle-qualification.mjs";
+import { completedFailedBasis } from "./qualification-retry.mjs";
+import { auditNativeLifecycleNoop } from "./native-lifecycle-audit.mjs";
 import { qualificationTargetMatches } from "./qualification-policy.mjs";
 import { stageClosureStatus } from "./stage-closure.mjs";
 import { readStableRollout, rolloutIdentity } from "./native-rollout-reader.mjs";
 import { recoveryRecord, recoveryRecordIntact } from "./native-recovery-receipt.mjs";
 import { openPrivateState } from "./private-state.mjs";
+import { recoveredModelQualificationBasis, auditRecoveredModelQualification, modelQualificationAuditCurrent } from "./host-model-rejection.mjs";
 
 const SCHEMA = "historical-qualification-recovery/1", PREFIX = "historical_qualification_recovery:";
 const COMPLETED = "completed_failed_qualification_no_work", INTERRUPTED = "consumed_interrupted_qualification_no_work";
+const CONTRACT = "completed_contract_qualification_no_work";
 const AUDITS = new WeakMap();
 const sha = (value) => createHash("sha256").update(value).digest("hex");
 const digest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
@@ -25,7 +29,7 @@ function retainedState(db, context, routeId, cwd) {
   const route = db.prepare("SELECT * FROM routes WHERE route_id=? AND project_id=? AND context_key=?").get(routeId, context.projectId, context.contextKey);
   const attempt = db.prepare("SELECT * FROM delegation_attempts WHERE route_id=? AND project_id=? AND context_key=?").get(routeId, context.projectId, context.contextKey);
   const outcome = db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(routeId) || null;
-  check(q?.schema === 1 && q.routeId === routeId && route?.action === "delegate"
+  check([1, 2].includes(q?.schema) && q.routeId === routeId && route?.action === "delegate"
     && route.reason_codes_json === '["HOST_LIFECYCLE_QUALIFICATION"]' && route.verification_gate === "structured-check"
     && qualificationTargetMatches(db, q, route) && (!cwd || q.binding.taskCwdDigest === payloadHash(realpathSync(cwd)))
     && digest(q.ticketHash) && attempt?.model === route.model && attempt.effort === route.effort
@@ -56,10 +60,14 @@ function verifyManagedClosure(db, context, state) {
     || (maintenance?.state === "verified" && maintenance.verified_token === closure.token)));
 }
 
-function originalKind(state) {
+function originalKind(state, db, context) {
   const { qualification: q, attempt: a, outcome: o } = state;
   const hooks = Object.keys(q.hooks).sort().join(",");
   check(Object.values(q.hooks).every((h) => h.runtimeDigest === q.binding.runtimeDigest && q.binding.shellRoots.includes(h.shellRoot)));
+  if (q.schema === 2) {
+    check(hooks === "post,pre,start,stop" && completedFailedBasis(db, context, q));
+    return CONTRACT;
+  }
   if (q.state === "failed" && q.proof === null && q.failure === undefined && hooks === "post,pre,start,stop"
     && a.finalized_at && a.ambiguous === 0 && digest(a.agent_id) && (!a.early_agent_id || a.early_agent_id === a.agent_id)
     && a.stop_observed === 1 && a.outcome_recorded === 1 && a.outcome_status === "failed"
@@ -80,7 +88,8 @@ function originalKind(state) {
 
 function receiptMatches(receipt, context, routeId, state) {
   return receipt?.schemaVersion === SCHEMA && recoveryRecordIntact(receipt)
-    && [COMPLETED, INTERRUPTED].includes(receipt.recoveryKind) && receipt.ordinaryDelegationEnabled === false
+    && [COMPLETED, INTERRUPTED, CONTRACT].includes(receipt.recoveryKind) && receipt.ordinaryDelegationEnabled === false
+    && (receipt.recoveryKind === CONTRACT) === (state.qualification.schema === 2)
     && receipt.subjectDigest === payloadHash([context.projectId, context.contextKey, routeId])
     && receipt.qualificationKey === taskQualificationKey(context)
     && receipt.qualificationDigest === payloadHash(state.qualification) && receipt.routeDigest === payloadHash(state.route)
@@ -93,6 +102,8 @@ function receiptMatches(receipt, context, routeId, state) {
 // path below re-audits complete native evidence before issuing retry authority.
 export function historicalQualificationRecoveryBasis(db, context, qualification) {
   try {
+    const modelBasis = recoveredModelQualificationBasis(db, context, qualification);
+    if (modelBasis) return modelBasis;
     const state = retainedState(db, context, qualification.routeId);
     const receipt = JSON.parse(db.prepare("SELECT value FROM meta WHERE key=?").get(PREFIX + qualification.routeId)?.value);
     return payloadHash(qualification) === payloadHash(state.qualification) && receiptMatches(receipt, context, qualification.routeId, state)
@@ -104,6 +115,7 @@ export function historicalQualificationRecoveryBasis(db, context, qualification)
 // Callers cannot supply source paths or manufacture a JSON "verified" flag.
 export function historicalQualificationAuditCurrent(store, result, context = null) {
   try {
+    if (modelQualificationAuditCurrent(store, result, context)) return true;
     const audit = AUDITS.get(result);
     if (!audit || audit.store !== store || !audit.basis
       || (context && ["projectId", "contextKey", "runtimeDigest"].some((field) => (context[field] || null) !== (audit.context[field] || null)))
@@ -141,7 +153,8 @@ function launch(parent, input, state, kind, cwd) {
   const interacted = matches.filter((i) => i.kind === "interacted"), completed = matches.filter((i) => i.kind === "completed");
   check(matches.every((i) => i.agentThreadId === start.agentThreadId && i.agentPath === start.agentPath));
   check(kind === COMPLETED ? matches.length === 3 && interacted.length === 1 && completed.length === 1
-    : matches.length === 1);
+    : kind === CONTRACT ? matches.length === 2 && interacted.length === 0 && completed.length === 1
+      : matches.length === 1);
   return { start, interacted, completed };
 }
 
@@ -189,6 +202,17 @@ function auditChild(child, binding, input, state, kind, cwd) {
     && realpathSync(child.cwd) === realpathSync(cwd) && spawn?.parent_thread_id === input.contextId
     && spawn.depth === 1 && spawn.agent_path === start.agentPath && Array.isArray(child.turns));
   const turns = child.turns;
+  if (kind === CONTRACT) {
+    check(sha(child.id) === state.attempt.agent_id && turns.length === 1
+      && completed[0].id === `subagent-completed-${turns[0].id}`);
+    const path = nativePath(child.path), identity = rolloutIdentity(path);
+    const audit = auditNativeLifecycleNoop({ child, parentId: input.contextId, taskName: start.agentPath.slice(6),
+      target: { model: state.attempt.model, effort: state.attempt.effort }, marker: state.qualification.marker });
+    check(audit.passed);
+    const source = readStableRollout(path, () => {}, { deadline: Date.now() + 15_000 });
+    check(identity === rolloutIdentity(path) && source.transcriptDigest === audit.rawAuditDigest);
+    return { path, identity, source, projectionDigest: payloadHash(turns), modelEvidence: "observed" };
+  }
   check(turns.length === (kind === COMPLETED ? 2 : 1));
   check(turns.every((t) => present(t.id) && t.itemsView === "full" && Array.isArray(t.items) && t.items.length <= 128
     && t.items.every((i) => present(i.id)) && new Set(t.items.map((i) => i.id)).size === t.items.length));
@@ -299,7 +323,11 @@ export async function recoverHistoricalQualification(input, { store, cwd, readTh
     check(present(input?.contextId) && present(input.routeId) && (input.apply === undefined || typeof input.apply === "boolean")
       && (input.expectedEvidenceDigest === undefined || digest(input.expectedEvidenceDigest))
       && Object.keys(input).every((k) => ["contextId", "routeId", "apply", "expectedEvidenceDigest"].includes(k)));
-    const context = { ...store.context({ cwd, contextId: input.contextId, create: false }), ...(sourceGeneration ? { runtimeDigest: sourceGeneration } : {}) };
+    const context = operatorQualificationContext(store.db, { ...store.context({ cwd, contextId: input.contextId, create: false }),
+      ...(sourceGeneration ? { runtimeDigest: sourceGeneration } : {}) });
+    if (verifyRetainedNative && recoveredModelQualificationBasis(store.db, context, readTaskQualification(store.db, context))) {
+      return await auditRecoveredModelQualification(input, { store, cwd, context, readThread });
+    }
     const state = retainedState(store.db, context, input.routeId, cwd);
     const raw = store.db.prepare("SELECT value FROM meta WHERE key=?").get(PREFIX + input.routeId)?.value;
     const prior = raw ? JSON.parse(raw) : null;
@@ -308,7 +336,7 @@ export async function recoverHistoricalQualification(input, { store, cwd, readTh
       if (!verifyRetainedNative) return { status: "reconciled_failure", idempotent: true,
         evidenceDigest: prior.evidenceDigest, ordinaryDelegationEnabled: false, gateReleased: prior.recoveryKind === INTERRUPTED };
     }
-    const kind = prior?.recoveryKind || originalKind(state), before = payloadHash(state);
+    const kind = prior?.recoveryKind || originalKind(state, store.db, context), before = payloadHash(state);
     verifyManagedClosure(store.db, context, state);
     if (!readThread) {
       client = new AppServerClient({ timeoutMs: 20_000 }); await client.start();

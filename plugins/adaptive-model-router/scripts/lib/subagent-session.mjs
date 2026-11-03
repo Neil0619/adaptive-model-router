@@ -17,6 +17,32 @@ function directoryIdentity(value) {
   try { return realpathSync(value); } catch { return resolve(value); }
 }
 
+// Codex's Bash adapter supplies the requested command workdir in Hook cwd.
+// Lifecycle and other tool events still carry the task cwd and keep its check.
+const commandDirectoryHook = (input) => input?.tool_name === "Bash"
+  && ["PreToolUse", "PostToolUse"].includes(input.hook_event_name)
+  && typeof input.tool_input?.command === "string";
+
+export function hookTaskCwd(input) {
+  const fallback = input.cwd || process.cwd();
+  if (!commandDirectoryHook(input)) return fallback;
+  if (input.agent_id || input.agent_type) {
+    const identity = readThreadSpawnIdentity(input);
+    if (!identity?.taskCwd) throw new Error("Trusted native child-parent directory identity is missing");
+    return identity.taskCwd;
+  }
+  // A missing transcript cannot authorize a project/runtime rebind. The
+  // launcher's existing ordinary-root repair path still lets the command run.
+  if (!input.transcript_path) throw new Error("Trusted native root directory identity is missing");
+  try {
+    const entry = JSON.parse(readFirstLine(input.transcript_path));
+    const meta = entry?.type === "session_meta" ? entry.payload : null;
+    if (meta?.id !== input.session_id || meta.parent_thread_id || meta.source?.subagent
+      || !nonEmptyString(meta.cwd)) throw new Error("invalid root");
+    return meta.cwd;
+  } catch { throw new Error("Trusted native root directory identity is missing"); }
+}
+
 function readFirstLine(path, byteLimit = SESSION_META_BYTE_LIMIT) {
   const descriptor = openSync(path, "r");
   try {
@@ -118,7 +144,8 @@ export function readThreadSpawnIdentity(input, {
     metaSessionMatches: metaSessionId === parentId, spawnParentMatches: spawnParentId === parentId,
     pathsMatch: agentPath === spawnAgentPath,
     pathShapeValid: Boolean(agentPath?.startsWith("/root/") && !taskName.includes("/")),
-    cwdMatches: !metaCwd || !hookCwd || directoryIdentity(metaCwd) === directoryIdentity(hookCwd),
+    cwdMatches: !metaCwd || !hookCwd || directoryIdentity(metaCwd) === directoryIdentity(hookCwd)
+      || commandDirectoryHook(input),
     taskNameValid: typeof taskName === "string" && /^[a-z0-9_]+$/u.test(taskName) };
   if (!Object.values(facts).every(Boolean)) { observe("identity_mismatch", facts); return null; }
   observe("identity_accepted", facts);
@@ -128,5 +155,6 @@ export function readThreadSpawnIdentity(input, {
     taskName,
     agentPath,
     transcriptPath,
+    taskCwd: metaCwd,
   });
 }

@@ -1,8 +1,7 @@
 import { NativeOperationEvidence } from "./native-operation-evidence.mjs";
 import { readStableRollout, rolloutIdentity } from "./native-rollout-reader.mjs";
 import { payloadHash } from "./io.mjs";
-import { createHash } from "node:crypto";
-import { rootCoverageKey, settleCoveredRootBatches } from "./runtime-root-operations.mjs";
+import { rootCoverageKey, rootCoverageCheck, settleCoveredRootBatches } from "./runtime-root-operations.mjs";
 
 const proofs = new WeakMap();
 const boundaryState = (db, context) => payloadHash([
@@ -28,18 +27,16 @@ export function inspectRuntimeBoundary(input, previousTurn, { db = null, context
       .map((row) => ({ callId: row.call_id, turnId: row.turn_id, commandDigest: row.command_digest,
         started: row.pre_seen === 1, terminal: row.post_seen === 1, conflicted: row.conflicted === 1 })) : [];
     const operations = new NativeOperationEvidence({ childId: input.session_id, commands });
-    const prefix = createHash("sha256"); let covered = false;
+    const checkCoverage = rootCoverageCheck(coverage); let covered = false;
     const pending = new Set();
     const source = readStableRollout(input.transcript_path, (entry, line) => {
       const item = entry.payload;
       operations.observe(entry);
       if (operations.calls.has(item?.call_id) && ["function_call", "custom_tool_call"].includes(item?.type)) operations.calls.get(item.call_id).prospectiveRootCoverage = covered;
-      if (coverage && line <= coverage.throughLine) {
-        prefix.update(JSON.stringify(entry) + "\n");
-        if (line === coverage.throughLine) {
-          if (prefix.digest("hex") !== coverage.prefixDigest) throw new Error("Root command coverage prefix changed");
-          covered = true;
-        }
+      const matches = checkCoverage(entry, line);
+      if (matches !== null) {
+        if (!matches) throw new Error("Root command coverage prefix changed");
+        covered = true;
       }
       if (line === 1) {
         owner = entry.type === "session_meta" && item?.id === input.session_id && !item.parent_thread_id && !item.source?.subagent;

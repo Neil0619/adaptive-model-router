@@ -22,7 +22,7 @@ import {
   parseCarrierTaskName,
   parseLegacyCarrierMessage,
 } from "./lib/delegation-gate.mjs";
-import { readThreadSpawnIdentity, readNativeTaskOrigin } from "./lib/subagent-session.mjs";
+import { readThreadSpawnIdentity, readNativeTaskOrigin, hookTaskCwd } from "./lib/subagent-session.mjs";
 import { createLifecycleDiagnostic } from "./lib/lifecycle-diagnostics.mjs";
 import { childToolRestriction, isRouterChildTarget, observeManagedMessage, observeManagedStop, registerManagedChild, targetedChild } from "./lib/stage-closure.mjs";
 
@@ -196,7 +196,7 @@ function managedSubagentState(input, {
   try {
     store = new RouterStore();
     const context = store.context({
-      cwd: input.cwd || process.cwd(),
+      cwd: hookTaskCwd(input),
       contextId: spawn.parentContextId,
       authoritative: true,
       create: false,
@@ -346,7 +346,7 @@ async function promptHook(input) {
   const contextId = identity.contextId;
   const store = new RouterStore();
   try {
-    const context = store.context({ cwd: input.cwd || process.cwd(), contextId, authoritative: true });
+    const context = store.context({ cwd: hookTaskCwd(input), contextId, authoritative: true });
     observeCapacityTurn(store.db, context, input.turn_id);
     rememberRootTranscript(store.db, context, input.transcript_path);
     recordIdentity(identity, "identity_accepted");
@@ -486,7 +486,7 @@ async function stopHook(input) {
   const contextId = identity.contextId;
   const store = new RouterStore();
   try {
-    const context = store.context({ cwd: input.cwd || process.cwd(), contextId, authoritative: true });
+    const context = store.context({ cwd: hookTaskCwd(input), contextId, authoritative: true });
     recordIdentity(identity, "identity_accepted");
     const result = store.handleStop(context, { stopHookActive: input.stop_hook_active === true });
     if (result.action === "block" && input.stop_hook_active !== true) {
@@ -508,7 +508,7 @@ async function compactSessionHook(input) {
   const contextId = identity.contextId;
   const store = new RouterStore();
   try {
-    const context = store.context({ cwd: input.cwd || process.cwd(), contextId, authoritative: true });
+    const context = store.context({ cwd: hookTaskCwd(input), contextId, authoritative: true });
     const settings = store.getSettings(context);
     if (settings.autoActivate !== true || settings.enabled !== true) {
       store.observeHostModel(context, input.model, { detectChanges: false });
@@ -567,7 +567,7 @@ async function preToolUseHook(input) {
   try {
     store = new RouterStore();
     const context = store.context({
-      cwd: input.cwd || process.cwd(),
+      cwd: hookTaskCwd(input),
       contextId: identity.contextId,
       authoritative: true,
       create: false,
@@ -611,7 +611,7 @@ async function postToolUseHook(input) {
     if (existsSync(databasePath()) && input.session_id) {
       const store = new RouterStore();
       try {
-        const context = store.context({ cwd: input.cwd || process.cwd(), contextId: input.session_id, authoritative: true, create: false });
+        const context = store.context({ cwd: hookTaskCwd(input), contextId: input.session_id, authoritative: true, create: false });
         store.transaction(() => observeCapacityList(store.db, context, input));
       } finally { store.close(); }
     }
@@ -625,7 +625,7 @@ async function postToolUseHook(input) {
   const store = new RouterStore();
   try {
     const context = store.context({
-      cwd: input.cwd || process.cwd(),
+      cwd: hookTaskCwd(input),
       contextId: identity.contextId,
       authoritative: true,
       create: false,
@@ -670,7 +670,7 @@ async function subagentStopHook(input) {
       const store = new RouterStore();
       try {
         const context = store.context({
-          cwd: input.cwd || process.cwd(),
+          cwd: hookTaskCwd(input),
           contextId: spawn.parentContextId,
           authoritative: true,
           create: false,
@@ -707,7 +707,7 @@ function managedChildToolHook(input) {
   let store;
   try {
     store = new RouterStore();
-    const context = store.context({ cwd: input.cwd || process.cwd(), contextId: spawn?.parentContextId || input.session_id,
+    const context = store.context({ cwd: hookTaskCwd(input), contextId: spawn?.parentContextId || input.session_id,
       authoritative: true, create: false });
     const restriction = store.transaction(() => {
       const target = spawn?.childId || input.agent_id;
@@ -735,7 +735,7 @@ function managedChildCommandResultHook(input) {
   let store;
   try {
     store = new RouterStore();
-    const context = store.context({ cwd: input.cwd || process.cwd(), contextId: spawn.parentContextId,
+    const context = store.context({ cwd: hookTaskCwd(input), contextId: spawn.parentContextId,
       authoritative: true, create: false });
     store.transaction(() => {
       const child = targetedChild(store.db, context, spawn.childId);
@@ -761,7 +761,7 @@ async function managedMessageHook(input, post) {
   let store;
   try {
     store = new RouterStore();
-    const context = store.context({ cwd: input.cwd || process.cwd(),
+    const context = store.context({ cwd: hookTaskCwd(input),
       contextId: spawn?.parentContextId || identity.contextId, authoritative: true, create: false });
     const child = targetedChild(store.db, context, input.tool_input?.target);
     const result = store.transaction(() => {
