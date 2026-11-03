@@ -13,6 +13,7 @@ const DEFINITIONS = {
   OUTCOME_GATE_MISMATCH: ["input_validation", "Use the verification gate returned by the delegated route."],
   CALLER_BINDING_UNPROVEN: ["caller_binding", "Use the actual native task identity and its matching trusted Hook receipt."],
   RUNTIME_COMPATIBILITY: ["runtime_compatibility", "Inspect the retained runtime and source-owned handover evidence."],
+  HOST_LIFECYCLE_QUALIFICATION_FAILED: ["runtime_compatibility", "The completed child could not satisfy the native no-work evidence contract. Inspect the current stageClosure; after verifying completion, record failed/tooling once, then use verified qualification recovery. Do not retry passed outcomes or create a replacement child."],
   VERIFICATION_EVIDENCE_UNSUPPORTED: ["runtime_compatibility", "Keep the old outcome contract for this retained stage. Do not silently drop the attachment or claim it was recorded; current-runtime stages support the new evidence field."],
   HOOK_REJECTED: ["lifecycle_precondition", "Inspect this task's trusted lifecycle and pending stage responsibilities."],
   HOOK_UNCORRELATED: ["caller_binding", "The native result did not match a trusted pending operation."],

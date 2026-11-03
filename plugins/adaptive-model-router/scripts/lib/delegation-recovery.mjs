@@ -19,6 +19,8 @@ import { CAPACITY_RECOVERY_SCHEMA, CAPACITY_REASON, capacityStateKey, hostCapaci
   isHostCapacityRecoveryReceipt, capacityWasRecovered, invalidateCapacityList, rememberCapacityRefusal } from "./host-capacity-recovery.mjs";
 import { recoveryRecord, recoveryRecordIntact } from "./native-recovery-receipt.mjs";
 import { HOST_LIFECYCLE_CONTRACT } from "./host-compatibility.mjs";
+import { MODEL_REJECTION_SCHEMA, MODEL_REJECTION_REASON, hostModelRejectionSubject,
+  inspectNativeModelRejection, isModelRejectionReceipt } from "./host-model-rejection.mjs";
 
 const PREFIX = "native_recovery:";
 const SCHEMA = "native-thread-delegation-recovery/4";
@@ -43,7 +45,8 @@ export function readNativeRecoveryReceipt(db, context, routeId) {
   try {
     const receipt = JSON.parse(row.value);
     if (isPredispatchRecoveryReceipt(receipt, context, routeId)
-      || isHostCapacityRecoveryReceipt(receipt, context, routeId)) return receipt;
+      || isHostCapacityRecoveryReceipt(receipt, context, routeId)
+      || isModelRejectionReceipt(receipt, context, routeId)) return receipt;
     const unconsumed = [SCHEMA, LEGACY_UNCONSUMED_SCHEMA].includes(receipt.schemaVersion);
     const semantic = [SCHEMA, QUALIFICATION_RECOVERY_SCHEMA].includes(receipt.schemaVersion);
     const auditValid = semantic ? recoveryRecordIntact(receipt)
@@ -212,7 +215,8 @@ function recoverySubject(store, context, attempt, cwd) {
 function finishRecovery(store, context, input, stateDigest, receipt, cwd) {
   return store.transaction(() => {
     const current = store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id = ?").get(input.routeId);
-    const subject = recoverySubject(store, context, current, cwd);
+    const subject = receipt.schemaVersion === MODEL_REJECTION_SCHEMA
+      ? hostModelRejectionSubject(store.db, context, current, cwd) : recoverySubject(store, context, current, cwd);
     if (!subject || subject.stateDigest !== stateDigest) return unresolved("RECOVERY_STATE_CHANGED");
     const recordedAt = new Date().toISOString();
     const saved = recoveryRecord({ ...receipt, recordedAt });
@@ -265,7 +269,8 @@ export async function recoverDelegation(input, {
   const attempt = store.db.prepare(`
     SELECT * FROM delegation_attempts WHERE route_id = ? AND project_id = ? AND context_key = ?
   `).get(input.routeId, context.projectId, context.contextKey);
-  const subject = recoverySubject(store, context, attempt, cwd);
+  const modelSubject = hostModelRejectionSubject(store.db, context, attempt, cwd);
+  const subject = recoverySubject(store, context, attempt, cwd) || modelSubject;
   if (!subject) return unresolved("RECOVERY_ATTEMPT_INELIGIBLE");
   const attemptDigest = subject.stateDigest;
   const auditTranscript = (bytes, child, parentId) => subject.schemaVersion === SCHEMA
@@ -280,6 +285,25 @@ export async function recoverDelegation(input, {
   });
   try {
     const parent = await read(input.contextId);
+    if (modelSubject) {
+      let denial;
+      try { denial = await inspectNativeModelRejection({ parent, read, attempt,
+        contextId: input.contextId, cwd, readParentTranscript }); } catch { /* Other exact adapters may still apply. */ }
+      if (denial) {
+        const subjectDigest = payloadHash([context.projectId, context.contextKey, input.routeId]);
+        const evidenceDigest = payloadHash({ subjectDigest, attemptDigest: modelSubject.stateDigest, projection: denial.projection });
+        if (input.apply !== true) return { status: "recoverable", evidenceDigest, gateReleased: false,
+          disposition: "reconciled_failure", failureType: "tooling", transcriptBytes: 0, recoveryKind: "host_model_rejected" };
+        if (input.expectedEvidenceDigest !== evidenceDigest) return unresolved("RECOVERY_EVIDENCE_CHANGED");
+        return finishRecovery(store, context, input, modelSubject.stateDigest, {
+          ...denial.projection, subjectDigest, evidenceDigest, sourceBytes: denial.sourceBytes,
+          sourceDigest: denial.sourceDigest, status: "reconciled_failure", failureType: "tooling",
+          source: "native_thread_read", originalHandshakeProven: true, transcriptBytes: 0,
+          ...modelSubject.receiptFields,
+        }, cwd);
+      }
+      if (subject.schemaVersion === MODEL_REJECTION_SCHEMA) return unresolved();
+    }
     // A separate, exact native adapter covers ordinary launches rejected by
     // PreToolUse before dispatch. Qualification recovery keeps its own proof
     // and retry contracts; generic errors never enter this branch.
@@ -369,11 +393,12 @@ export async function recoverFailedHostCapacityDelegation(input, options) {
   const context = store.context({ cwd, contextId: input.contextId, create: false });
   const attempt = store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=? AND project_id=? AND context_key=?")
     .get(input.routeId, context.projectId, context.contextKey);
-  if (!hostCapacityRecoverySubject(store.db, context, attempt)) return null;
+  if (!hostCapacityRecoverySubject(store.db, context, attempt)
+    && !hostModelRejectionSubject(store.db, context, attempt, cwd)) return null;
   const subject = { contextId: input.contextId, routeId: input.routeId };
   const inspected = await recoverDelegation(subject, options);
-  if (inspected.status !== "recoverable" || inspected.recoveryKind !== "host_agent_limit_rejected") return null;
+  if (inspected.status !== "recoverable" || !["host_agent_limit_rejected", "host_model_rejected"].includes(inspected.recoveryKind)) return null;
   const applied = await recoverDelegation({ ...subject, apply: true, expectedEvidenceDigest: inspected.evidenceDigest }, options);
   return { status: applied.status, gateReleased: applied.gateReleased,
-    reasonCode: applied.gateReleased ? CAPACITY_REASON : applied.reasonCode };
+    reasonCode: applied.gateReleased ? (inspected.recoveryKind === "host_model_rejected" ? MODEL_REJECTION_REASON : CAPACITY_REASON) : applied.reasonCode };
 }

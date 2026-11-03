@@ -1,6 +1,33 @@
 import { payloadHash } from "./io.mjs";
 import { forwardedToolCall, forwardedToolResult } from "./code-mode-tool-evidence.mjs";
 
+function cuaInterpreterTerminal(item) {
+  const result = item.result;
+  const timed = (value) => Number.isFinite(value?._meta?.["codex/nodeReplExecutionDurationMs"])
+    && value._meta["codex/nodeReplExecutionDurationMs"] >= 0;
+  if (timed(result)) return "native_cua_call_returned";
+  if (item.pluginId !== "unified-computer-use@openai-bundled") return null;
+  // Historical native MCP items sometimes serialized the provider envelope,
+  // including a malformed serialization when multiple output blocks existed.
+  // Do not repair/parse that text or promote printed metadata to authority.
+  // Require the separately matched native result header below instead.
+  if (item.status === "completed" && result.isError === false
+    && Object.keys(result).every((key) => ["content", "isError"].includes(key))
+    && result.content.length === 1 && result.content[0]?.type === "text"
+    && typeof result.content[0].text === "string") {
+    return "native_cua_result_header_required";
+  }
+  // A generic timeout is not terminal evidence. This provider's explicit
+  // kernel-reset receipt proves the interpreter stopped, not that the browser
+  // action succeeded or that its external effects are known.
+  if (item.status === "failed" && result.isError === true
+    && result._meta?.["codex/browserUse"] === true
+    && result._meta?.["codex/telemetry"]?.error_code === "execution_timeout"
+    && result.content.length === 1 && result.content[0]?.type === "text"
+    && result.content[0].text === "js execution timed out; kernel reset, rerun your request") return "native_cua_kernel_reset";
+  return null;
+}
+
 // Epoch adoption changes a Router interpreter, not the root's business state.
 // A native terminal code cell proves its interpreter has returned, including
 // when the script failed. Its opaque/external business effects remain retained
@@ -12,6 +39,7 @@ export class RootEpochOperations {
     this.contextId = contextId;
     this.returned = new Map(); this.cells = new Map(); this.starts = []; this.ends = [];
     this.external = new Map(); this.externalTerminals = new Map(); this.externalConflicts = new Set();
+    this.externalResults = new Map(); this.externalResultIdentities = new Map(); this.externalTerminalIdentities = new Map();
   }
 
   observe(entry, operations) {
@@ -24,15 +52,21 @@ export class RootEpochOperations {
     if (entry.type === "event_msg" && p?.type === "item_completed") {
       const item = p.item, command = item?.command;
       const external = this.external.get(item?.id);
+      // Conflicts remain conflicts even when the second receipt would not be
+      // eligible for admission. Track native evidence before interpreting it.
+      if (external && p.thread_id === this.contextId && p.turn_id === external.observedTurnId) {
+        const digest = payloadHash(item);
+        if (this.externalTerminalIdentities.has(item.id) && this.externalTerminalIdentities.get(item.id) !== digest) this.externalConflicts.add(item.id);
+        this.externalTerminalIdentities.set(item.id, digest);
+      }
       let args; try { args = JSON.parse(external?.arguments); } catch { /* No guessed arguments. */ }
       if (external && args && p.thread_id === this.contextId && p.turn_id === external.observedTurnId
         && item.type === "McpToolCall" && item.server === "cua_repl" && item.tool === "js"
         && payloadHash(args) === payloadHash(item.arguments) && ["completed", "failed"].includes(item.status)
         && item.result?.isError === (item.status === "failed") && Array.isArray(item.result?.content)
-        && Number.isFinite(item.result?._meta?.["codex/nodeReplExecutionDurationMs"])
-        && item.result._meta["codex/nodeReplExecutionDurationMs"] >= 0) {
+        && cuaInterpreterTerminal(item)) {
         const terminal = { callId: item.id, turnId: p.turn_id, nativeTerminalDigest: payloadHash(item),
-          interpreterState: "native_cua_call_returned", businessState: "unverified_preserved" };
+          interpreterState: cuaInterpreterTerminal(item), businessState: "unverified_preserved" };
         if (this.externalTerminals.has(item.id) && payloadHash(this.externalTerminals.get(item.id)) !== payloadHash(terminal)) this.externalConflicts.add(item.id);
         this.externalTerminals.set(item.id, terminal);
       }
@@ -48,6 +82,16 @@ export class RootEpochOperations {
       }
     }
     if (entry.type !== "response_item" || !["function_call_output", "custom_tool_call_output"].includes(p?.type) || !p.call_id) return;
+    if (this.external.has(p.call_id)) {
+      const digest = payloadHash(p);
+      if (this.externalResultIdentities.has(p.call_id) && this.externalResultIdentities.get(p.call_id) !== digest) this.externalConflicts.add(p.call_id);
+      this.externalResultIdentities.set(p.call_id, digest);
+    }
+    if (this.external.has(p.call_id) && Array.isArray(p.output) && p.output[0]?.type === "input_text"
+      && typeof p.output[0].text === "string"
+      && /^Wall time: (?:0|[1-9][0-9]*)(?:\.[0-9]+)? seconds\nOutput:$/u.test(p.output[0].text)) {
+      this.externalResults.set(p.call_id, this.externalResultIdentities.get(p.call_id));
+    }
     const call = operations.calls.get(p.call_id);
     if (!call || call.namespace && call.namespace !== "functions" || !["exec", "wait"].includes(call.name)) return;
     const header = Array.isArray(p.output) && p.output[0]?.type === "input_text" ? p.output[0].text : p.output;
@@ -79,8 +123,10 @@ export class RootEpochOperations {
     const retained = [];
     for (const [callId, receipt] of this.externalTerminals) {
       if (operations.unanswered.has(callId) || this.externalConflicts.has(callId)) continue;
+      if (receipt.interpreterState === "native_cua_result_header_required" && !this.externalResults.has(callId)) continue;
       operations.active.delete(`root-external:${callId}`);
-      retained.push(receipt);
+      retained.push(receipt.interpreterState === "native_cua_result_header_required"
+        ? { ...receipt, interpreterState: "native_cua_call_returned", nativeResultDigest: this.externalResults.get(callId) } : receipt);
     }
     for (const [key, op] of operations.active) {
       if (op.transport === "legacy_code_mode" && op.state === "execution_coverage_unknown"

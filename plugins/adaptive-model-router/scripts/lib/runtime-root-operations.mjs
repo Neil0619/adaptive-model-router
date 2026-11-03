@@ -5,6 +5,49 @@ import { literalObject } from "./code-mode-tool-evidence.mjs";
 
 export const rootCoverageKey = (context) => `runtime_root_coverage:${context.projectId}:${context.contextKey}`;
 
+const ordered = (value, keys) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || Object.keys(value).length !== keys.length || !keys.every(key => Object.hasOwn(value, key))) return null;
+  return Object.fromEntries(keys.map(key => [key, value[key]]));
+};
+
+// Native session metadata can be reserialized as a sorted JSON object. Recover
+// only the observed original member order, without removing or changing any
+// value. Its full-prefix hash must still equal the original trusted Hook hash;
+// this is not a new coverage baseline or permission to accept changed history.
+function originalSessionMetaOrder(entry) {
+  if (entry?.type !== "session_meta") return null;
+  const record = ordered(entry, ["timestamp", "ordinal", "type", "payload"]);
+  const payload = ordered(entry.payload, ["session_id", "id", "timestamp", "cwd", "runtime_workspace_roots",
+    "originator", "cli_version", "source", "thread_source", "model_provider", "base_instructions",
+    "history_mode", "context_window", "git"]);
+  const instructions = ordered(payload?.base_instructions, ["text", "provenance"]);
+  const provenance = ordered(instructions?.provenance, ["type", "model"]);
+  const git = ordered(payload?.git, ["commit_hash", "branch", "repository_url"]);
+  if (!record || !payload || !instructions || !provenance || !git) return null;
+  instructions.provenance = provenance; payload.base_instructions = instructions; payload.git = git;
+  record.payload = payload;
+  return record;
+}
+
+export function rootCoverageCheck(coverage) {
+  const prefix = createHash("sha256"), reordered = createHash("sha256");
+  let hasReordered = false;
+  return (entry, line) => {
+    if (!coverage || line > coverage.throughLine) return null;
+    const serialized = JSON.stringify(entry) + "\n";
+    prefix.update(serialized);
+    if (line === 1) {
+      const original = originalSessionMetaOrder(entry);
+      hasReordered = Boolean(original);
+      if (original) reordered.update(JSON.stringify(original) + "\n");
+    } else if (hasReordered) reordered.update(serialized);
+    if (line !== coverage.throughLine) return null;
+    return prefix.digest("hex") === coverage.prefixDigest
+      || (hasReordered && reordered.digest("hex") === coverage.prefixDigest);
+  };
+}
+
 const prefixes = new WeakSet();
 export function inspectRootOperationCoverage(db, context, input, { deadline = Date.now() + 250 } = {}) {
   if (!db.prepare("SELECT 1 FROM meta WHERE key=?").get(rootCoverageKey(context)) && input.transcript_path) {

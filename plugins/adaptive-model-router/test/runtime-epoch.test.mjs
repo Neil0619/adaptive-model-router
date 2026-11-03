@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
+import { zstdCompressSync } from "node:zlib";
 import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -25,7 +26,7 @@ import { payloadHash } from "../scripts/lib/io.mjs";
 import { prepareColdHostEpochInstallation, inspectColdHostEpochRetirement, commitColdHostEpochRetirement,
   assertColdEpochRetirement, restoreColdHostEpochEntries, relocateColdHostEpochEntries, coldPendingMessageResponsibilities } from "../scripts/lib/runtime-cold-install.mjs";
 import { rememberRootTranscript } from "../scripts/lib/stage-reconciliation.mjs";
-import { openPrivateState } from "../scripts/lib/private-state.mjs";
+import { openPrivateState, sealPrivateState } from "../scripts/lib/private-state.mjs";
 import { readChildTurnEvidence } from "../scripts/lib/child-turn-evidence.mjs";
 import { prepareMessageCheckpoint, prepareMessageContinuation, prepareMessageArrivalReview, messageContinuationProjection, commitMessageCheckpoint, readMessageCheckpoints } from "../scripts/lib/message-checkpoint.mjs";
 import { stageClosureStatus, observeManagedMessage, observeManagedStop } from "../scripts/lib/stage-closure.mjs";
@@ -308,14 +309,14 @@ test("epoch discovery retains unscoped legacy qualification and never hides inva
   });
 });
 
-test("historical failure handover requires a fresh source-owned repair audit and grants no candidate proof", async () => {
+for (const kind of ["completed", "contract"]) test(`historical ${kind} failure handover requires a fresh source-owned repair audit and grants no candidate proof`, async () => {
   for (const mode of ["success", "child-change", "child-change-during-commit"]) await fixture(async (f) => {
     const dispatch = beginMcpDispatch("route_stage", { contextId: f.reference.contextId },
       { cwd: f.cwd, env: { CODEX_THREAD_ID: f.reference.contextId }, shellRoot: b.root });
     f.store.runtimeInvocation = dispatch.invocation;
-    await historicalQualificationFixture("completed", async (h) => {
+    await historicalQualificationFixture(kind, async (h) => {
       endRuntimeDispatch(dispatch); f.store.runtimeInvocation = null;
-      const reference = { ...f.reference, turnId: "root-next", transcriptPath: h.parent.path };
+      const reference = { ...f.reference, turnId: kind === "contract" ? "root-turn" : "root-next", transcriptPath: h.parent.path };
       const input = { ...f.input, turn_id: reference.turnId, transcript_path: reference.transcriptPath };
       endRuntimeDispatch(beginHookDispatch(input, { shellRoot: b.root }));
       recordHookIdentityDiagnostic(resolveHookIdentity(input).audit, "identity_accepted", process.env,
@@ -1001,6 +1002,28 @@ test("native input consumption is independent of unknown old operations while ne
     assert.throws(() => prepareMessageCheckpoint(f.store, f.context, { routeId: child.route.routeId,
       expectedRevision: row.revision, parentTranscriptPath: f.reference.transcriptPath }), /unknown_child_operation_contract|child_operations_or_turn_pending/);
   }));
+
+test("cold message audit consumes compressed native parent and child evidence without changing historical responsibilities", async () =>
+  ordinaryCheckpointFixture(async (f) => {
+    const [child] = await consumedMessageCase(f, { count: 2 });
+    const sessions = join(process.env.CODEX_HOME, "sessions", "2026", "10", "22");
+    mkdirSync(sessions, { recursive: true });
+    const parentPath = join(sessions, `rollout-2026-10-22T10-00-00-${f.reference.contextId}.jsonl`);
+    writeFileSync(`${parentPath}.zst`, zstdCompressSync(readFileSync(f.reference.transcriptPath)));
+    rememberRootTranscript(f.store.db, f.context, parentPath);
+    const original = readFileSync(child.path);
+    writeFileSync(`${child.path}.zst`, zstdCompressSync(original));
+    const row = f.store.db.prepare("SELECT locator FROM delegation_children WHERE route_id=?").get(child.route.routeId);
+    const locator = JSON.parse(openPrivateState(f.store.db, row.locator));
+    locator.transcriptPath = `${child.path}.zst`;
+    f.store.db.prepare("UPDATE delegation_children SET locator=? WHERE route_id=?")
+      .run(sealPrivateState(f.store.db, JSON.stringify(locator)), child.route.routeId);
+    const before = business(f.store.db);
+    assert.deepEqual(coldPendingMessageResponsibilities(f.store.db), []);
+    writeFileSync(`${parentPath}.zst`, zstdCompressSync(JSON.stringify(f.records[0]) + "\n"));
+    assert.equal(coldPendingMessageResponsibilities(f.store.db).length, 2, "a compressed identity alone cannot prove delivery");
+    assert.equal(business(f.store.db), before);
+  }, { contextId: "11111111-1111-1111-1111-111111111111" }));
 
 test("one cold batch indexes a shared sender once for all exact accepted messages and invalidates source changes", async () =>
   ordinaryCheckpointFixture(async (f) => {

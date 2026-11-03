@@ -1,4 +1,5 @@
 import { qualificationTargetMatches } from "./qualification-policy.mjs";
+import { requestError } from "./request-errors.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -22,6 +23,18 @@ const sha = (value) => createHash("sha256").update(value).digest("hex");
 const digest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 export const taskQualificationKey = (context) => `native_qualification:${context.projectId}:${context.contextKey}${context.runtimeDigest ? `:runtime:${context.runtimeDigest}` : ""}`;
 const key = taskQualificationKey;
+
+// Operator commands have no live runtime invocation. Resolve only the task's
+// assigned generation; never search other generations for a convenient proof.
+// Presence (even invalid JSON) prevents fallback to an older unscoped record.
+export function operatorQualificationContext(db, context) {
+  if (context.runtimeDigest || !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='runtime_tasks'").get()) return context;
+  const task = db.prepare("SELECT generation FROM runtime_tasks WHERE project_id=? AND context_key=?")
+    .get(context.projectId, context.contextKey);
+  if (!task) return context;
+  const scoped = { ...context, runtimeDigest: task.generation };
+  return db.prepare("SELECT 1 FROM meta WHERE key=?").get(key(scoped)) ? scoped : context;
+}
 
 export function runtimeSourceDigest(root = MODULE_ROOT) {
   const entries = ["hook.mjs", ...readdirSync(join(root, "scripts", "lib"))
@@ -311,14 +324,15 @@ function verifySnapshot({ parent, child }, attempt, value, input, store, context
 // Operator recovery may establish only that a failed, completed qualification
 // did no work. This does not mint a passed proof or enable ordinary delegation.
 export async function auditFailedQualificationNoop(input, { store, cwd, readNative = nativeSnapshot, auditOptions } = {}) {
-  const context = store.context({ cwd, contextId: input.contextId, create: false });
+  const context = operatorQualificationContext(store.db, store.context({ cwd, contextId: input.contextId, create: false }));
   const value = readTaskQualification(store.db, context);
   const attempt = store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=?").get(input.routeId);
   requireFact(value?.state === "failed" && value.proof === null && value.routeId === input.routeId);
   requireFact(attempt?.finalized_at && attempt.ticket_consumed === 1 && attempt.post_observed === 1
     && attempt.stop_observed === 1 && attempt.no_child === 0 && attempt.ambiguous === 0 && attempt.outcome_recorded === 1);
   const before = payloadHash({ value, attempt });
-  const recovery = { retainedHostVersionMismatch: value.failure === "NATIVE_QUALIFICATION_EVIDENCE_UNPROVEN" };
+  const recovery = { retainedHostVersionMismatch: value.schema === 1
+    && value.failure === "NATIVE_QUALIFICATION_EVIDENCE_UNPROVEN" };
   const first = verifySnapshot(await readNative(input.contextId, attempt), attempt, value, input, store, context, auditOptions, recovery);
   const second = verifySnapshot(await readNative(input.contextId, attempt), attempt, value, input, store, context, auditOptions, recovery);
   requireFact(payloadHash(first) === payloadHash(second));
@@ -368,7 +382,8 @@ export async function prepareQualificationOutcome(input, {
         write(store.db, context, { ...latest, state: "failed", failure: "NATIVE_QUALIFICATION_EVIDENCE_UNPROVEN" });
       }
     });
-    throw new Error("native qualification verification failed; ordinary delegation remains disabled");
+    throw requestError("HOST_LIFECYCLE_QUALIFICATION_FAILED",
+      "native qualification verification failed; ordinary delegation remains disabled");
   }
 }
 

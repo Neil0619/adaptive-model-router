@@ -10,7 +10,7 @@ const event = (type, extra = {}) => ({ type: "event_msg", payload: { type, ...ex
 const call = (id, name, args) => ({ type: "response_item", payload: { type: "function_call", namespace: "collaboration", call_id: id, name, arguments: JSON.stringify(args) } });
 const output = (id, value) => ({ type: "response_item", payload: { type: "function_call_output", call_id: id, output: value } });
 
-for (const kind of ["completed", "interrupted"]) test(`historical ${kind} qualification recovery preserves original evidence and grants no business success`, async () => {
+for (const kind of ["completed", "interrupted", "contract"]) test(`historical ${kind} qualification recovery preserves original evidence and grants no business success`, async () => {
   await fixture(kind, async (f) => {
     const before = { q: readTaskQualification(f.store.db, f.context), outcome: f.store.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(f.route.routeId), attempt: f.store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=?").get(f.route.routeId) };
     const preview = await recoverHistoricalQualification(f.input, f.options);
@@ -47,6 +47,20 @@ test("historical recovery rejects hidden execution, incomplete turns, wrong iden
     mutate(f); f.write();
     assert.equal((await recoverHistoricalQualification(f.input, f.options)).status, "unresolved");
     assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM meta WHERE key LIKE 'historical_qualification_recovery:%'").get().n, 0);
+  });
+});
+
+test("contract failure handover recovery rejects changed semantics, late work and forged outcomes", async () => {
+  for (const mutate of [
+    (f) => f.childRecords.splice(-1, 0, { type: "response_item", payload: { type: "custom_tool_call", name: "exec" } }),
+    (f) => { f.childRecords.find((r) => r.payload.type === "thread_settings_applied").payload.thread_settings.model = "other"; },
+    (f) => { f.child.turns[0].status = "inProgress"; },
+    (f) => { f.parent.turns[0].items.push({ ...f.parent.turns[0].items[0], kind: "interacted", id: "late-input" }); },
+    (f) => f.store.db.prepare("UPDATE outcomes SET status='passed',failure_type=NULL WHERE route_id=?").run(f.route.routeId),
+  ]) await fixture("contract", async (f) => {
+    mutate(f); f.write();
+    assert.equal((await recoverHistoricalQualification(f.input, f.options)).status, "unresolved");
+    assert.equal(f.store.db.prepare("SELECT count(*) n FROM meta WHERE key LIKE 'historical_qualification_recovery:%'").get().n, 0);
   });
 });
 

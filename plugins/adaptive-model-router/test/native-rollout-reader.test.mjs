@@ -1,12 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { appendFileSync, mkdtempSync, readFileSync, renameSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import { readStableRollout, COLD_ROLLOUT_FILE_LIMIT } from "../scripts/lib/native-rollout-reader.mjs";
+import { readStableRollout, resolveRolloutPath, rolloutIdentity, COLD_ROLLOUT_FILE_LIMIT } from "../scripts/lib/native-rollout-reader.mjs";
+import { zstdCompressSync, constants } from "node:zlib";
+import { nativeSessionSourceIndex } from "../scripts/lib/native-session-sources.mjs";
 
 function fixture(run) {
   const root = mkdtempSync(join(tmpdir(), "router-rollout-snapshot-"));
@@ -14,6 +16,64 @@ function fixture(run) {
   writeFileSync(path, bytes);
   try { run({ path, bytes }); } finally { rmSync(root, { recursive: true, force: true }); }
 }
+
+test("native compressed archives preserve full content proofs and enforce byte, record, time and stability bounds", () => fixture(({ path, bytes }) => {
+  const compressed = `${path}.zst`;
+  writeFileSync(compressed, zstdCompressSync(bytes));
+  const seen = [], snapshot = readStableRollout(compressed, entry => seen.push(entry.value));
+  assert.deepEqual(seen, [1, 2]);
+  assert.equal(snapshot.transcriptDigest, readStableRollout(path, () => {}).transcriptDigest);
+  assert.ok(snapshot.transcriptBytes >= Buffer.byteLength(bytes));
+  const identity = rolloutIdentity(compressed);
+  assert.throws(() => readStableRollout(compressed, () => {}, { deadline: Date.now() - 1 }), /budget exhausted/);
+  assert.equal(rolloutIdentity(compressed), identity);
+  writeFileSync(compressed, zstdCompressSync(JSON.stringify({ value: "x".repeat(10000) }) + "\n"));
+  assert.throws(() => readStableRollout(compressed, () => assert.fail("expanded bomb admitted"), { maxBytes: 1024 }), /exceeds evidence bounds/);
+  writeFileSync(compressed, zstdCompressSync('{"value":1}'));
+  assert.throws(() => readStableRollout(compressed, () => {}), /incomplete records/);
+  writeFileSync(compressed, Buffer.from("invalid frame"));
+  assert.throws(() => readStableRollout(compressed, () => {}), /compressed transcript is invalid/);
+  const packed = zstdCompressSync(bytes); writeFileSync(compressed, packed.subarray(0, packed.length - 1));
+  assert.throws(() => readStableRollout(compressed, () => {}), /compressed transcript is invalid/);
+  writeFileSync(compressed, zstdCompressSync(JSON.stringify({ value: "x".repeat(16 * 1024 * 1024) }) + "\n"));
+  assert.throws(() => readStableRollout(compressed, () => {}), /line exceeds evidence bounds/);
+  writeFileSync(compressed, packed);
+  assert.throws(() => readStableRollout(compressed, (_entry, line) => {
+    if (line === 1) writeFileSync(compressed, zstdCompressSync(bytes + '{"value":3}\n'));
+  }, { allowAppend: true }), /changed during evidence read/);
+}));
+
+test("native path discovery resolves compression and archiving without replacing an existing plain source", () => fixture(({ path }) => {
+  const home = join(path, "..", "home"), oldHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = home;
+  const owner = "11111111-1111-1111-1111-111111111111";
+  const directory = join(home, "sessions", "2026", "10", "22"), archive = join(home, "archived_sessions");
+  mkdirSync(directory, { recursive: true }); mkdirSync(archive);
+  const name = `rollout-2026-10-22T00-00-00-${owner}.jsonl`, plain = join(directory, name), packed = `${plain}.zst`;
+  try {
+    writeFileSync(packed, zstdCompressSync('{"value":1}\n'));
+    assert.equal(resolveRolloutPath(plain), packed);
+    assert.deepEqual(nativeSessionSourceIndex(Date.now() + 5000).get(owner), [packed]);
+    renameSync(packed, join(archive, `${name}.zst`));
+    assert.equal(resolveRolloutPath(plain), join(archive, `${name}.zst`));
+    assert.deepEqual(nativeSessionSourceIndex(Date.now() + 5000).get(owner), [join(archive, `${name}.zst`)]);
+    writeFileSync(plain, "malformed original");
+    assert.equal(resolveRolloutPath(plain), plain);
+    assert.throws(() => readStableRollout(plain, () => {}));
+  } finally { if (oldHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = oldHome; }
+}));
+
+test("compressed archives verify every concatenated frame and reject truncated complete JSON prefixes", () => fixture(({ path, bytes }) => {
+  const compressed = `${path}.zst`, frame = zstdCompressSync(bytes, { params: { [constants.ZSTD_c_checksumFlag]: 1 } });
+  writeFileSync(compressed, Buffer.concat([frame, frame]));
+  const seen = []; readStableRollout(compressed, row => seen.push(row.value));
+  assert.deepEqual(seen, [1, 2, 1, 2]);
+  for (const bad of [frame.subarray(0, frame.length - 1), Buffer.concat([frame, frame.subarray(0, frame.length - 1)]),
+    Buffer.concat([frame, Buffer.from([0x28, 0xb5])]), Buffer.concat([frame.subarray(0, -1), Buffer.from([frame.at(-1) ^ 1])])]) {
+    writeFileSync(compressed, bad);
+    assert.throws(() => readStableRollout(compressed, () => {}), /compressed transcript is invalid/);
+  }
+}));
 
 test("expanded cold byte budget remains finite and preserves complete hashing, record and source checks", () => fixture(({ path, bytes }) => {
   const options = { maxBytes: COLD_ROLLOUT_FILE_LIMIT, deadline: Date.now() + 5000 };

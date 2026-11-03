@@ -6,7 +6,7 @@ import { RouterStore } from "../../scripts/lib/database.mjs";
 import { routeStage } from "../../scripts/lib/router.mjs";
 import { callRouterTool } from "../../scripts/lib/service.mjs";
 import { consumeDelegationTicket, observeAgentResult, claimDelegationSubagent, observeSubagentStop } from "../../scripts/lib/delegation-gate.mjs";
-import { observeQualificationHook, qualificationReadiness, readTaskQualification, runtimeSourceDigest } from "../../scripts/lib/lifecycle-qualification.mjs";
+import { lifecycleBinding, observeQualificationHook, qualificationReadiness, readTaskQualification, runtimeSourceDigest, taskQualificationKey } from "../../scripts/lib/lifecycle-qualification.mjs";
 import { payloadHash } from "../../scripts/lib/io.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "../fixtures.mjs";
 
@@ -24,6 +24,7 @@ export async function historicalQualificationFixture(kind, run, existing = null)
       const input = routeInput({ contextId: existing?.contextId || "historical-parent" }), context = store.context({ cwd: project.root, contextId: input.contextId });
       const binding = { digest: "a".repeat(64), runtimeDigest: runtimeSourceDigest(), configurationDigest: "d".repeat(64),
         taskCwdDigest: payloadHash(realpathSync(project.root)), shellRoots: [payloadHash(ROOT)], cliVersion: "0.153.0" };
+      if (kind === "contract") Object.assign(binding, lifecycleBinding([], ROOT, ROOT, { cliVersion: null }, project.root));
       const route = await routeStage(input, { store, cwd: project.root, catalog: CATALOG,
         diskProbe: () => 16n * 1024n ** 3n, lifecycleHookProbe: async () => qualificationReadiness(store.db, context, binding) });
       const toolInput = { task_name: route.carrier.taskName, message: route.carrier.message, model: route.target.model, reasoning_effort: route.target.effort, fork_turns: "none" };
@@ -31,14 +32,19 @@ export async function historicalQualificationFixture(kind, run, existing = null)
         assert.equal(consumeDelegationTicket(store.db, context, { taskName: route.carrier.taskName, turnId: "root-turn", toolUseId: "spawn-call", toolInput }).allowed, true);
         observeAgentResult(store.db, context, { turnId: "root-turn", toolUseId: "spawn-call", toolInput, toolResponse: { task_name: route.carrier.taskName } });
         for (const event of ["pre", "post"]) observeQualificationHook(store.db, context, route.routeId, event, ROOT);
-        if (kind === "completed") {
+        if (kind !== "interrupted") {
           claimDelegationSubagent(store.db, context, { taskName: route.carrier.taskName, agentId: "child", model: route.target.model });
           observeSubagentStop(store.db, context, route.carrier.taskName, "child", 4096);
           for (const event of ["start", "stop"]) observeQualificationHook(store.db, context, route.routeId, event, ROOT);
         }
       });
-      if (kind === "completed") await callRouterTool("record_outcome", { contextId: input.contextId, routeId: route.routeId,
-        status: "failed", gate: "structured-check", failureType: "environment", retries: 0,
+      if (kind === "contract") {
+        const q = readTaskQualification(store.db, context);
+        store.db.prepare("UPDATE meta SET value=? WHERE key=?").run(JSON.stringify({ ...q, state: "failed", proof: null,
+          failure: "NATIVE_QUALIFICATION_EVIDENCE_UNPROVEN" }), taskQualificationKey(context));
+      }
+      if (kind !== "interrupted") await callRouterTool("record_outcome", { contextId: input.contextId, routeId: route.routeId,
+        status: "failed", gate: "structured-check", failureType: kind === "contract" ? "tooling" : "environment", retries: 0,
         retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 }, escalations: 0, userCorrection: false }, { store, cwd: project.root });
       const q = readTaskQualification(store.db, context), agentPath = `/root/${route.carrier.taskName}`;
       const directory = join(project.root, "codex", "sessions"); mkdirSync(directory, { recursive: true });
@@ -66,6 +72,16 @@ export async function historicalQualificationFixture(kind, run, existing = null)
           { type: "response_item", payload: { type: "agent_message", author: "/root", recipient: agentPath, content: "followup" } },
           { type: "response_item", payload: { type: "message", role: "assistant", id: "final", phase: "final_answer", content: [{ type: "output_text", text: q.marker }] } },
           event("task_complete", { turn_id: "child-last", last_agent_message: q.marker }));
+      } else if (kind === "contract") {
+        parent.turns[0].status = "completed";
+        parent.turns[0].items.push(activity("completed", "subagent-completed-child-first"));
+        Object.assign(child, { model: route.target.model, reasoningEffort: route.target.effort, cliVersion: "future-build" });
+        Object.assign(child.turns[0], { status: "completed", error: null, items: [final] });
+        rootRecords.push(event("task_complete", { turn_id: "root-turn" }));
+        childRecords.push({ type: "turn_context", payload: { turn_id: "child-first", model: child.model, effort: child.reasoningEffort } },
+          event("thread_settings_applied", { thread_id: child.id, thread_settings: { model: child.model, reasoning_effort: child.reasoningEffort } }),
+          { type: "response_item", payload: { type: "message", role: "assistant", id: "final", phase: "final_answer", content: [{ type: "output_text", text: q.marker }] } },
+          event("task_complete", { turn_id: "child-first", last_agent_message: q.marker }));
       } else {
         rootRecords.push(event("turn_aborted", { turn_id: "root-turn" }));
         childRecords.push({ type: "response_item", payload: { type: "message", role: "developer", content: [{ type: "input_text", text: "fixture" }] } }, event("turn_aborted", { turn_id: "child-first" }));

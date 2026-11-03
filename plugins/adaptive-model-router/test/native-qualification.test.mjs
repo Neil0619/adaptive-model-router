@@ -8,10 +8,12 @@ import { routeStage } from "../scripts/lib/router.mjs";
 import { consumeDelegationTicket, claimDelegationSubagent, observeAgentResult, observeSubagentStop } from "../scripts/lib/delegation-gate.mjs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
 import { recordOutcome } from "../scripts/lib/learning.mjs";
+import { publicRequestError } from "../scripts/lib/request-errors.mjs";
 import { payloadHash } from "../scripts/lib/io.mjs";
 import { lifecycleBinding, observeQualificationHook, provenQualificationShellRoots, readTaskQualification, qualificationReadiness, reserveTaskQualification, runtimeSourceDigest } from "../scripts/lib/lifecycle-qualification.mjs";
 import { inspectLifecycleHookReadiness } from "../scripts/lib/hook-readiness.mjs";
 import { authorizeRequalification } from "../scripts/lib/qualification-retry.mjs";
+import { ensureRuntimeIsolationSchema } from "../scripts/lib/runtime-isolation.mjs";
 import { resolveHookIdentity } from "../scripts/lib/hook-identity.mjs";
 import { registerManagedChild, observeManagedMessage } from "../scripts/lib/stage-closure.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
@@ -355,7 +357,12 @@ test("failed audit never records a passed outcome or permits a replacement quali
   await fixture(async (value) => {
     const { store, context, input, options, records, outcome, serviceOptions } = await completedQualification(value);
     records.splice(-2, 0, { type: "response_item", payload: { type: "custom_tool_call", namespace: "functions", name: "exec", call_id: "hidden" } });
-    await assert.rejects(callRouterTool("record_outcome", outcome, serviceOptions), /qualification verification failed/u);
+    await assert.rejects(callRouterTool("record_outcome", outcome, serviceOptions), (error) => {
+      const visible = JSON.parse(publicRequestError(error));
+      assert.equal(visible.code, "HOST_LIFECYCLE_QUALIFICATION_FAILED");
+      assert.match(visible.hint, /failed.*tooling/u);
+      return /qualification verification failed/u.test(error.message);
+    });
     assert.equal(readTaskQualification(store.db, context).state, "failed");
     assert.equal(store.db.prepare("SELECT count(*) AS n FROM outcomes").get().n, 0);
     assert.equal((await routeStage(input, options)).action, "busy");
@@ -364,6 +371,24 @@ test("failed audit never records a passed outcome or permits a replacement quali
     assert.equal(next.action, "continue");
     assert.deepEqual(next.reasonCodes, ["HOST_LIFECYCLE_QUALIFICATION_FAILED"]);
     assert.equal(store.db.prepare("SELECT count(*) AS n FROM delegation_attempts").get().n, 1);
+  });
+});
+
+test("settings metadata completes qualification and releases the gate for ordinary delegation", async () => {
+  await fixture(async (value) => {
+    Object.assign(value.binding, lifecycleBinding([], SOURCE_ROOT, SOURCE_ROOT, {}, value.project.root));
+    const f = await completedQualification(value);
+    f.child.cliVersion = "0.163.0-alpha.10.2";
+    f.records.splice(3, 0, { type: "event_msg", payload: { type: "thread_settings_applied",
+      thread_id: f.child.id, thread_settings: { model: f.child.model, reasoning_effort: f.child.reasoningEffort,
+        cwd: f.child.cwd, future_metadata: { layout: "changed" } } } });
+    const result = await callRouterTool("record_outcome", f.outcome, f.serviceOptions);
+    assert.equal(result.recorded, true);
+    assert.equal(readTaskQualification(f.store.db, f.context).state, "passed");
+    assert.equal(f.store.status(f.context).pendingOutcomes, 0);
+    const next = await routeStage(f.input, f.options);
+    assert.equal(next.action, "delegate");
+    assert.equal(next.reasonCodes.includes("HOST_LIFECYCLE_QUALIFICATION"), false);
   });
 });
 
@@ -792,6 +817,30 @@ test("only explicit native-audited recovery permits one retry of a completed fai
   });
 });
 
+test("completed contract failure recovery accepts additive host metadata and new build labels", async () => {
+  await fixture(async (f) => {
+    Object.assign(f.binding, lifecycleBinding([], SOURCE_ROOT, SOURCE_ROOT, { cliVersion: null }, f.project.root));
+    const native = await completedQualification(f);
+    const key = `native_qualification:${f.context.projectId}:${f.context.contextKey}`;
+    const failed = { ...readTaskQualification(f.store.db, f.context), state: "failed", proof: null,
+      failure: "NATIVE_QUALIFICATION_EVIDENCE_UNPROVEN" };
+    f.store.db.prepare("UPDATE meta SET value=? WHERE key=?").run(JSON.stringify(failed), key);
+    await callRouterTool("record_outcome", { ...native.outcome, status: "failed", failureType: "tooling" }, native.serviceOptions);
+    native.child.cliVersion = "0.999.0-future";
+    native.records[0].payload.cli_version = "0.999.0-future";
+    native.records.splice(1, 0, { type: "event_msg", payload: { type: "thread_settings_applied", thread_id: native.child.id,
+      thread_settings: { model: native.route.target.model, reasoning_effort: native.route.target.effort } } });
+    const input = { contextId: f.input.contextId, routeId: native.route.routeId };
+    const options = { store: f.store, cwd: f.project.root, inspectBinding: async () => ({ binding: f.binding }),
+      noopAuditOptions: native.serviceOptions.qualificationOptions };
+    assert.equal((await authorizeRequalification(input, options)).status, "authorizable");
+    assert.equal(readTaskQualification(f.store.db, f.context).state, "failed");
+    assert.equal(f.store.db.prepare("SELECT status FROM outcomes WHERE route_id=?").get(input.routeId).status, "failed");
+    native.records.splice(-1, 0, { type: "response_item", payload: { type: "custom_tool_call", name: "exec" } });
+    assert.equal((await authorizeRequalification(input, options)).status, "unresolved");
+  });
+});
+
 test("completed failed recovery rejects hidden work, native mismatch and ambiguous or tampered retained evidence", async () => {
   for (const mutate of [
     (f) => f.records.splice(-1, 0, { type: "response_item", payload: { type: "custom_tool_call", namespace: "functions", name: "exec" } }),
@@ -803,6 +852,24 @@ test("completed failed recovery rejects hidden work, native mismatch and ambiguo
     mutate(f);
     assert.equal((await authorizeRequalification(f.authorizationInput, f.authorizationOptions)).status, "unresolved");
     assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM meta WHERE key LIKE 'native_requalification:%'").get().n, 0);
+  });
+});
+
+test("operator recovery resolves the assigned runtime qualification without a live invocation", async () => {
+  await completedFailedNoop(async (f) => {
+    ensureRuntimeIsolationSchema(f.store.db);
+    const generation = "7".repeat(64);
+    f.store.db.prepare("INSERT INTO runtime_generations(digest,record,state) VALUES(?,?,'published')").run(generation, "{}");
+    f.store.db.prepare("INSERT INTO runtime_tasks(project_id,context_key,generation) VALUES(?,?,?)")
+      .run(f.context.projectId, f.context.contextKey, generation);
+    const key = `native_qualification:${f.context.projectId}:${f.context.contextKey}`;
+    f.store.db.prepare("UPDATE meta SET key=? WHERE key=?").run(`${key}:runtime:${generation}`, key);
+    assert.equal(f.store.runtimeInvocation, null);
+    assert.equal((await authorizeRequalification(f.authorizationInput, f.authorizationOptions)).status, "authorizable");
+    // A malformed assigned record must not fall back to an unrelated legacy proof.
+    f.store.db.prepare("INSERT INTO meta(key,value) VALUES(?,?)").run(key, JSON.stringify(f.failed));
+    f.store.db.prepare("UPDATE meta SET value='invalid' WHERE key=?").run(`${key}:runtime:${generation}`);
+    assert.equal((await authorizeRequalification(f.authorizationInput, f.authorizationOptions)).status, "unresolved");
   });
 });
 

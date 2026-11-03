@@ -335,6 +335,19 @@ successful Post ends the temporary fallback while retaining the audit history.
 
 ### Global reservation pressure
 
+For an exact native `Unknown model` refusal, record the consumed delegated
+attempt once as `failed` / `tooling`. The outcome path can automatically audit
+the original direct call and its matching native refusal. If the gate remains,
+inspect the current installed `reconcile-delegation.mjs` command as above.
+Only `recoverable` with `recoveryKind: "host_model_rejected"` authorizes applying
+that exact evidence digest. This adapter supports ordinary routes and failed
+no-tool qualifications with a trusted Pre observation even when Post never ran.
+It rejects ambiguous errors, replay, different models, native child activity,
+and conflicting managed-child records. It retains the original failure and
+missing lifecycle fields. It never proves that the requested model is supported.
+A recovered qualification still needs explicit one-use requalification authority
+and fresh host capabilities; never reuse the old ticket or fabricate support.
+
 The Router allows ten global outstanding reservations across local tasks. This
 is separate from native per-root resident-agent capacity. Real admission at the
 limit performs bounded global reclamation: verified terminal responsibility

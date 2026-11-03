@@ -15,6 +15,56 @@ function requireFact(value) {
   if (!value) throw new Error("native recovery transcript coverage is unproven");
 }
 
+const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+const nonempty = (value) => typeof value === "string" && value.length > 0;
+const onlyKeys = (value, keys) => object(value) && Object.keys(value).every((key) => keys.includes(key));
+
+// Additional-tools records declare host capabilities; they are not calls.
+// Validate the known declaration grammar rather than ignoring arbitrary
+// records under this label. JSON Schema and grammar bodies remain inert data.
+function toolDeclaration(tool, namespaceAllowed = true) {
+  if (!object(tool) || !nonempty(tool.name) || typeof tool.description !== "string") return false;
+  if (tool.type === "namespace") return namespaceAllowed
+    && onlyKeys(tool, ["type", "name", "description", "tools"])
+    && Array.isArray(tool.tools) && tool.tools.every((entry) => toolDeclaration(entry, false));
+  if (tool.type === "function") return onlyKeys(tool, ["type", "name", "description", "strict", "parameters"])
+    && typeof tool.strict === "boolean" && object(tool.parameters);
+  if (tool.type === "custom") return onlyKeys(tool, ["type", "name", "description", "format"])
+    && onlyKeys(tool.format, ["type", "syntax", "definition"])
+    && tool.format.type === "grammar" && ["lark", "regex"].includes(tool.format.syntax)
+    && nonempty(tool.format.definition);
+  return false;
+}
+
+function contractToolDeclaration(item) {
+  requireFact(onlyKeys(item, ["type", "id", "role", "tools"])
+    && item.role === "developer" && nonempty(item.id)
+    && Array.isArray(item.tools) && item.tools.every((tool) => toolDeclaration(tool)));
+}
+
+// Settings snapshots are host metadata, not execution receipts. Accept additive
+// fields inside this known envelope without depending on a host version or UI
+// settings vocabulary. Every snapshot must still agree with the actual child;
+// neither it nor a new field can authorize a response/tool action. Historical
+// version-pinned readers retain their original event vocabulary.
+function contractMetadata(event, child) {
+  if (event.type !== "thread_settings_applied") return false;
+  const settings = event.thread_settings;
+  requireFact(event.thread_id === child.id && object(settings));
+  requireFact(settings.model === child.model && settings.reasoning_effort === child.reasoningEffort);
+  for (const [field, expected] of [["cwd", child.cwd], ["model_provider_id", child.modelProvider]]) {
+    if (settings[field] !== undefined) requireFact(typeof settings[field] === "string"
+      && (expected === undefined || settings[field] === expected));
+  }
+  if (settings.collaboration_mode !== undefined) {
+    requireFact(object(settings.collaboration_mode) && object(settings.collaboration_mode.settings));
+    const mode = settings.collaboration_mode.settings;
+    requireFact(mode.model === child.model && mode.reasoning_effort === child.reasoningEffort);
+  }
+  return true;
+}
+
 export function readNativeRecoveryTranscript(path) {
   const descriptor = openSync(path, "r");
   try {
@@ -82,7 +132,20 @@ function auditNoWorkTranscript(bytes, child, parentId, version, adapter) {
   requireFact(contexts.length === 1 && contexts[0].turn_id === turn.id
     && contexts[0].model === child.model && contexts[0].effort === child.reasoningEffort);
   const events = select("event_msg");
-  requireFact(events.every((event) => EVENT_TYPES.has(event.type)));
+  requireFact(events.every((event) => EVENT_TYPES.has(event.type)
+    || (version === null && contractMetadata(event, child))));
+  if (version === null) for (const event of events.filter((entry) => entry.type === "item_completed")) {
+    requireFact(event.thread_id === child.id && event.turn_id === turn.id && object(event.item));
+    const item = event.item;
+    requireFact(["Reasoning", "AgentMessage"].includes(item.type) && typeof item.id === "string");
+    const native = turn.items.find((candidate) => candidate.id === item.id);
+    requireFact(native && native.type === (item.type === "Reasoning" ? "reasoning" : "agentMessage"));
+    if (item.type === "AgentMessage") {
+      requireFact(item.phase === native.phase && Array.isArray(item.content)
+        && item.content.every((part) => part.type === "Text" && typeof part.text === "string")
+        && item.content.map((part) => part.text).join("") === native.text);
+    }
+  }
   for (const type of ["task_started", "task_complete"]) {
     const matches = events.filter((event) => event.type === type);
     requireFact(matches.length === 1 && matches[0].turn_id === turn.id);
@@ -94,6 +157,10 @@ function auditNoWorkTranscript(bytes, child, parentId, version, adapter) {
   const outputs = new Set();
   const finals = [];
   for (const item of select("response_item")) {
+    if (version === null && item.type === "additional_tools") {
+      contractToolDeclaration(item);
+      continue;
+    }
     if (item.type === "reasoning" || item.type === "agent_message") continue;
     if (item.type === "message") {
       requireFact(["system", "developer", "user", "assistant"].includes(item.role));

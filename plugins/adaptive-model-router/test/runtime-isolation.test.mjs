@@ -79,11 +79,12 @@ function packageAt(root, version, { scorer = false, hook = false, writer = false
   return inspectRuntimePackage(root);
 }
 
-async function fixture(run) {
+async function fixture(run, { frozenSource = null } = {}) {
   const project = await temporaryProject("router-runtime-isolation-");
   try {
     await withRouterEnvironment(project, async () => {
-      const a = packageAt(join(project.root, "shell-a"), "0.4.0+isolation.1");
+      const a = frozenSource ? inspectRuntimePackage(frozenSource)
+        : packageAt(join(project.root, "shell-a"), "0.4.0+isolation.1");
       const b = packageAt(join(project.root, "candidate-b"), "0.4.0+isolation.2", { scorer: true });
       const store = new RouterStore();
       try {
@@ -314,6 +315,28 @@ test("admission-before-spawn pins ticket, trusted child, message and result to A
       observeAgentResult(store.db, context, { turnId: "turn-a", toolUseId: "spawn", toolInput, toolResponse: { agent_id: childId } });
       registerManagedChild(store.db, context, route.routeId, { taskName: route.carrier.taskName, childId, parentContextId: "owner", agentPath, transcriptPath });
     });
+    // Native Bash cwd is the command directory, not the immutable task cwd.
+    const commandHook = { ...childHook, hook_event_name: "PreToolUse", tool_name: "Bash",
+      cwd: b.root, tool_use_id: "child-cross-directory", turn_id: "child-turn", tool_input: { command: "pwd" } };
+    for (const hook_event_name of ["PreToolUse", "PostToolUse"]) {
+      const command = beginHookDispatch({ ...commandHook, hook_event_name, tool_response: "completed" });
+      assert.equal(command.selected.digest, a.digest);
+      assert.deepEqual(command.context, context);
+      endRuntimeDispatch(command);
+    }
+    assert.throws(() => beginHookDispatch({ ...commandHook, session_id: "forged-parent" }), /identity/);
+    assert.throws(() => beginHookDispatch({ ...commandHook, tool_name: "followup_task" }), /identity/);
+    for (const [mode, hook_event_name] of [["pre-tool-use", "PreToolUse"], ["post-tool-use", "PostToolUse"]]) {
+      const result = spawnSync(process.execPath, [join(source, "scripts/hook.mjs"), mode], {
+        env: process.env, cwd: b.root, encoding: "utf8",
+        input: JSON.stringify({ ...commandHook, hook_event_name, tool_response: "completed" }),
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/u);
+    }
+    const commandReceipt = store.db.prepare("SELECT pre_seen,post_seen FROM delegation_child_commands WHERE route_id=? AND call_id=?")
+      .get(route.routeId, commandHook.tool_use_id);
+    assert.deepEqual({ ...commandReceipt }, { pre_seen: 1, post_seen: 1 });
     const message = beginHookDispatch({ hook_event_name: "PreToolUse", session_id: "owner", cwd: project.root, tool_name: "followup_task", tool_input: { target: childId }, turn_id: "turn-a", tool_use_id: "follow" });
     assert.equal(message.selected.digest, a.digest); endRuntimeDispatch(message);
     const result = beginMcpDispatch("record_outcome", { contextId: "owner", routeId: route.routeId }, { env: { CODEX_THREAD_ID: "owner" }, cwd: project.root });
@@ -321,6 +344,68 @@ test("admission-before-spawn pins ticket, trusted child, message and result to A
     assert.ok(pendingRuntimeResponsibilities(store.db, context).includes("unfinished_stage"));
     assert.ok(runtimeReferences(store.db, a.digest).includes("active_stage"));
   });
+});
+
+test("root Bash workdir preserves the task project and its pinned runtime", async () => {
+  await fixture(async ({ project, store, a, b, bind, publish }) => {
+    const context = bind("root-cwd");
+    const transcript_path = rootTranscript(project, "root-cwd", []);
+    publish(b);
+    const input = { session_id: "root-cwd", transcript_path, cwd: b.root,
+      turn_id: "turn-a", tool_name: "Bash", tool_use_id: "root-command", tool_input: { command: "pwd" } };
+    for (const hook_event_name of ["PreToolUse", "PostToolUse"]) {
+      const dispatch = beginHookDispatch({ ...input, hook_event_name, tool_response: "completed" });
+      assert.deepEqual(dispatch.context, context);
+      assert.equal(dispatch.selected.digest, a.digest);
+      endRuntimeDispatch(dispatch);
+    }
+    const rows = store.db.prepare("SELECT project_id,context_key,pre_seen,post_seen FROM runtime_root_commands WHERE call_id='root-command'").all();
+    assert.deepEqual(rows.map(row => ({ ...row })), [{ project_id: context.projectId, context_key: context.contextKey, pre_seen: 1, post_seen: 1 }]);
+    assert.throws(() => beginHookDispatch({ ...input, hook_event_name: "PreToolUse", session_id: "other-root" }), /identity/);
+    assert.throws(() => beginHookDispatch({ ...input, hook_event_name: "PreToolUse", transcript_path: undefined }), /identity/);
+    assert.equal(store.db.prepare("SELECT COUNT(*) n FROM runtime_tasks WHERE project_id!=?").get(context.projectId).n, 0);
+  });
+});
+
+test("new shell forwards task cwd to a genuinely frozen old child Hook without rewriting its package", {
+  skip: !process.env.ADAPTIVE_ROUTER_PRE_CWD_FIXTURE && "Requires the exact isolated hostformat predecessor",
+}, async () => {
+  await fixture(async ({ project, store, a, b, bind }) => {
+    assert.equal(a.digest, "127906fc6f04e99becedc359fac16a6f2992a955357fc9eee3275d0f641915bd");
+    const context = bind("frozen-owner");
+    // Reachability fixture only; no production epoch or passed proof is created.
+    store.db.prepare("INSERT INTO runtime_generations VALUES(?,?,'published')").run(b.digest, JSON.stringify(b));
+    store.db.prepare("INSERT INTO runtime_host_entries VALUES(?,?,'referenced')").run(b.root, b.digest);
+    const dispatch = beginMcpDispatch("route_stage", { contextId: "frozen-owner" }, { cwd: project.root, env: { CODEX_THREAD_ID: "frozen-owner" } });
+    store.runtimeInvocation = dispatch.invocation;
+    const route = await routeStage(routeInput({ contextId: "frozen-owner" }), { store, cwd: project.root, catalog: CATALOG, diskProbe: () => 20n * 1024n ** 3n });
+    assert.equal(route.action, "delegate");
+    endRuntimeDispatch(dispatch); store.runtimeInvocation = null;
+    const toolInput = { task_name: route.carrier.taskName, message: route.carrier.message, model: route.target.model, reasoning_effort: route.target.effort, fork_turns: "none" };
+    const childId = "frozen-child", agentPath = `/root/${route.carrier.taskName}`, transcriptPath = join(project.root, "child.jsonl");
+    writeFileSync(transcriptPath, JSON.stringify({ type: "session_meta", payload: { id: childId, session_id: "frozen-owner", parent_thread_id: "frozen-owner", cwd: project.root, agent_path: agentPath,
+      source: { subagent: { thread_spawn: { parent_thread_id: "frozen-owner", depth: 1, agent_path: agentPath } } } } }) + "\n");
+    store.transaction(() => {
+      consumeDelegationTicket(store.db, context, { taskName: route.carrier.taskName, turnId: "turn-a", toolUseId: "spawn", toolInput });
+      claimDelegationSubagent(store.db, context, { taskName: route.carrier.taskName, agentId: childId, model: route.target.model });
+      observeAgentResult(store.db, context, { turnId: "turn-a", toolUseId: "spawn", toolInput, toolResponse: { agent_id: childId } });
+      registerManagedChild(store.db, context, route.routeId, { taskName: route.carrier.taskName, childId, parentContextId: "frozen-owner", agentPath, transcriptPath });
+    });
+    for (const [mode, hook_event_name] of [["pre-tool-use", "PreToolUse"], ["post-tool-use", "PostToolUse"]]) {
+      const result = spawnSync(process.execPath, [join(b.root, "scripts/node-launcher.mjs"), join(b.root, "scripts/hook.mjs"), mode], {
+        cwd: b.root, env: { ...process.env, PLUGIN_ROOT: b.root, ADAPTIVE_ROUTER_RUNTIME_TRACE: "1" }, encoding: "utf8",
+        input: JSON.stringify({ session_id: "frozen-owner", agent_id: childId, transcript_path: transcriptPath, cwd: b.root,
+          hook_event_name, turn_id: "child-turn", tool_name: "Bash", tool_use_id: "frozen-command", tool_input: { command: "pwd" }, tool_response: "completed" }),
+      });
+      assert.equal(result.status, 0, result.stderr);
+      assert.doesNotMatch(result.stdout, /"permissionDecision":"deny"/u);
+      assert.match(result.stderr, new RegExp(`digest=${a.digest}`));
+    }
+    const receipt = store.db.prepare("SELECT pre_seen,post_seen FROM delegation_child_commands WHERE route_id=? AND call_id='frozen-command'").get(route.routeId);
+    assert.deepEqual({ ...receipt }, { pre_seen: 1, post_seen: 1 });
+    assert.equal(inspectRuntimePackage(a.root).digest, a.digest);
+    assert.equal(runtimeTask(store.db, context).generation, a.digest);
+  }, { frozenSource: process.env.ADAPTIVE_ROUTER_PRE_CWD_FIXTURE });
 });
 
 test("native boundary carries root process/cell responsibility across intermediate turns and recognizes exact terminal polls", async () => {

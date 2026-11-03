@@ -99,7 +99,11 @@ function sameDefinition(actual, expected, sourcePath) {
     && actual?.timeoutSec === expected.timeoutSec
     && actual?.async === expected.async
     && canonicalPath(actual?.sourcePath) === sourcePath
-    && /^sha256:[0-9a-f]{64}$/u.test(actual?.currentHash || "")
+    // Native hosts report either a definition digest or the reviewed pair of
+    // digests. Their formatting is not trust: the exact definition above and
+    // enabled/trusted inventory checks below remain mandatory.
+    && typeof actual?.currentHash === "string"
+    && /^sha256:[0-9a-f]{64}(?:\/sha256:[0-9a-f]{64})?$(?![\s\S])/u.test(actual.currentHash)
   );
 }
 

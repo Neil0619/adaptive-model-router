@@ -18,7 +18,7 @@ import { targetedChild, stageClosureStatus } from "./stage-closure.mjs";
 import { openPrivateState, sealPrivateState } from "./private-state.mjs";
 import { opaqueId } from "./context.mjs";
 import { readHookIdentityDiagnostic } from "./hook-diagnostics.mjs";
-import { settleCoveredRootBatches, rootCoverageKey } from "./runtime-root-operations.mjs";
+import { settleCoveredRootBatches, rootCoverageKey, rootCoverageCheck } from "./runtime-root-operations.mjs";
 import { assertColdEpochRetirement, assertColdMessageCheckpoint } from "./runtime-cold-install.mjs";
 import { knownOperationCall, knownRootOperationCall } from "./runtime-operation-contract.mjs";
 import { installedEpochEntry } from "./installed-epoch-entry.mjs";
@@ -55,6 +55,22 @@ const REVIEWED_INSTALLED_EPOCH_ENTRY = { ...Object.fromEntries([
   "scripts/node-launcher.mjs": "0a7e3a24b250ae68630a833d73bdcce1dbb873bc0e740e01873ad5feb96c949a",
   "scripts/mcp-server.mjs": "b1019aa693dcd39987eb95c94c820f47d9a91737ba544ba62a05f8c4ab706feb",
 }])),
+  // Exact retained predecessors of the command-cwd adapter. Their four entry
+  // files were byte-compared with the previously qualified hostformat shell.
+  // Full package identity and real A/B qualification remain mandatory.
+  ...Object.fromEntries([
+    "127906fc6f04e99becedc359fac16a6f2992a955357fc9eee3275d0f641915bd",
+    "2697709e02905b08b20daf9ab06837e2d5931a2842a29e9904878b9c079df71b",
+    "2a36d8a1186035fe32732ef109bdf9c4bb9765a8f0103b70ba8314fce3686052",
+    "32f2a6f97330c294d09f058fa5c96666fc678c825b9f979ed1a940f9bd018a65",
+    "64fc3571ece73677b31069152f330a0e89efdab4db7b24c99898bf683a43eb82",
+    "7f93e5f46c5f06ac4c694744f0f20c45dd5097de57748d1b8ce67f9e11224852",
+  ].map((digest) => [digest, {
+    "scripts/lib/runtime-dispatch.mjs": "d3b1088865056609540366bc7964931a36a3302d6ea12eb87d7a859914817f72",
+    "scripts/lib/runtime-isolation.mjs": "899b5a71515a91ab8940c6ac47d61280bd86ccc52efd323af70766920069851d",
+    "scripts/node-launcher.mjs": "9324a79f467d3153720fd1abb383ddfe279ce9fb741a8eeef4f5ff37fb3c8aff",
+    "scripts/mcp-server.mjs": "152c99883f326ef329b979a49c296b1129fcf1b41eeedeee5035ac713cfc3a7f",
+  }])),
   // Exact approved observability r4 entry, reviewed before the diagnostic-only
   // launcher change. Keep admission bound to the whole frozen package.
   "168f5886af293a5a5d701fb83949accc813a84c88f16d7ee53e2c334d62d6d1a": {
@@ -100,7 +116,9 @@ function reviewedEntry(record, { cold = false } = {}) {
     // the later MCP shell. Its begin/end and candidate invocation transaction
     // are unchanged; only qualification calls differ. Keep this exception on
     // the complete frozen package, and still run its own real A/B suite.
-    const reviewedColdDefault = cold && record.digest === "22a9d720b0aabc5be18d12478f3b0e50c97c411ca1dfd32ca64934dbdb19ae31"
+    // This exact v2 entry can also remain referenced after its cold transition.
+    // Recognizing its unchanged bytes does not assert retirement of any v1 entry.
+    const reviewedColdDefault = record.digest === "22a9d720b0aabc5be18d12478f3b0e50c97c411ca1dfd32ca64934dbdb19ae31"
       && path === "scripts/mcp-server.mjs" && sha(bytes) === "fed9fa85256277b85487656fd444e528babe8abc938ebd113519fd44b71658cf";
     requireFact(reviewedColdDefault || sha(bytes) === digest || bytes.equals(readFileSync(join(ROOT, path))), "unreviewed_invocation_registration");
   }
@@ -213,7 +231,7 @@ function rootQuiescence(db, context, reference, deadline) {
   const operations = new NativeOperationEvidence({ childId: reference.contextId, commands });
   const rootOperations = new RootEpochOperations(reference.contextId);
   const coverage = JSON.parse(db.prepare("SELECT value FROM meta WHERE key=?").get(rootCoverageKey(context))?.value || "null");
-  const prefix = createHash("sha256"); let covered = false, turn = null, ended = false, birth = null;
+  const checkCoverage = rootCoverageCheck(coverage); let covered = false, turn = null, ended = false, birth = null;
   const seenCalls = new Set(), pendingCalls = new Set();
   const identity = rolloutIdentity(reference.transcriptPath);
   const source = readStableRollout(reference.transcriptPath, (entry, line) => {
@@ -227,10 +245,8 @@ function rootQuiescence(db, context, reference, deadline) {
     operations.observe(entry);
     rootOperations.observe(entry, operations);
     if (operations.calls.has(p?.call_id) && ["function_call", "custom_tool_call"].includes(p?.type)) operations.calls.get(p.call_id).prospectiveRootCoverage = covered;
-    if (coverage && line <= coverage.throughLine) {
-      prefix.update(JSON.stringify(entry) + "\n");
-      if (line === coverage.throughLine) { requireFact(prefix.digest("hex") === coverage.prefixDigest, "root_coverage_changed"); covered = true; }
-    }
+    const matches = checkCoverage(entry, line);
+    if (matches !== null) { requireFact(matches, "root_coverage_changed"); covered = true; }
     if (entry.type === "turn_context" || (entry.type === "event_msg" && p?.type === "task_started")) {
       if (turn !== p.turn_id) { turn = p.turn_id; ended = false; }
     }

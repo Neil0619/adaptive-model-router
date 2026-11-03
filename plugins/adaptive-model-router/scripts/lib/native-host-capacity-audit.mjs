@@ -10,7 +10,7 @@ import { CAPACITY_RECOVERY_SCHEMA, CAPACITY_AUDIT_ADAPTER, CAPACITY_REJECTION, C
 const MAX_LINE_BYTES = 16 * 1024 * 1024, MAX_RECORDS = 100_000;
 const RECORD_TYPES = new Set(["session_meta", "event_msg", "response_item", "world_state", "turn_context",
   "token_usage_record", "inter_agent_communication_metadata", "compacted"]);
-const EVENT_TYPES = new Set(["task_started", "task_complete", "item_completed", "token_count", "thread_settings_applied"]);
+const EVENT_TYPES = new Set(["task_started", "task_complete", "turn_aborted", "item_completed", "token_count", "thread_settings_applied"]);
 const RESPONSE_TYPES = new Set(["message", "agent_message", "reasoning", "function_call", "function_call_output", "custom_tool_call", "custom_tool_call_output"]);
 const hash = value => createHash("sha256").update(value).digest("hex");
 const present = value => typeof value === "string" && value.length > 0;
@@ -82,7 +82,7 @@ function scan(snapshot, visit) {
   return digest.digest("hex");
 }
 
-function audit(snapshot, parent, attempt, contextId, cwd) {
+function audit(snapshot, parent, attempt, contextId, cwd, contract) {
   requireFact(parent?.id === contextId && !parent.parentThreadId
     && present(parent.cwd) && resolve(parent.cwd) === resolve(cwd) && capacityAttemptEligible(attempt));
   let call = null, callCount = 0;
@@ -113,7 +113,7 @@ function audit(snapshot, parent, attempt, contextId, cwd) {
       if (item.call_id === call.call_id) { requireFact(currentTurn === attempt.root_turn_id); callIndex = index; }
     }
     if (["function_call_output", "custom_tool_call_output"].includes(item.type) && item.call_id === call.call_id) {
-      requireFact(item.type === "function_call_output" && item.output === CAPACITY_REJECTION
+      requireFact(item.type === "function_call_output" && contract.accepts(item.output, attempt)
         && currentTurn === attempt.root_turn_id && callIndex > 0 && index > callIndex);
       outputs += 1; result = item;
     }
@@ -126,18 +126,19 @@ function audit(snapshot, parent, attempt, contextId, cwd) {
     requireFact(turn.itemsView === "full" && Array.isArray(turn.items) && turn.items.length <= MAX_RECORDS);
     for (const item of turn.items) if (item.type === "subAgentActivity") checkActivity(item);
   }
-  return { projection: { schemaVersion: CAPACITY_RECOVERY_SCHEMA, recoveryKind: "host_agent_limit_rejected",
-    cliVersion: parent.cliVersion ?? null, rawAuditAdapter: CAPACITY_AUDIT_ADAPTER, rejectionCode: CAPACITY_REASON,
+  return { projection: { schemaVersion: contract.schemaVersion, recoveryKind: contract.recoveryKind,
+    cliVersion: parent.cliVersion ?? null, rawAuditAdapter: contract.adapter, rejectionCode: contract.reason,
     originalDispatchConsumed: true, parentTurnDigest: hash(attempt.root_turn_id), launchItemDigest: hash(call.call_id),
     rejectionItemDigest: payloadHash(result), dispatchInputDigest: payloadHash(args),
-    rawAuditDigest: payloadHash([CAPACITY_AUDIT_ADAPTER, meta, attempt.root_turn_id, call, result]) },
+    rawAuditDigest: payloadHash([contract.adapter, meta, attempt.root_turn_id, call, result]) },
     sourceBytes: snapshot.size, sourceDigest: secondDigest };
 }
 
-export async function inspectNativeHostCapacityRejection({ parent, read, attempt, contextId, cwd, readParentTranscript }) {
+// Internal adapter seam, never exposed as caller-selected proof by the CLI.
+export async function inspectNativeSpawnRejection({ parent, read, attempt, contextId, cwd, readParentTranscript }, contract) {
   const inspect = async (sourceParent, projectionParent) => {
     const snapshot = readParentTranscript ? bufferSnapshot(await readParentTranscript(sourceParent.path)) : openNativeSnapshot(sourceParent.path);
-    try { return audit(snapshot, projectionParent, attempt, contextId, cwd); } finally { snapshot.close(); }
+    try { return audit(snapshot, projectionParent, attempt, contextId, cwd, contract); } finally { snapshot.close(); }
   };
   const first = await inspect(parent, parent);
   const next = await read(contextId); requireFact(next.path === parent.path);
@@ -146,8 +147,16 @@ export async function inspectNativeHostCapacityRejection({ parent, read, attempt
   const snapshot = readParentTranscript ? bufferSnapshot(await readParentTranscript(next.path)) : openNativeSnapshot(next.path);
   try {
     const finalParent = await read(contextId); requireFact(finalParent.path === parent.path);
-    const second = audit(snapshot, finalParent, attempt, contextId, cwd);
+    const second = audit(snapshot, finalParent, attempt, contextId, cwd, contract);
     requireFact(payloadHash(first.projection) === payloadHash(second.projection));
     return second;
   } finally { snapshot.close(); }
+}
+
+export function inspectNativeHostCapacityRejection(options) {
+  return inspectNativeSpawnRejection(options, {
+    schemaVersion: CAPACITY_RECOVERY_SCHEMA, recoveryKind: "host_agent_limit_rejected",
+    adapter: CAPACITY_AUDIT_ADAPTER, reason: CAPACITY_REASON,
+    accepts: output => output === CAPACITY_REJECTION,
+  });
 }

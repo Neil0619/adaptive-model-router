@@ -2,6 +2,7 @@ import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, join, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
+import { withDecodedRollout } from "./native-rollout-zstd.mjs";
 
 // Archiving moves a rollout without changing its native identity. Only resolve
 // that exact basename under the host's two known roots; callers still verify
@@ -9,7 +10,7 @@ import { homedir } from "node:os";
 export function resolveRolloutPath(path) {
   try { statSync(path); return path; } catch (error) { if (error.code !== "ENOENT") throw error; }
   const root = resolve(process.env.CODEX_HOME || join(homedir(), ".codex"));
-  const name = basename(path);
+  const name = basename(path).replace(/\.zst$/u, "");
   if (!/^rollout-\d{4}-\d{2}-\d{2}T[^/]+\.jsonl$/u.test(name)) return path;
   const within = (directory) => {
     const part = relative(join(root, directory), resolve(path));
@@ -17,7 +18,10 @@ export function resolveRolloutPath(path) {
   };
   const candidate = within("sessions") ? join(root, "archived_sessions", name)
     : within("archived_sessions") ? join(root, "sessions", ...name.slice(8, 18).split("-"), name) : null;
-  if (candidate) { try { statSync(candidate); return candidate; } catch (error) { if (error.code !== "ENOENT") throw error; } }
+  if (candidate) for (const alternative of [resolve(path).replace(/\.zst$/u, ""), candidate]
+    .flatMap((plain) => [plain, `${plain}.zst`]).filter((value) => value !== resolve(path))) {
+    try { statSync(alternative); return alternative; } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
   return path;
 }
 
@@ -57,6 +61,16 @@ export function readStableRollout(path, accept, { allowAppend = false, allowComp
   if (maxBytes > DEFAULT_FILE_LIMIT && !Number.isFinite(deadline))
     throw new Error("expanded native transcript budget requires a finite deadline");
   path = resolveRolloutPath(path);
+  if (path.endsWith(".jsonl.zst")) {
+    const identity = rolloutIdentity(path);
+    return withDecodedRollout(path, { maxBytes, deadline }, (decoded) => {
+      // A compressed archive is immutable even when a caller permits appends
+      // to a live plain-text parent. Hash and parse the complete original bytes.
+      const result = readStableRollout(decoded, accept, { allowCompactedMetadata, deadline, maxBytes });
+      if (rolloutIdentity(path) !== identity) throw new Error("native transcript changed during evidence read");
+      return result;
+    });
+  }
   const fd = openSync(path, "r");
   try {
     // Windows file IDs can exceed Number's exact integer range. Keep identity
