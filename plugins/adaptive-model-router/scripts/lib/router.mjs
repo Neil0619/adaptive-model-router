@@ -429,7 +429,7 @@ async function routeWithStore(input, options, store) {
       if (readiness?.ready !== true && readiness?.qualificationBinding) {
         const target = resolveModelTarget({ policy: modelPolicy, catalog: delegateCatalog, purpose: "qualification" }).target;
         qualification = target ? newTaskQualification(readiness.qualificationBinding, route.routeId,
-          readiness.requalification, readiness.passedRefresh) : null;
+          readiness.requalification, readiness.passedRefresh, readiness.failedRefresh) : null;
         if (qualification) {
           qualification.modelPolicy = { digest: modelPolicy.digest, target };
           route.target = { model: target.model, effort: target.effort };

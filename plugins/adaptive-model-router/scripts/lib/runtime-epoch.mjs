@@ -9,6 +9,7 @@ import { ensureHostEpochSchema, hasHostEpochSchema } from "./host-epoch-storage.
 import { copyRuntimePackage, managedRuntimeDestination, inspectRuntimePackage, verifyRuntimePackage } from "./runtime-package.mjs";
 import { runtimeGeneration, runtimeTask, runtimeEpochGenerationCompatible } from "./runtime-isolation.mjs";
 import { runtimeSourceDigest, commitHistoricalQualificationAdoption, readTaskQualification } from "./lifecycle-qualification.mjs";
+import { verifiedFailedChild } from "./failed-child-takeover.mjs";
 import { historicalQualificationAuditCurrent } from "./historical-qualification-recovery.mjs";
 import { readStableRollout, rolloutIdentity } from "./native-rollout-reader.mjs";
 import { NativeOperationEvidence } from "./native-operation-evidence.mjs";
@@ -25,6 +26,7 @@ import { installedEpochEntry } from "./installed-epoch-entry.mjs";
 import { applyOperationReviews } from "./operation-reconciliation.mjs";
 import { RootEpochOperations } from "./root-epoch-operations.mjs";
 import { reviewedLegacyRuntime } from "./reviewed-legacy-runtime.mjs";
+import { readNativeRootHistory } from "./native-root-history.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -234,7 +236,7 @@ function rootQuiescence(db, context, reference, deadline) {
   const checkCoverage = rootCoverageCheck(coverage); let covered = false, turn = null, ended = false, birth = null;
   const seenCalls = new Set(), pendingCalls = new Set();
   const identity = rolloutIdentity(reference.transcriptPath);
-  const source = readStableRollout(reference.transcriptPath, (entry, line) => {
+  const history = readNativeRootHistory(reference.transcriptPath, { contextId: reference.contextId, cwd: reference.cwd, deadline }, (entry, line) => {
     const p = entry.payload;
     if (line === 1) {
       requireFact(entry.type === "session_meta" && p.id === reference.contextId && !p.parent_thread_id && !p.source?.subagent,
@@ -260,13 +262,13 @@ function rootQuiescence(db, context, reference, deadline) {
     if (entry.type === "event_msg" && p?.type === "task_complete") {
       requireFact(p.turn_id === turn && !ended && !pendingCalls.size, "native_turn_completion_unproven"); ended = true;
     }
-  }, { deadline });
+  });
   settleCoveredRootBatches(operations, commands);
   const retainedOperations = rootOperations.reconcile(operations);
   requireFact(turn === reference.turnId && ended && !pendingCalls.size && !operations.active.size && !operations.unanswered.size,
     "root_native_operations_or_turn_pending");
   requireFact(identity === rolloutIdentity(reference.transcriptPath), "root_source_changed");
-  return { source, birth, identity, path: reference.transcriptPath, retainedOperations };
+  return { source: history.source, sources: history.sources, birth, identity, path: reference.transcriptPath, retainedOperations };
 }
 
 // A stopped child may retain accepted but unconsumed inputs and deferred work.
@@ -281,7 +283,10 @@ export async function prepareHostEpochHandover(store, reference, { candidate, ad
   const scopedQualification = readTaskQualification(store.db, { ...context, runtimeDigest: source.digest });
   const qualificationContext = { ...context, runtimeDigest: scopedQualification ? source.digest : undefined };
   const priorQualification = scopedQualification || readTaskQualification(store.db, qualificationContext);
-  if (recoveryAudit || (priorQualification && priorQualification.state !== "passed")) {
+  const failedTakeover = priorQualification && priorQualification.state !== "passed"
+    && verifiedFailedChild(store.db, priorQualification.routeId)
+    && stageClosureStatus(store.db, context, priorQualification.routeId)?.terminalFailure;
+  if (recoveryAudit || (priorQualification && priorQualification.state !== "passed" && !failedTakeover)) {
     requireFact(!adoptionToken && priorQualification && historicalQualificationAuditCurrent(store, recoveryAudit, qualificationContext),
       "historical_qualification_recovery_unproven");
     requireFact(!readTaskQualification(store.db, { ...context, runtimeDigest: candidate }), "candidate_qualification_already_exists");
@@ -380,7 +385,7 @@ export async function prepareHostEpochHandover(store, reference, { candidate, ad
   // Ordinary Hook/closure/reclamation budgets remain unchanged.
   const deadline = Date.now() + 15_000;
   const root = rootQuiescence(store.db, context, reference, deadline);
-  const sources = [[root.path, root.identity]], children = [];
+  const sources = [...root.sources], children = [];
   for (const child of state.delegation_children) {
     const locator = JSON.parse(openPrivateState(store.db, child.locator));
     const identity = rolloutIdentity(locator.transcriptPath);
@@ -390,11 +395,19 @@ export async function prepareHostEpochHandover(store, reference, { candidate, ad
       if (entry.type === "response_item") requireFact(knownOperationCall(entry.payload), "unknown_child_operation_contract");
     }, { deadline });
     requireFact(operationSource.transcriptDigest === facts.transcriptDigest, "child_operation_source_changed");
-    requireFact(facts.finished && !facts.pendingCalls.length && !facts.pendingOperations.length, "child_native_work_pending");
-    requireFact(state.delegation_child_stops.some((stop) => stop.route_id === child.route_id && stop.turn_id === facts.lastFinal?.turnId
+    requireFact((facts.finished || facts.terminalFailure) && !facts.pendingCalls.length && !facts.pendingOperations.length, "child_native_work_pending");
+    const failedClosure = facts.terminalFailure && stageClosureStatus(store.db, context, child.route_id, { deadline, auditSettled: true });
+    if (facts.terminalFailure) requireFact(failedClosure?.state === "ready" && failedClosure.terminalFailure, "failed_child_takeover_unproven");
+    else requireFact(state.delegation_child_stops.some((stop) => stop.route_id === child.route_id && stop.turn_id === facts.lastFinal?.turnId
       && stop.result_digest === (facts.lastFinal.stopDigest || facts.lastFinal.digest)), "latest_child_Stop_missing");
     let entryBasis = "native_entry";
-    if (!hasNativeEntry(child.route_id)) {
+    if (!hasNativeEntry(child.route_id) && failedClosure) {
+      // A provider failure may precede every child tool/Stop Hook. The parent
+      // dispatch, immutable child identity and latest failed terminal prove
+      // quiescence; retain the open gate and all work for candidate takeover.
+      // This is not a successful lifecycle qualification or business outcome.
+      entryBasis = "verified_failed_terminal";
+    } else if (!hasNativeEntry(child.route_id)) {
       // A settled child has no execution to hand over. Requiring a new turn
       // would reopen completed work just to manufacture installation evidence.
       // Re-read its full current responsibility and require the exact prior
@@ -412,7 +425,8 @@ export async function prepareHostEpochHandover(store, reference, { candidate, ad
     requireFact(identity === rolloutIdentity(locator.transcriptPath), "child_source_changed");
     sources.push([locator.transcriptPath, identity]);
     children.push({ routeId: child.route_id, revision: child.revision, sourceDigest: facts.transcriptDigest,
-      operationDigest: facts.operationDigest, lastFinalDigest: payloadHash(facts.lastFinal), retainedCoverage: locator.commandCoverage || null, entryBasis });
+      operationDigest: facts.operationDigest, lastFinalDigest: payloadHash(facts.lastFinal), retainedCoverage: locator.commandCoverage || null, entryBasis,
+      ...(failedClosure ? { terminalFailure: facts.terminalFailure, takeoverToken: failedClosure.token } : {}) });
   }
   requireFact(!store.db.prepare("SELECT 1 FROM meta WHERE key=?").get(`legacy_delegation_block:${context.projectId}:${context.contextKey}`), "legacy_unknown_responsibility");
   const record = { schema: "runtime-epoch-handover/1", source: source.digest, candidate, previous: state.epoch[0]?.receipt_id || null,

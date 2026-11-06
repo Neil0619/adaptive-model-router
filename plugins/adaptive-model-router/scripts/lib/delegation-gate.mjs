@@ -5,6 +5,7 @@ import { statfsSync } from "node:fs";
 import { canonicalJson, payloadHash } from "./io.mjs";
 import { openPrivateState as openContextPackage, sealPrivateState as sealContextPackage } from "./private-state.mjs";
 import { managedStageCanFinalize, markManagedStageSettled, observeManagedStop } from "./stage-closure.mjs";
+import { verifiedFailedChild } from "./failed-child-takeover.mjs";
 import { GLOBAL_PENDING_LIMIT, reservationInventory } from "./reservation-ledger.mjs";
 
 export const CARRIER_TYPE = "adaptive-model-router/delegation-ticket-v2";
@@ -208,7 +209,7 @@ export function inspectRouterChildBudget(db, _context, {
 function finalizeIfSafe(db, row) {
   const childTerminal = row.post_observed === 1
     && ((row.no_child === 1 && row.transcript_bytes === 0)
-      || (row.stop_observed === 1 && row.agent_id && Number.isSafeInteger(row.transcript_bytes)));
+      || ((row.stop_observed === 1 || verifiedFailedChild(db, row.route_id)) && row.agent_id && Number.isSafeInteger(row.transcript_bytes)));
   if (row.ambiguous !== 0 || row.outcome_recorded !== 1 || !childTerminal || row.finalized_at
     || !managedStageCanFinalize(db, row.route_id)) return false;
   const timestamp = nowIso();

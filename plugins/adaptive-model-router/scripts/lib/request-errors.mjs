@@ -19,6 +19,8 @@ const DEFINITIONS = {
   HOOK_UNCORRELATED: ["caller_binding", "The native result did not match a trusted pending operation."],
   HOOK_IDENTITY_MISSING: ["caller_binding", "Trusted native task or child identity was unavailable."],
   STAGE_PRECONDITION: ["lifecycle_precondition", "Inspect stageClosure and the latest revision; supply only the existing trusted child identity and preserve unfinished work."],
+  STAGE_CLOSURE_PENDING: ["lifecycle_precondition", "Inspect stageClosure.nextAction. For a trusted terminal failure, verify root takeover and all input dispositions without requiring another child reply; unresolved operations must retain their actual owners."],
+  STAGE_CLOSURE_REQUIRED: ["lifecycle_precondition", "Verify the current stageClosure and pass its current token as closureToken; older results cannot settle new input."],
   TRANSPORT_FAILURE: ["transport", "Inspect bridge or launcher transport health before retrying the operation."],
   STORAGE_BUSY: ["storage_busy", "The local state store is busy; retain the pending work and retry later."],
   STORAGE_UNAVAILABLE: ["storage_io", "Inspect local state storage access and integrity."],

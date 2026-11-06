@@ -29,7 +29,7 @@ import { rememberRootTranscript } from "../scripts/lib/stage-reconciliation.mjs"
 import { openPrivateState, sealPrivateState } from "../scripts/lib/private-state.mjs";
 import { readChildTurnEvidence } from "../scripts/lib/child-turn-evidence.mjs";
 import { prepareMessageCheckpoint, prepareMessageContinuation, prepareMessageArrivalReview, messageContinuationProjection, commitMessageCheckpoint, readMessageCheckpoints } from "../scripts/lib/message-checkpoint.mjs";
-import { stageClosureStatus, observeManagedMessage, observeManagedStop } from "../scripts/lib/stage-closure.mjs";
+import { stageClosureStatus, observeManagedMessage, observeManagedStop, verifyStageClosure } from "../scripts/lib/stage-closure.mjs";
 import { callRouterTool } from "../scripts/lib/service.mjs";
 import { CATALOG, routeInput } from "./fixtures.mjs";
 import { historicalQualificationFixture } from "./support/historical-qualification.mjs";
@@ -71,7 +71,7 @@ after((t) => {
   finally { if (work) rmSync(work, { recursive: true, force: true }); }
 });
 
-async function fixture(run) {
+async function fixture(run, contextId = "epoch-owner") {
   const cwd = realpathSync(mkdtempSync(join(work, "case-"))), home = join(cwd, "state");
   const environment = { ADAPTIVE_ROUTER_HOME: home, PLUGIN_DATA: home, CODEX_HOME: join(cwd, "codex"),
     ADAPTIVE_ROUTER_LOCAL_ONLY: "1", ADAPTIVE_ROUTER_INVOCATION_ID: "", CODEX_THREAD_ID: "" };
@@ -84,13 +84,13 @@ async function fixture(run) {
     // Explicit isolated native-entry reload fixture. The new source dispatcher
     // remains on A initially. This is not evidence a real frozen host reloaded.
     store.db.prepare("INSERT INTO runtime_host_entries VALUES(?,?,'referenced')").run(b.root, b.digest);
-    const contextId = "epoch-owner", turnId = "old-complete-turn";
+    const turnId = "old-complete-turn";
     const transcriptPath = join(cwd, "root.jsonl");
     const records = [
       { type: "session_meta", timestamp: "2026-09-01T00:00:00Z", payload: { id: contextId, cwd, cli_version: "old-host" } },
       { type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
       { type: "event_msg", payload: { type: "task_complete", turn_id: turnId } },
-    ];
+    ].map((entry, ordinal) => contextId === "epoch-owner" ? entry : { ...entry, ordinal });
     const writeRoot = () => writeFileSync(transcriptPath, records.map(JSON.stringify).join("\n") + "\n"); writeRoot();
     const input = { hook_event_name: "Stop", session_id: contextId, turn_id: turnId, cwd, transcript_path: transcriptPath };
     const dispatch = beginHookDispatch(input, { shellRoot: b.root });
@@ -112,6 +112,33 @@ async function fixture(run) {
 const business = (db) => JSON.stringify(Object.fromEntries(["routes", "outcomes", "delegation_attempts", "delegation_children",
   "delegation_messages", "delegation_child_stops", "delegation_stage_journal", "delegation_maintenance"]
   .map((table) => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])));
+
+test("resumed root migrates using its exact native history base without resetting coverage", async () => {
+  const id = "01a1a448-29ab-76c0-8a55-038356ed73df";
+  await fixture(async (f) => {
+    const directory = join(process.env.CODEX_HOME, "sessions", "2026", "11", "06"); mkdirSync(directory, { recursive: true });
+    const oldPath = join(directory, `rollout-2026-11-06T01-00-00-${id}.jsonl`);
+    const path = join(directory, `rollout-2026-11-06T02-00-00-${id}_01a1af87-9dcc-7de0-a8d4-26bfac467af0.jsonl`);
+    const oldBytes = readFileSync(f.reference.transcriptPath); writeFileSync(oldPath, oldBytes);
+    const turnId = "resumed-complete-turn";
+    writeFileSync(path, [
+      { ...f.records[0], ordinal: 3, payload: { ...f.records[0].payload, history_mode: "paginated",
+        history_base: { thread_id: id, end_ordinal_exclusive: 3, end_byte_offset: oldBytes.length } } },
+      { ordinal: 4, type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
+      { ordinal: 5, type: "event_msg", payload: { type: "task_complete", turn_id: turnId } },
+    ].map(JSON.stringify).join("\n") + "\n");
+    Object.assign(f.reference, { transcriptPath: path, turnId });
+    const hookInput = { ...f.input, transcript_path: path, turn_id: turnId };
+    endRuntimeDispatch(beginHookDispatch(hookInput, { shellRoot: b.root }));
+    recordHookIdentityDiagnostic(resolveHookIdentity(hookInput).audit, "identity_accepted", process.env, { contextId: id, turnId });
+    const coverage = () => f.store.db.prepare("SELECT value FROM meta WHERE key=?").get(`runtime_root_coverage:${f.context.projectId}:${f.context.contextKey}`).value;
+    const before = coverage(), history = business(f.store.db);
+    commitHostEpochHandover(f.store, await f.prepare());
+    assert.equal(runtimeTask(f.store.db, f.context).generation, b.digest);
+    assert.equal(coverage(), before);
+    assert.equal(business(f.store.db), history);
+  }, id);
+});
 
 test("observed legacy reader isolation preserves unfinished work while only the selected v2 service activates its own namespace", async (t) => fixture(async (f) => {
   const child = await retainedChild({ ...f, pendingInput: false });
@@ -201,7 +228,9 @@ async function retainedChild(f) {
   f.store.runtimeInvocation = dispatch.invocation;
   let route;
   try { route = await modules.router.routeStage(routeInput({ contextId: f.reference.contextId }),
-    { store: f.store, cwd: f.cwd, catalog: CATALOG, enforceLifecycleHooks: false, diskProbe: () => 20n * 1024n ** 3n }); }
+    { store: f.store, cwd: f.cwd, catalog: CATALOG, enforceLifecycleHooks: false, diskProbe: () => 20n * 1024n ** 3n,
+      ...(f.qualificationBinding ? { lifecycleHookProbe: async () => qualificationReadiness(f.store.db,
+        f.store.context({ cwd: f.cwd, contextId: f.reference.contextId }), f.qualificationBinding) } : {}) }); }
   finally { endRuntimeDispatch(dispatch); f.store.runtimeInvocation = null; }
   assert.equal(route.action, "delegate");
   const childId = f.childId || "retained-child", taskName = route.carrier.taskName, agentPath = `/root/${taskName}`;
@@ -231,9 +260,16 @@ async function retainedChild(f) {
       closure.observeManagedMessage(f.store.db, f.context, message);
       closure.observeManagedMessage(f.store.db, f.context, { ...message, tool_response: "" }, { post: true });
     }
-    gate.observeSubagentStop(f.store.db, f.context, taskName, childId, 4096, { turnId, lastAssistantMessage: text });
-    closure.observeManagedStop(f.store.db, route.routeId, { turnId, lastAssistantMessage: text });
+    if (!f.failedTerminal) {
+      gate.observeSubagentStop(f.store.db, f.context, taskName, childId, 4096, { turnId, lastAssistantMessage: text });
+      closure.observeManagedStop(f.store.db, route.routeId, { turnId, lastAssistantMessage: text });
+    }
   });
+  if (f.failedTerminal) {
+    childRecords.splice(4, 2, { type: "event_msg", payload: { type: "task_complete", turn_id: turnId,
+      last_agent_message: null, error: { message: "Model unavailable", codex_error_info: "model_not_found" } } });
+    writeFileSync(path, childRecords.map(JSON.stringify).join("\n") + "\n");
+  }
   const stop = { hook_event_name: "SubagentStop", session_id: f.reference.contextId, agent_id: childId, turn_id: turnId,
     cwd: f.cwd, agent_transcript_path: path, transcript_path: path };
   if (f.childEntry !== false) {
@@ -241,6 +277,74 @@ async function retainedChild(f) {
   }
   return { route, childId, taskName, agentPath, path, childRecords, stop };
 }
+
+test("failed child without Stop can migrate for root takeover while preserving its gate and outcome", async () => {
+  await fixture(async (f) => {
+    const child = await retainedChild({ ...f, pendingInput: false, childEntry: false, failedTerminal: true });
+    const before = business(f.store.db);
+    const token = await f.prepare();
+    const prefix = structuredClone(child.childRecords);
+    child.childRecords.push(event("task_started", { turn_id: "retry-running" }));
+    writeFileSync(child.path, child.childRecords.map(JSON.stringify).join("\n") + "\n");
+    assert.throws(() => commitHostEpochHandover(f.store, token), /changed/);
+    await assert.rejects(f.prepare(), /child_native_work_pending/);
+    child.childRecords.splice(0, child.childRecords.length, ...prefix);
+    writeFileSync(child.path, child.childRecords.map(JSON.stringify).join("\n") + "\n");
+    const result = commitHostEpochHandover(f.store, await f.prepare());
+    assert.equal(business(f.store.db), before);
+    assert.equal(runtimeTask(f.store.db, f.context).generation, b.digest);
+    const receipt = JSON.parse(f.store.db.prepare("SELECT record FROM runtime_epoch_receipts WHERE id=?").get(result.id).record);
+    assert.equal(receipt.children[0].entryBasis, "verified_failed_terminal");
+    assert.equal(receipt.children[0].terminalFailure.code, "model_not_found");
+    assert.equal(f.store.status(f.context).delegationGate.state, "occupied");
+    assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM outcomes WHERE route_id=?").get(child.route.routeId).n, 0);
+    assert.equal(f.store.db.prepare("SELECT stop_observed FROM delegation_attempts WHERE route_id=?").get(child.route.routeId).stop_observed, 0);
+  });
+});
+
+test("verified failed qualification migrates and settles only its original scoped outcome", async () => {
+  await fixture(async (f) => {
+    const child = await retainedChild({ ...f, pendingInput: false, childEntry: false, failedTerminal: true,
+      qualificationBinding: { digest: "a".repeat(64), runtimeDigest: runtimeSourceDigest(a.root),
+        configurationDigest: "b".repeat(64), taskCwdDigest: payloadHash(realpathSync(f.cwd)),
+        shellRoots: [payloadHash(a.root)], cliVersion: "0.153.0" } });
+    assert.deepEqual(child.route.reasonCodes, ["HOST_LIFECYCLE_QUALIFICATION"]);
+    await assert.rejects(f.prepare(), /historical_qualification_recovery_unproven/);
+    const closure = stageClosureStatus(f.store.db, f.context, child.route.routeId);
+    const disposition = { intent: "cancelled", basis: "Cancel unavailable model qualification; root retains the original work.",
+      resultReview: "Inspected exact failed turn, original input and empty operation inventory.", pendingOperations: [],
+      requirements: closure.inputReferences.map(({ id }) => ({ messageId: id, source: "Native qualification activation",
+        disposition: "cancelled", owner: "/root", receipt: "No marker or business work completed; provider refused model." })) };
+    for (const action of ["begin_maintenance", "verify_maintenance"]) await callRouterTool("manage_stage", {
+      action, contextId: f.reference.contextId, routeId: child.route.routeId, expectedRevision: closure.revision,
+      parentTranscriptPath: f.reference.transcriptPath, disposition,
+      ...(action === "verify_maintenance" ? { closureToken: closure.token } : {}),
+    }, { store: f.store, cwd: f.cwd });
+    f.store.transaction(() => verifyStageClosure(f.store.db, f.context, child.route.routeId, closure.token));
+    const original = readTaskQualification(f.store.db, { ...f.context, runtimeDigest: a.digest });
+    const before = business(f.store.db);
+    commitHostEpochHandover(f.store, await f.prepare());
+    assert.equal(business(f.store.db), before);
+    assert.equal(readTaskQualification(f.store.db, { ...f.context, runtimeDigest: b.digest }), null);
+    const dispatch = beginMcpDispatch("record_outcome", { contextId: f.reference.contextId, routeId: child.route.routeId },
+      { cwd: f.cwd, env: { CODEX_THREAD_ID: f.reference.contextId }, shellRoot: b.root });
+    f.store.runtimeInvocation = dispatch.invocation;
+    try {
+      const input = { contextId: f.reference.contextId, routeId: child.route.routeId, status: "failed", failureType: "tooling",
+        gate: child.route.verificationGate, retries: 0, retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
+        escalations: 0, userCorrection: false, closureToken: closure.token };
+      assert.equal((await callRouterTool("record_outcome", input, { store: f.store, cwd: f.cwd })).recorded, true);
+      assert.equal((await callRouterTool("record_outcome", input, { store: f.store, cwd: f.cwd })).idempotent, true);
+    } finally { endRuntimeDispatch(dispatch); f.store.runtimeInvocation = null; }
+    const settled = readTaskQualification(f.store.db, { ...f.context, runtimeDigest: a.digest });
+    assert.equal(settled.state, "failed");
+    assert.deepEqual(settled.binding, original.binding);
+    assert.equal(settled.proof, null);
+    assert.equal(readTaskQualification(f.store.db, { ...f.context, runtimeDigest: b.digest }), null);
+    assert.equal(f.store.status(f.context).delegationGate.state, "available");
+    assert.equal(f.store.db.prepare("SELECT stop_observed FROM delegation_attempts WHERE route_id=?").get(child.route.routeId).stop_observed, 0);
+  });
+});
 
 async function settledHistoricalChild(f) {
     const child = await retainedChild({ ...f, pendingInput: false, childEntry: false });

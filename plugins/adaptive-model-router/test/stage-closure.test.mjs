@@ -1053,7 +1053,115 @@ function hook(project, mode, input) {
   return result.stdout.trim() ? JSON.parse(result.stdout) : null;
 }
 
-async function setupChild(project, store, run, contextId = "closure-root", nativeMetadata = {}) {
+async function failChildTurn(f, turnId = "provider-failure", number = 2) {
+  f.records.push({ type: "event_msg", payload: { type: "task_started", turn_id: turnId } });
+  f.input(number, turnId);
+  f.records.push({ type: "event_msg", payload: { type: "task_complete", turn_id: turnId,
+    last_agent_message: null, error: { message: 'Model "gpt-6.1-sol" is not available for this group',
+      codex_error_info: "model_not_found" } } });
+  await f.save();
+}
+
+test("failed native terminal transfers all requirements without another child reply or fabricated Stop", async () => {
+  await withChild(async (f) => {
+    await f.manage("begin_maintenance", { disposition: disposition("cancelled") });
+    f.send("failed-collection");
+    await failChildTurn(f);
+    const closure = f.store.status(f.context).stageClosure;
+    assert.equal(closure.state, "ready");
+    assert.equal(closure.terminalFailure.code, "model_not_found");
+    assert.equal(closure.nextAction, "verify_failed_child_takeover");
+    const report = { ...reviewed(closure, "cancelled"), requirements: closure.inputReferences.map(({ id }) => ({
+      messageId: id, source: `original native input ${id}`, disposition: "transferred",
+      receipt: "Root retains the original work and partial result; independent review remains outstanding", owner: "/root" })) };
+    await assert.rejects(f.manage("verify_maintenance", { closureToken: closure.token,
+      disposition: reviewed(closure, "cancelled") }), /Every.*input/);
+    await f.manage("verify_maintenance", { closureToken: closure.token, disposition: report });
+    assert.throws(() => recordOutcome({ ...f.outcome(), closureToken: closure.token },
+      { store: f.store, cwd: f.project.root }), /failed/);
+    const failed = { ...f.outcome(), status: "failed", failureType: "tooling", closureToken: closure.token };
+    assert.equal(recordOutcome(failed, { store: f.store, cwd: f.project.root }).recorded, true);
+    assert.equal(recordOutcome(failed, { store: f.store, cwd: f.project.root }).idempotent, true);
+    const attempt = f.store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=?").get(f.route.routeId);
+    assert.equal(attempt.stop_observed, 0);
+    assert.equal(attempt.no_child, 0);
+    assert.ok(attempt.finalized_at);
+    assert.equal(f.store.status(f.context).delegationGate.state, "available");
+    assert.equal(f.store.status(f.context).pendingStageWork[0].pending.length, 2);
+    const saved = await f.manage("read_disposition");
+    assert.equal(saved.failure.retained.finals[0].content[0].text, "INITIAL_RESULT");
+    assert.equal(saved.failure.retained.inputs.length, 2);
+    assert.ok(saved.failure.retained.originalStage.includes(routeInput().goal));
+    await f.manage("resolve_requirements", { disposition: { ...report, requirements: report.requirements.map((r) => ({ ...r,
+      disposition: "fulfilled", receipt: "Root completed authorized work; independent verification limitation reported" })) } });
+    assert.equal(f.store.handleStop(f.context).action, "allow");
+    const next = await routeStage(routeInput({ contextId: "closure-root", stageId: "recovered-next-stage" }),
+      { store: f.store, cwd: f.project.root, catalog: CATALOG, diskProbe: () => 16n * 1024n ** 3n });
+    assert.equal(next.action, "delegate");
+    completeNoChildRoute(next, { store: f.store, cwd: f.project.root, contextId: "closure-root", status: "failed", failureType: "tooling" });
+  });
+});
+
+test("initial provider failure without any final or Stop can be taken over and reports useful preconditions", async () => {
+  await withChild(async (f) => {
+    const closure = f.store.status(f.context).stageClosure;
+    assert.equal(closure.state, "ready");
+    assert.equal(closure.nextAction, "begin_failed_child_takeover");
+    assert.equal(closure.inputReferences.length, 1);
+    assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM delegation_child_stops WHERE route_id=?").get(f.route.routeId).n, 0);
+    assert.throws(() => recordOutcome({ ...f.outcome(), status: "failed", failureType: "tooling", closureToken: closure.token },
+      { store: f.store, cwd: f.project.root }), { code: "STAGE_CLOSURE_PENDING" });
+    const start = await f.manage("begin_maintenance", { disposition: disposition("superseded") });
+    assert.equal(start.nextAction, "verify_failed_child_takeover");
+    const report = { ...reviewed(closure, "superseded"), requirements: [{ messageId: closure.inputReferences[0].id,
+      source: "Original stage capsule and native activation", disposition: "transferred", owner: "/root",
+      receipt: "Retained in the root plan, with original review requirement still outstanding" }] };
+    await assert.rejects(f.manage("verify_maintenance", { closureToken: closure.token,
+      disposition: { ...report, requirements: [{ ...report.requirements[0], disposition: "no_work" }] } }), /original stage/);
+    await f.manage("verify_maintenance", { closureToken: closure.token, disposition: report });
+    assert.equal(recordOutcome({ ...f.outcome(), status: "failed", failureType: "tooling", closureToken: closure.token },
+      { store: f.store, cwd: f.project.root }).recorded, true);
+    assert.equal(f.store.status(f.context).stageClosure, null);
+    assert.equal(f.store.status(f.context).delegationGate.state, "available");
+    const saved = await f.manage("read_disposition");
+    assert.equal(saved.failure.retained.finals.length, 0);
+    assert.equal(saved.failure.retained.failures[0].error.codex_error_info, "model_not_found");
+  }, {}, false, true);
+});
+
+test("failed terminal cannot hide running operations, unmatched inputs, later turns or contradictory evidence", async () => {
+  await withChild(async (f) => {
+    await f.manage("begin_maintenance", { disposition: disposition("superseded") });
+    const baseline = structuredClone(f.records);
+    const check = async (tail, reason) => {
+      f.records.splice(0, f.records.length, ...structuredClone(baseline), ...tail); await f.save();
+      const closure = f.store.status(f.context).stageClosure;
+      assert.equal(closure.state, "pending");
+      if (reason) assert.equal(closure.reason, reason);
+    };
+    await check([{ type: "event_msg", payload: { type: "task_started", turn_id: "retry-running" } }], "latest_child_turn_not_complete");
+    const original = baseline.at(-1);
+    await check([{ ...original, payload: { ...original.payload, error: null } }], "latest_child_turn_not_complete");
+    await check([{ ...original, payload: { ...original.payload, thread_id: "wrong-child" } }], "latest_child_turn_not_complete");
+    await check([{ type: "response_item", payload: { type: "function_call", call_id: "running", name: "exec_command", arguments: '{"cmd":"sleep 30"}' } }], "child_operations_pending");
+    // A process launched BEFORE the failed turn ended still requires its real
+    // receipt, even though the model has definitively stopped generating.
+    const active = structuredClone(baseline);
+    active.splice(active.length - 1, 0, { type: "response_item", payload: { type: "function_call", call_id: "yielded",
+      name: "exec_command", arguments: '{"cmd":"long-job"}' } }, { type: "response_item", payload: {
+      type: "function_call_output", call_id: "yielded", output: "Chunk ID: a\nWall time: 1 seconds\nProcess running with session ID 17\nOutput:\n" } });
+    f.records.splice(0, f.records.length, ...active); await f.save();
+    assert.equal(f.store.status(f.context).stageClosure.reason, "child_operations_pending");
+    f.records.splice(0, f.records.length, ...baseline); await f.save();
+    const old = f.store.status(f.context).stageClosure;
+    assert.equal(old.state, "ready");
+    f.send("new-unconsumed-input");
+    assert.equal(f.store.status(f.context).stageClosure.state, "pending");
+    await assert.rejects(f.manage("verify_maintenance", { closureToken: old.token, disposition: reviewed(old, "superseded") }), /ready|token/);
+  }, {}, false, true);
+});
+
+async function setupChild(project, store, run, contextId = "closure-root", nativeMetadata = {}, initialFailure = false) {
         const parentPath = join(project.root, `${contextId}-parent.jsonl`);
         const parentRecords = [{ type: "session_meta", payload: { id: contextId, cwd: project.root } },
           { type: "turn_context", payload: { turn_id: "root-turn" } }];
@@ -1094,8 +1202,8 @@ async function setupChild(project, store, run, contextId = "closure-root", nativ
           await save();
           hook(project, "subagent-stop", { ...child, turn_id: turnId, last_assistant_message: result });
         }
-        input(1, "child-turn-1");
-        await finish("child-turn-1", "INITIAL_RESULT");
+        if (initialFailure) await failChildTurn({ records, input, save }, "child-turn-1", 1);
+        else { input(1, "child-turn-1"); await finish("child-turn-1", "INITIAL_RESULT"); }
         const outcome = () => ({ contextId, routeId: route.routeId, status: "passed", gate: route.verificationGate,
           failureType: null, retries: 0, retryBreakdown: { reasoning: 0, environment: 0, information: 0, tooling: 0 },
           escalations: route.escalation.count, userCorrection: false });
@@ -1121,14 +1229,14 @@ async function setupChild(project, store, run, contextId = "closure-root", nativ
         await run({ project, store, context, route, child, input, finish, save, records, outcome, send, root, parentPath, parentRecords, saveParent, manage });
 }
 
-async function withChild(run, nativeMetadata = {}, runtime = false) {
+async function withChild(run, nativeMetadata = {}, runtime = false, initialFailure = false) {
   const project = await temporaryProject("router stage closure ");
   try {
     await withRouterEnvironment(project, async () => {
       const store = new RouterStore();
       try {
         if (runtime) enrollRuntimeFixture({ home: project.home, shellRoot: pluginRoot, cwd: project.root, contextId: "closure-root", store, lease: true });
-        await setupChild(project, store, run, "closure-root", nativeMetadata);
+        await setupChild(project, store, run, "closure-root", nativeMetadata, initialFailure);
       } finally { store.close(); }
     });
   } finally { await project.cleanup(); }
@@ -1423,7 +1531,7 @@ test("an unanswered native tool cannot be hidden by a final reply and task_compl
   await withChild(async ({ records, save, store, context, finish }) => {
     records.push({ type: "response_item", payload: { type: "function_call", call_id: "unfinished-tool", name: "exec_command", arguments: "{}" } });
     await finish("child-turn-1", "FINAL_WITH_UNRESOLVED_TOOL");
-    assert.equal(store.status(context).stageClosure.reason, "latest_child_turn_not_complete");
+    assert.equal(store.status(context).stageClosure.reason, "child_operations_pending");
     records.push({ type: "response_item", payload: { type: "function_call_output", call_id: "unfinished-tool", output: "actual terminal result" } });
     await save();
     assert.equal(store.status(context).stageClosure.state, "ready");

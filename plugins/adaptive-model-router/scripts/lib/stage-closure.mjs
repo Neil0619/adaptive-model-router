@@ -10,6 +10,7 @@ import { applyOperationReviews, readOperations, reconcileOperations } from "./op
 import { readStableRollout } from "./native-rollout-reader.mjs";
 import { readReservationRelease, reacquireReservation } from "./reservation-ledger.mjs";
 import { messageContinuationProjection, messageCheckpointKey, prepareMessageProjections } from "./message-checkpoint.mjs";
+import { readFailedChildReceipt, retainFailedChild } from "./failed-child-takeover.mjs";
 
 const now = () => new Date().toISOString();
 const present = (value) => typeof value === "string" && value.length > 0;
@@ -245,8 +246,8 @@ export function stageClosureStatus(db, context, routeId = null, { deadline = Inf
   try { facts = applyOperationReviews(db, context, child, commands, readChildTurnEvidence(locator, { commands, deadline })); }
   catch { return pending("child_evidence_unavailable"); }
   if (facts.pendingOperations.length) return pending("child_operations_pending", { pendingOperations: facts.pendingOperations });
-  if (!facts.finished) return pending("latest_child_turn_not_complete");
-  if (maintenance?.state === "active" && !operations.some((op) => op.revision > maintenance.start_revision && op.kind === "followup_task")) return pending("maintenance_followup_required");
+  if (!facts.finished && !facts.terminalFailure) return pending("latest_child_turn_not_complete");
+  if (!facts.terminalFailure && maintenance?.state === "active" && !operations.some((op) => op.revision > maintenance.start_revision && op.kind === "followup_task")) return pending("maintenance_followup_required");
   const continuation = messageContinuationProjection(db, context, child, Math.min(deadline, Date.now() + 5000));
   const checkpoint = checkpointStatus(continuation); if (checkpoint) return checkpoint;
   const expected = new Map([[payloadHash("/root"), [true]]]); // The native spawn activation is the first input.
@@ -262,19 +263,23 @@ export function stageClosureStatus(db, context, routeId = null, { deadline = Inf
     if (!modes?.length || modes.shift() !== message.triggerTurn) return pending("message_history_requires_reconciliation");
   }
   if ([...expected.values()].some((modes) => modes.length)) return pending("accepted_message_not_consumed");
-  const final = facts.lastFinal;
+  const final = facts.terminalFailure || facts.lastFinal;
   const stop = db.prepare("SELECT 1 FROM delegation_child_stops WHERE route_id=? AND turn_id=? AND result_digest=?");
-  if (!stop.get(child.route_id, final.turnId, final.digest)
+  if (!facts.terminalFailure && !stop.get(child.route_id, final.turnId, final.digest)
     && !(final.stopDigest && stop.get(child.route_id, final.turnId, final.stopDigest))) return pending("latest_stop_not_observed");
   const token = payloadHash({ routeId: child.route_id, revision: child.revision,
     commands, commandCompletions: facts.commandCompletions,
     operationSnapshotDigest: facts.operationSnapshotDigest, operationReviewDigest: facts.operationReviewDigest,
+    ...(facts.terminalFailure ? { terminalFailure: facts.terminalFailure, transcriptDigest: facts.transcriptDigest } : {}),
     final: { turnId: final.turnId, digest: final.digest,
       ...(final.stopDigest ? { stopDigest: final.stopDigest, stopEvidenceDigest: final.stopEvidenceDigest } : {}) },
     inputs: facts.messages.map(({ line: _line, ...message }) => message) });
   return { state: "ready", routeId: child.route_id, revision: child.revision,
     ...(maintenance ? { intent: maintenance.intent, maintenance: true } : {}),
-    target, nextAction: maintenance?.state === "active" ? "verify_maintenance_dispositions" : "verify_current_result_and_record_outcome",
+    target, nextAction: facts.terminalFailure ? (maintenance?.state === "verified" ? "record_unique_failed_outcome_for_terminated_stage"
+      : maintenance ? "verify_failed_child_takeover" : "begin_failed_child_takeover")
+      : maintenance?.state === "active" ? "verify_maintenance_dispositions" : "verify_current_result_and_record_outcome",
+    ...(facts.terminalFailure ? { terminalFailure: facts.terminalFailure, transcriptDigest: facts.transcriptDigest } : {}),
     finalTurnId: final.turnId, resultDigest: final.digest, token, transcriptBytes: facts.transcriptBytes,
     inputReferences: facts.messages.map(({ id, author, turnId, digest }) => ({ id, author, turnId, digest })) };
 }
@@ -283,13 +288,15 @@ export function verifyStageClosure(db, context, routeId, token) {
   const closure = stageClosureStatus(db, context, routeId);
   if (!closure) return null; // Legacy records retain their existing recovery path.
   const maintenance = db.prepare("SELECT * FROM delegation_maintenance WHERE route_id=?").get(routeId);
-  if (maintenance?.state === "active") throw new Error("Verify the bounded maintenance result and its dispositions with manage_stage before the final outcome.");
+  if (maintenance?.state === "active") throw requestError("STAGE_CLOSURE_PENDING", "Verify the bounded maintenance result and its dispositions with manage_stage before the final outcome.");
   if (closure.state !== "ready") {
     const error = new Error(`Stage closure is pending: ${closure.reason}. Complete or reconcile the current child work before recording an outcome.`);
     error.code = "STAGE_CLOSURE_PENDING";
     throw error;
   }
-  if (closure.revision > 0 && token !== closure.token) {
+  if (closure.terminalFailure && (maintenance?.state !== "verified" || maintenance.verified_token !== closure.token))
+    throw requestError("STAGE_CLOSURE_PENDING", "Verify failed child takeover with manage_stage before the failed outcome; preserve every input including the original stage.");
+  if ((closure.revision > 0 || closure.terminalFailure) && token !== closure.token) {
     const error = new Error("Verify the current stageClosure result from get_route_status and pass its token as closureToken; an older result cannot settle the followup.");
     error.code = "STAGE_CLOSURE_REQUIRED";
     throw error;
@@ -303,6 +310,11 @@ export function verifyStageClosure(db, context, routeId, token) {
   // Qualification preparation and final outcome admission both verify the
   // current closure. An unchanged projection must preserve its proof binding;
   // newly accepted input still resets stop_observed and invalidates that proof.
+  if (closure.terminalFailure) {
+    db.prepare(`UPDATE delegation_attempts SET transcript_bytes=?,updated_at=? WHERE route_id=?
+      AND transcript_bytes IS NOT ?`).run(closure.transcriptBytes, now(), routeId, closure.transcriptBytes);
+    return closure;
+  }
   db.prepare(`UPDATE delegation_attempts SET stop_observed=1, transcript_bytes=?, updated_at=? WHERE route_id=?
     AND (stop_observed != 1 OR transcript_bytes IS NOT ?)`)
     .run(closure.transcriptBytes, now(), routeId, closure.transcriptBytes);
@@ -377,7 +389,7 @@ export function manageStage(db, context, input, cwd) {
     const current = JSON.parse(openPrivateState(db, maintenance.record));
     if (input.action === "read_disposition") {
       const release = readReservationRelease(db, child.route_id);
-      return { state: maintenance.state, revision: child.revision, disposition: current,
+      return { state: maintenance.state, revision: child.revision, disposition: current, failure: readFailedChildReceipt(db, child.route_id),
         ...(release ? { release, gateRetained: !db.prepare("SELECT finalized_at FROM delegation_attempts WHERE route_id=?").get(child.route_id)?.finalized_at } : {}) };
     }
     if (maintenance.state !== "verified" || !input.disposition?.resultReview || !input.disposition.basis
@@ -430,6 +442,10 @@ export function manageStage(db, context, input, cwd) {
       .run(child.route_id, child.revision, sealPrivateState(db, JSON.stringify(input.disposition)), now());
     db.prepare("UPDATE delegation_children SET verified_revision=NULL,verified_digest=NULL WHERE route_id=?").run(child.route_id);
     const locator = JSON.parse(openPrivateState(db, child.locator));
+    const closure = stageClosureStatus(db, context, child.route_id);
+    if (closure?.terminalFailure) return { state: "active", revision: child.revision, target: locator.agentPath,
+      nextAction: "verify_failed_child_takeover", closure,
+      instruction: "The latest native child turn failed. Do not retry collection on this child. Inspect the original stage, all input references, partial results and operation receipts in its native transcript. Use verify_maintenance with this closure token and explicit dispositions for EVERY input including the activation/original stage. Transfer authorized unfinished work to /root; root work is not an independent review. Then record failed/tooling once. Later stages may delegate normally." };
     return { state: "active", revision: child.revision, target: locator.agentPath, nextAction: "followup_bounded_collection",
       instruction: "Use native followup_task for this exact child. Collect every pending requirement, its original source, partial results, and any running or unknown operation references. Do not execute business work. Only an already observed native process/cell may be polled without input through its exact native wait tool. On code-mode hosts use only text(await tools.write_stdin({...})); with literal arguments for that known process and empty input. All other tools and arbitrary code remain denied. Return these facts in a final reply for root disposition. Preserve missing facts explicitly." };
   }
@@ -441,19 +457,22 @@ export function manageStage(db, context, input, cwd) {
     return { state: "verified", idempotent: true };
   }
   const closure = stageClosureStatus(db, context, child.route_id);
-  if (closure?.state !== "ready" || closure.token !== input.closureToken) throw new Error("The current maintenance result is not ready or its verification token changed.");
+  if (closure?.state !== "ready" || closure.token !== input.closureToken) throw requestError("STAGE_CLOSURE_PENDING", "The current maintenance result is not ready or its verification token changed.");
   const report = input.disposition;
   if (!report || report.intent !== maintenance.intent || !report.basis || !report.resultReview
     || report.pendingOperations.length || report.requirements.some((r) => !r.source || !r.receipt || !r.owner)) {
     throw new Error("Verify the actual maintenance result, disposition each requirement, and resolve pending operations before closure.");
   }
   const locator = JSON.parse(openPrivateState(db, child.locator));
-  const inputs = readChildTurnEvidence(locator).messages.slice(1);
+  const inputs = closure.inputReferences.slice(closure.terminalFailure ? 0 : 1);
   if (new Set(report.requirements.map((r) => r.messageId)).size !== report.requirements.length
     || inputs.some((message) => !report.requirements.some((r) => r.messageId === message.id))
     || report.requirements.some((r) => !inputs.some((message) => message.id === r.messageId))) {
     throw new Error("Every collected native input needs exactly one explicit disposition; preserve its source, result or receiving owner.");
   }
+  if (closure.terminalFailure && report.requirements.some((r) =>
+    (r.messageId === inputs[0]?.id && r.disposition === "no_work") || (r.disposition === "transferred" && r.owner !== "/root")))
+    throw requestError("STAGE_PRECONDITION", "Retain the original stage as real responsibility and transfer unfinished work to /root; never replace independent review with root self-review.");
   // A new collection can disposition new inputs, but its terminal report cannot
   // rewrite responsibilities retained from an earlier verified collection.
   const priorVerification = db.prepare("SELECT record FROM delegation_stage_journal WHERE route_id=? AND kind='verification' AND revision<=? ORDER BY revision DESC LIMIT 1")
@@ -469,6 +488,7 @@ export function manageStage(db, context, input, cwd) {
     })) throw new Error("A new verification must preserve retained dispositions; use resolve_requirements for actual completion or an explicit intent change.");
   }
   const previousBytes = Math.max(maintenance.accounted_bytes, child.accounted_bytes);
+  if (closure.terminalFailure) retainFailedChild(db, child, locator, closure);
   if (child.state === "settled") {
     const delta = Math.max(0, closure.transcriptBytes - previousBytes);
     db.prepare(`INSERT INTO delegation_usage(project_id,context_key,total_transcript_bytes,untrusted,updated_at)

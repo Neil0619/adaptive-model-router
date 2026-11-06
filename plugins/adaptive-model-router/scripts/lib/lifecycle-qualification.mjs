@@ -15,6 +15,8 @@ import { ensureHostEpochSchema, hasHostEpochSchema } from "./host-epoch-storage.
 import { readStableRollout, rolloutIdentity } from "./native-rollout-reader.mjs";
 import { readHookIdentityDiagnostic } from "./hook-diagnostics.mjs";
 import { openPrivateState, sealPrivateState } from "./private-state.mjs";
+import { failedQualificationRefresh, consumeFailedQualificationRefresh } from "./failed-qualification-refresh.mjs";
+import { verifiedFailedChild } from "./failed-child-takeover.mjs";
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PROOFS = new WeakMap();
@@ -81,11 +83,12 @@ function validContractBinding(binding) {
     && binding.digest === payloadHash({ contracts, hookSet, shellRoots, directShellRoots, runtimeDigest, taskCwdDigest });
 }
 
-export function newTaskQualification(binding, routeId, requalification = null, passedRefresh = null) {
+export function newTaskQualification(binding, routeId, requalification = null, passedRefresh = null, failedRefresh = null) {
   if (!validBinding(binding)) return null;
   return { schema: binding.schema === 2 ? 2 : 1, state: "pending", routeId, binding, hooks: {},
     ...(requalification ? { requalification } : {}),
     ...(passedRefresh ? { passedRefresh } : {}),
+    ...(failedRefresh ? { failedRefresh } : {}),
     marker: `NATIVE_ROUTER_NOOP_${randomBytes(12).toString("hex")}`, createdAt: new Date().toISOString() };
 }
 
@@ -108,6 +111,8 @@ function write(db, context, value) {
 }
 
 export function reserveTaskQualification(db, context, qualification, ticketHash) {
+  if (qualification.failedRefresh) return consumeFailedQualificationRefresh(db, context,
+    readTaskQualification(db, context), qualification, ticketHash, key(context));
   if (qualification.passedRefresh) return consumePassedRefresh(db, context, qualification, ticketHash);
   if (qualification.requalification) return consumeRequalification(db, context,
     readTaskQualification(db, context), qualification, ticketHash);
@@ -131,6 +136,9 @@ export function qualificationReadiness(db, context, binding) {
     }
   }
   if (!existing) return { ready: false, reasonCode: "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN", qualificationBinding: binding, binding };
+  const failedRefresh = failedQualificationRefresh(db, context, existing, binding);
+  if (failedRefresh) return { ready: false, reasonCode: "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN",
+    qualificationBinding: binding, failedRefresh, binding };
   const requalification = activeRequalification(db, context, existing, binding);
   if (requalification) return { ready: false, reasonCode: "HOST_LIFECYCLE_ROUND_TRIP_UNPROVEN",
     qualificationBinding: binding, requalification, binding };
@@ -207,7 +215,7 @@ export function provenQualificationShellRoots(db, context) {
     // their bounded set through the next proof, which records those roles.
     for (const root of value.binding.directShellRoots || value.binding.shellRoots) retained.add(root);
     if (passedQualificationBasis(db, context, value)) return [...new Set([...retained, ...EVENTS.map((event) => value.hooks[event].shellRoot)])];
-    const prior = value.passedRefresh?.priorRouteId || value.requalification?.priorRouteId;
+    const prior = value.passedRefresh?.priorRouteId || value.requalification?.priorRouteId || value.failedRefresh?.priorRouteId;
     if (typeof prior !== "string" || seen.has(prior)) return [];
     seen.add(prior);
     try { value = JSON.parse(db.prepare("SELECT value FROM meta WHERE key=?").get(`native_qualification_archive:${prior}`)?.value); }
@@ -346,7 +354,7 @@ export async function auditFailedQualificationNoop(input, { store, cwd, readNati
 export async function prepareQualificationOutcome(input, {
   store, cwd, inspectBinding, readNative = nativeSnapshot, auditOptions,
 } = {}) {
-  const context = store.context({ cwd, contextId: input.contextId });
+  const context = qualificationOutcomeContext(store.db, store.context({ cwd, contextId: input.contextId }), input);
   const value = readTaskQualification(store.db, context);
   if (!value || value.routeId !== input.routeId || value.state === "passed") return null;
   // Managed Stop records a turn/result fact; only completed native evidence
@@ -388,6 +396,7 @@ export async function prepareQualificationOutcome(input, {
 }
 
 export function consumeQualificationOutcome(db, context, routeId, input, token) {
+  context = qualificationOutcomeContext(db, context, input);
   const value = readTaskQualification(db, context);
   if (!value || value.routeId !== routeId) return false;
   const proof = token && PROOFS.get(token);
@@ -400,6 +409,25 @@ export function consumeQualificationOutcome(db, context, routeId, input, token) 
   return true;
 }
 
+// A handover retains the old qualification under its original generation.
+// Only a failed outcome for that exact migrated stage may finish it. This is
+// never a passed qualification for the new engine or a search for old success.
+function qualificationOutcomeContext(db, context, input) {
+  if (readTaskQualification(db, context)?.routeId === input.routeId || !context.runtimeDigest
+    || input.status !== "failed" || input.failureType !== "tooling" || !hasHostEpochSchema(db)
+    || !verifiedFailedChild(db, input.routeId)) return context;
+  const stage = db.prepare("SELECT generation FROM runtime_stages WHERE route_id=? AND project_id=? AND context_key=?")
+    .get(input.routeId, context.projectId, context.contextKey);
+  if (stage?.generation !== context.runtimeDigest) return context;
+  const matches = db.prepare("SELECT generation FROM runtime_epoch_origins WHERE project_id=? AND context_key=? AND subject=?")
+    .all(context.projectId, context.contextKey, input.routeId).map(({ generation }) => ({ ...context, runtimeDigest: generation }))
+    .filter((original) => {
+      const value = readTaskQualification(db, original);
+      return value?.routeId === input.routeId && value.state !== "passed";
+    });
+  return matches.length === 1 ? matches[0] : context;
+}
+
 // Only retained, source-verified proof/outcome pairs can finish a migration.
 export function verifiedRuntimeQualification(db, context) {
   const value = readTaskQualification(db, context);
@@ -410,7 +438,7 @@ export function verifiedRuntimeQualification(db, context) {
     const outcome = db.prepare("SELECT * FROM outcomes WHERE route_id=? AND project_id=? AND context_key=?")
       .get(value.routeId, context.projectId, context.contextKey);
     if (attempt?.finalized_at && attempt.outcome_recorded === 1 && !attempt.ambiguous
-      && outcome?.status === "failed" && (attempt.no_child === 1 || attempt.stop_observed === 1)) return value;
+      && outcome?.status === "failed" && (attempt.no_child === 1 || attempt.stop_observed === 1 || verifiedFailedChild(db, value.routeId))) return value;
   }
   return null;
 }
