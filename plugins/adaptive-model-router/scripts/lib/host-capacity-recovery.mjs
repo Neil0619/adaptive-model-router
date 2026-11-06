@@ -18,6 +18,7 @@ const present = (value) => typeof value === "string" && value.length > 0;
 const digest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 
 const getMeta = (db, key) => db.prepare("SELECT value FROM meta WHERE key=?").get(key)?.value;
+export const observedNativeRootTurn = (db, context) => getMeta(db, nativeTurnKey(context));
 const setMeta = (db, key, value) => db.prepare("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, value);
 
 export function createCapacitySchema(db) {

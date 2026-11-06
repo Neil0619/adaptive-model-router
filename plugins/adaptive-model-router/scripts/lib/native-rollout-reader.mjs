@@ -52,7 +52,7 @@ function compactedMetadata(entry) {
  * instead pin a complete prefix while the active parent appends new events;
  * that prefix is independently rehashed before it is accepted. */
 export function readStableRollout(path, accept, { allowAppend = false, allowCompactedMetadata = false, deadline = Infinity,
-  maxBytes = DEFAULT_FILE_LIMIT } = {}) {
+  maxBytes = DEFAULT_FILE_LIMIT, endByteOffset = null } = {}) {
   // Cold installation may inspect long-lived parent logs beyond the normal
   // Hook budget. This only expands a finite streaming byte bound; record,
   // identity, complete-content hashing and caller time limits still apply.
@@ -66,7 +66,7 @@ export function readStableRollout(path, accept, { allowAppend = false, allowComp
     return withDecodedRollout(path, { maxBytes, deadline }, (decoded) => {
       // A compressed archive is immutable even when a caller permits appends
       // to a live plain-text parent. Hash and parse the complete original bytes.
-      const result = readStableRollout(decoded, accept, { allowCompactedMetadata, deadline, maxBytes });
+      const result = readStableRollout(decoded, accept, { allowCompactedMetadata, deadline, maxBytes, endByteOffset });
       if (rolloutIdentity(path) !== identity) throw new Error("native transcript changed during evidence read");
       return result;
     });
@@ -77,7 +77,9 @@ export function readStableRollout(path, accept, { allowAppend = false, allowComp
     // and timestamps lossless; only the bounded byte count becomes a Number.
     const before = fstatSync(fd, { bigint: true });
     if (!before.isFile() || before.size > BigInt(maxBytes)) throw new Error("native transcript exceeds evidence bounds");
-    const size = Number(before.size);
+    if (endByteOffset !== null && (!Number.isSafeInteger(endByteOffset) || endByteOffset < 1 || BigInt(endByteOffset) > before.size))
+      throw new Error("native transcript prefix byte boundary is invalid");
+    const size = endByteOffset ?? Number(before.size);
     const hash = createHash("sha256");
     const lineLimit = allowCompactedMetadata ? COMPACTED_LINE_LIMIT : BUSINESS_LINE_LIMIT;
     let offset = 0, line = 0, fragments = [], fragmentBytes = 0;

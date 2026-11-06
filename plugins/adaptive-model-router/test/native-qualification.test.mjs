@@ -10,13 +10,14 @@ import { callRouterTool } from "../scripts/lib/service.mjs";
 import { recordOutcome } from "../scripts/lib/learning.mjs";
 import { publicRequestError } from "../scripts/lib/request-errors.mjs";
 import { payloadHash } from "../scripts/lib/io.mjs";
-import { lifecycleBinding, observeQualificationHook, provenQualificationShellRoots, readTaskQualification, qualificationReadiness, reserveTaskQualification, runtimeSourceDigest } from "../scripts/lib/lifecycle-qualification.mjs";
+import { lifecycleBinding, observeQualificationHook, provenQualificationShellRoots, readTaskQualification, qualificationReadiness, reserveTaskQualification, runtimeSourceDigest, prepareQualificationOutcome } from "../scripts/lib/lifecycle-qualification.mjs";
 import { inspectLifecycleHookReadiness } from "../scripts/lib/hook-readiness.mjs";
 import { authorizeRequalification } from "../scripts/lib/qualification-retry.mjs";
 import { ensureRuntimeIsolationSchema } from "../scripts/lib/runtime-isolation.mjs";
 import { resolveHookIdentity } from "../scripts/lib/hook-identity.mjs";
 import { registerManagedChild, observeManagedMessage } from "../scripts/lib/stage-closure.mjs";
 import { CATALOG, routeInput, temporaryProject, withRouterEnvironment } from "./fixtures.mjs";
+import { observeCapacityTurn } from "../scripts/lib/host-capacity-recovery.mjs";
 
 const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -224,6 +225,65 @@ test("managed qualification verifies current closure before minting and consumin
     assert.equal(f.store.status(f.context).delegationGate.state, "available");
     assert.equal((await callRouterTool("record_outcome", f.outcome, f.serviceOptions)).idempotent, true);
     assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM outcomes").get().n, 1);
+  });
+});
+
+test("failed managed qualification preserves its proof across repeated closure verification", async () => {
+  await fixture(async (value) => {
+    const f = await completedQualification({ ...value, managedChild: true });
+    f.records.splice(f.records.findIndex((r) => r.payload.type === "message"), 1);
+    Object.assign(f.records.at(-1).payload, { last_agent_message: null,
+      error: { message: "Model unavailable", codex_error_info: "model_not_found" } });
+    writeFileSync(f.child.path, f.records.map(JSON.stringify).join("\n") + "\n");
+    f.store.db.prepare("DELETE FROM delegation_child_stops WHERE route_id=?").run(f.route.routeId);
+    const closure = f.store.status(f.context).stageClosure;
+    assert.equal(closure.terminalFailure.code, "model_not_found");
+    const disposition = { intent: "cancelled", basis: "Cancel the failed no-tool qualification without retrying this turn.",
+      pendingOperations: [], requirements: closure.inputReferences.map(({ id }) => ({ messageId: id,
+        source: "Native initial qualification task", disposition: "cancelled", owner: "/root",
+        receipt: "Model unavailable; no marker or business execution occurred." })),
+      resultReview: "Native terminal failure and all original inputs checked; no operations remain." };
+    const parentTranscriptPath = resolve(f.project.root, "failed-qualification-parent.jsonl");
+    writeFileSync(parentTranscriptPath, JSON.stringify({ type: "session_meta", payload: { id: f.input.contextId, cwd: f.project.root } }) + "\n");
+    for (const action of ["begin_maintenance", "verify_maintenance"]) await callRouterTool("manage_stage", {
+      contextId: f.input.contextId, routeId: f.route.routeId, expectedRevision: closure.revision,
+      action, disposition, parentTranscriptPath, ...(action === "verify_maintenance" ? { closureToken: closure.token } : {}),
+    }, f.serviceOptions);
+    const outcome = { ...f.outcome, status: "failed", failureType: "tooling", closureToken: closure.token };
+    const proof = await prepareQualificationOutcome(outcome, f.serviceOptions);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(recordOutcome(outcome, { store: f.store, cwd: f.project.root, qualificationProof: proof }).recorded, true);
+    assert.equal((await callRouterTool("record_outcome", outcome, f.serviceOptions)).idempotent, true);
+    assert.equal(readTaskQualification(f.store.db, f.context).state, "failed");
+    assert.equal(readTaskQualification(f.store.db, f.context).proof, null);
+    const attempt = f.store.db.prepare("SELECT * FROM delegation_attempts WHERE route_id=?").get(f.route.routeId);
+    assert.equal(attempt.stop_observed, 0);
+    assert.equal(attempt.no_child, 0);
+    assert.ok(attempt.finalized_at);
+    assert.equal(f.store.status(f.context).delegationGate.state, "available");
+    assert.equal(f.store.db.prepare("SELECT count(*) AS n FROM outcomes").get().n, 1);
+    const original = readTaskQualification(f.store.db, f.context);
+    const savedOutcome = f.store.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(f.route.routeId);
+    const readiness = () => qualificationReadiness(f.store.db, f.context, f.binding);
+    assert.equal(readiness().qualificationBinding, undefined, "missing native turn cannot authorize a probe");
+    observeCapacityTurn(f.store.db, f.context, attempt.root_turn_id);
+    assert.equal(readiness().qualificationBinding, undefined, "no retry loop within the failed root turn");
+    observeCapacityTurn(f.store.db, f.context, "later-native-root-turn");
+    assert.ok(readiness().failedRefresh);
+    assert.equal(qualificationReadiness(f.store.db, f.context, { ...f.binding, digest: "c".repeat(64) }).failedRefresh,
+      undefined, "a provider failure cannot override changed trust");
+    const next = await routeStage(f.input, f.options);
+    assert.deepEqual(next.reasonCodes, ["HOST_LIFECYCLE_QUALIFICATION"]);
+    assert.notEqual(next.routeId, f.route.routeId);
+    assert.deepEqual(JSON.parse(f.store.db.prepare("SELECT value FROM meta WHERE key=?")
+      .get(`native_qualification_archive:${f.route.routeId}`).value), original);
+    assert.deepEqual(f.store.db.prepare("SELECT * FROM outcomes WHERE route_id=?").get(f.route.routeId), savedOutcome);
+    const recovered = await completedQualification(value, next);
+    assert.equal((await callRouterTool("record_outcome", recovered.outcome, recovered.serviceOptions)).recorded, true);
+    assert.equal(readiness().ready, true);
+    const normal = await routeStage(f.input, f.options);
+    assert.equal(normal.action, "delegate");
+    assert.equal(normal.reasonCodes.includes("HOST_LIFECYCLE_QUALIFICATION"), false);
   });
 });
 

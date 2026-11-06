@@ -137,7 +137,7 @@ function validateItem(item, op, evidence) {
  * This never turns an ended operation into a successful business outcome. */
 export function applyOperationReviews(db, context, child, commands, facts) {
   const history = reviewRecords(db, child.route_id);
-  if (!history.length) return facts;
+  if (!history.length) return { ...facts, pendingOperations: pendingOperations(facts) };
   const snapshotDigest = rawState(db, child, commands, facts);
   const applicable = history.filter((entry) => entry.snapshotDigest === snapshotDigest);
   const operations = pendingOperations(facts);

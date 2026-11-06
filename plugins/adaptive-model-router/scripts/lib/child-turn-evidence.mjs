@@ -82,6 +82,7 @@ export function readChildTurnEvidence(locator, { commands = [], deadline = Infin
   const nativeFinals = new Map();
   const foreignFinalIds = new Set();
   let latestStarted = null;
+  let startedLine = 0, lastOperationLine = 0;
   let lastFinal = null;
   let finalSource = null;
   const activity = new NativeActivity({ maintenanceInputOffset });
@@ -108,7 +109,9 @@ export function readChildTurnEvidence(locator, { commands = [], deadline = Infin
     }
     if ((entry.type === "response_item" && ["function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output"].includes(value?.type))
       || (entry.type === "event_msg" && ["item_started", "item_completed"].includes(value?.type)
-        && ["CommandExecution", "FileChange"].includes(value.item?.type))) operationRecords.push(payloadHash({ type: entry.type, payload: value }));
+        && ["CommandExecution", "FileChange"].includes(value.item?.type))) {
+      operationRecords.push(payloadHash({ type: entry.type, payload: value })); lastOperationLine = lineNumber;
+    }
     if (entry.type === "response_item" && value?.type === "message"
       && value.role === "assistant" && value.phase === "final_answer") {
       const text = textContent(value.content);
@@ -125,10 +128,12 @@ export function readChildTurnEvidence(locator, { commands = [], deadline = Infin
         conflicted: previous?.conflicted || Boolean(previous && previous.itemDigest !== itemDigest) });
     } else if (entry.type === "event_msg" && value?.type === "task_started") {
       latestStarted = value.turn_id;
+      startedLine = lineNumber;
     } else if (entry.type === "event_msg" && value?.type === "task_complete") {
       completions.set(value.turn_id, lineNumber);
       if (!completionEvidence.has(value.turn_id)) completionEvidence.set(value.turn_id, []);
-      completionEvidence.get(value.turn_id).push({ line: lineNumber, text: value.last_agent_message, digest: payloadHash(entry) });
+      completionEvidence.get(value.turn_id).push({ line: lineNumber, text: value.last_agent_message,
+        error: value.error, threadId: value.thread_id, digest: payloadHash(entry) });
     }
   }, { deadline });
   if (coverage && !covered) throw new Error("command coverage prefix is incomplete");
@@ -165,11 +170,26 @@ export function readChildTurnEvidence(locator, { commands = [], deadline = Infin
     end.line > lastFinal.line && typeof end.text === "string" && end.text !== finalSource.text)) {
     throw new Error("native completion contradicts the final response");
   }
-  const turnFinished = Boolean(lastFinal && completions.get(lastFinal.turnId) > lastFinal.line
+  // A native failed terminal is distinct from an assistant final and from Stop.
+  // Require the latest started turn and a consistent terminal after every input
+  // and operation record; an older failure cannot authorize a current takeover.
+  const ends = completionEvidence.get(latestStarted) || [];
+  const failed = ends.at(-1);
+  const terminalFailure = typeof latestStarted === "string" && latestStarted.length > 0 && failed
+    && ends.every((end) => end.line > startedLine && end.error && typeof end.error === "object"
+      && !Array.isArray(end.error) && typeof end.error.message === "string" && end.error.message.length > 0
+      && (!end.threadId || end.threadId === locator.childId)
+      && payloadHash(end.error) === payloadHash(failed.error) && end.text === failed.text)
+    && messages.every((message) => message.line < failed.line) && lastOperationLine < failed.line
+    && (!lastFinal || lastFinal.line < failed.line)
+    ? { turnId: latestStarted, digest: payloadHash(ends.map((end) => end.digest)), line: failed.line,
+      code: failed.error.codex_error_info === "model_not_found" ? "model_not_found" : "native_turn_failed" } : null;
+  const turnFinished = Boolean(lastFinal && !(completionEvidence.get(lastFinal.turnId) || []).some((end) => end.error)
+    && completions.get(lastFinal.turnId) > lastFinal.line
     && (!latestStarted || latestStarted === lastFinal.turnId)
     && messages.every((message) => message.line < lastFinal.line));
   const finished = turnFinished && operations.unanswered.size === 0 && operations.active.size === 0;
-  return { messages, lastFinal, finished, turnFinished, lastActivity: activity.result(), operationDigest: payloadHash({ operationRecords, coverage: coverage || null }), pendingCalls: [...operations.unanswered],
+  return { messages, lastFinal, finished, turnFinished, terminalFailure, lastActivity: activity.result(), operationDigest: payloadHash({ operationRecords, coverage: coverage || null }), pendingCalls: [...operations.unanswered],
     commandCompletions: [...operations.commandEnds.values()].sort((a, b) => a.callId.localeCompare(b.callId)),
     pendingOperations: [...operations.active.values()], permitsPoll: (input) => operations.permitsPoll(input), ...source };
 }

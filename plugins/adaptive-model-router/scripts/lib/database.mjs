@@ -1,4 +1,5 @@
 import { ensureAuditSchema, insertOutcomeEvidence, verifyOutcomeEvidenceReplay } from "./audit-records.mjs";
+import { requestError } from "./request-errors.mjs";
 import { ensureRuntimeIsolationSchema, bindRuntimeStage } from "./runtime-isolation.mjs";
 import { capacityAdmissionDecision, createCapacitySchema } from "./host-capacity-recovery.mjs";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -1382,7 +1383,9 @@ export class RouterStore {
         error.code = "OUTCOME_BEFORE_DISPATCH";
         throw error;
       }
-      verifyStageClosure(this.db, context, route.route_id, outcome.closureToken);
+      const closure = verifyStageClosure(this.db, context, route.route_id, outcome.closureToken);
+      if (closure?.terminalFailure && (outcome.status !== "failed" || outcome.failureType !== "tooling"))
+        throw requestError("STAGE_PRECONDITION", "Native child failure requires a failed/tooling outcome; root takeover is not successful child execution.");
       if (this.db.prepare("SELECT 1 FROM delegation_maintenance WHERE route_id=?").get(route.route_id) && outcome.status === "passed") {
         throw new Error("A terminated or transferred stage must not be reported as passed business execution.");
       }
@@ -1455,7 +1458,9 @@ export class RouterStore {
       const closure = stageClosureStatus(this.db, context);
       if (closure && !stopHookActive) {
         return { action: "block", routeId: closure.routeId, recordedUnknown: 0, gateRetained: true,
-          reason: closure.maintenance
+          reason: closure.terminalFailure
+            ? "The native child turn failed. Continue the authorized work in the root without retrying this failed child's collection. Inspect stageClosure and use begin_maintenance then verify_maintenance (or verify the already active maintenance) to retain every original input, partial result and operation receipt. Record its unique failed/tooling outcome. Root work is not an independent review; later stages can delegate normally."
+            : closure.maintenance
             ? "Bounded child maintenance remains unfinished. Inspect get_route_status.stageClosure, run its required followup without business tools, verify all requirement dispositions and operation receipts, then use manage_stage verify_maintenance. Keep the original outcome unchanged."
             : closure.state === "ready"
             ? "The current Router child result still needs root verification and its unique outcome. Inspect get_route_status.stageClosure, verify that result, and record_outcome with its closureToken before ending this turn."

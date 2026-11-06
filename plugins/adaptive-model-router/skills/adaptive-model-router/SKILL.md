@@ -232,6 +232,35 @@ selected model happens to match the root model. Map the router's `target.effort`
 
 ## Failures and escalation
 
+When `stageClosure.terminalFailure` is present, the host has ended the latest
+child turn with an error; a normal final reply or Stop may never arrive. Do not
+retry collection or re-launch the same failed stage just to obtain that reply.
+Continue authorized work in the root, preserving the conversation and partial
+results. Use `begin_maintenance` (unless already active), inspect every original
+input and operation receipt, then `verify_maintenance` with the current token.
+The report must disposition **all** input references, including the first
+activation as the original stage responsibility. Transfer unfinished work to
+`/root`; an original business task cannot be `no_work`. Record exactly one
+`failed` / `tooling` outcome. This verifies safe takeover, never business success
+or an independent review. Complete and verify transferred work before resolving
+its requirement. If an independent review is mandatory, keep that requirement
+explicit until an independent reviewer actually performs it.
+
+Pending, ambiguous, or still-running operations must be reconciled through their
+real receipts before overlapping root work. A model error is not a process exit.
+Keep original failures and input/result evidence; never invent Stop or no-child
+events, clear the history, or permanently switch the session to manual mode.
+After safe settlement, later real stages use normal routing and may delegate
+again. Failed closure preconditions are actionable state, not grounds for an
+unbounded maintenance retry loop.
+
+The same takeover applies to a no-tool lifecycle qualification refused with
+`model_not_found`. Keep that qualification failed, never passed. A later trusted
+native root turn may request one new qualification during a real stage; the
+same turn cannot loop. Ordinary delegation resumes only after an actual new
+proof succeeds. Changed trust or incomplete failure evidence still blocks that
+automatic recovery, and inspection calls never launch a probe.
+
 For a retry of the same logical stage after its verification failed, first record
 the matching failed outcome, then pass its latest retryable `routeId` as
 `previousRouteId`, retain the original `stageId`, and set
